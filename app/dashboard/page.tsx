@@ -2,6 +2,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { ProjectCard, type ProjectCardData } from "@/components/project/project-card";
+import { ensureCreditAccount } from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
@@ -18,6 +19,8 @@ export default async function DashboardPage() {
     .from("projects")
     .select("id,title,description,status,created_at,updated_at")
     .order("updated_at", { ascending: false });
+  const creditAccount = await ensureCreditAccount(supabase);
+  const creditBalance = creditAccount.ok ? creditAccount.balance : null;
 
   return (
     <main className="app-shell py-8">
@@ -25,7 +28,12 @@ export default async function DashboardPage() {
         <Link href="/" className="text-xl font-black">
           NovelForge / 小说工坊
         </Link>
-        <SignOutButton />
+        <div className="flex flex-wrap items-center gap-3">
+          <Link className="button-secondary" href="/account/credits">
+            点数余额：{creditBalance ?? "读取失败"}
+          </Link>
+          <SignOutButton />
+        </div>
       </nav>
 
       <section className="mt-8">

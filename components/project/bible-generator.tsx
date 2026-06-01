@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
+import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 
 type BibleGeneratorProps = {
@@ -62,6 +63,10 @@ export function BibleGenerator({
   const router = useRouter();
   const generationCost = GENERATION_CREDIT_COSTS.generate_bible;
   const hasEnoughCredits = creditBalance === null || creditBalance >= generationCost;
+  const creditShortfallMessage =
+    creditBalance === null || hasEnoughCredits
+      ? ""
+      : formatCreditShortfall(creditBalance, generationCost);
 
   async function generateBible() {
     if (!hasConcept) {
@@ -70,7 +75,7 @@ export function BibleGenerator({
     }
 
     if (!hasEnoughCredits) {
-      setError("点数不足，后续可购买生成点数。");
+      setError(creditShortfallMessage);
       return;
     }
 
@@ -125,6 +130,15 @@ export function BibleGenerator({
       {error ? (
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
           {error}
+        </p>
+      ) : null}
+
+      {creditShortfallMessage ? (
+        <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
+          {creditShortfallMessage}
+          <Link className="ml-2 font-bold underline" href="/account/credits">
+            查看点数
+          </Link>
         </p>
       ) : null}
 

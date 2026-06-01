@@ -22,6 +22,12 @@ export function getGenerationCreditCost(operation: GenerationCreditOperation) {
   return GENERATION_CREDIT_COSTS[operation];
 }
 
+export function formatCreditShortfall(balance: number, cost: number) {
+  const shortage = Math.max(0, cost - balance);
+
+  return `点数不足：当前余额 ${balance} 点，本次操作需要 ${cost} 点，还差 ${shortage} 点。后续可在 /account/credits 购买生成点数。`;
+}
+
 export async function ensureCreditAccount(supabase: SupabaseClient) {
   const { data, error } = await supabase.rpc("get_or_create_credit_balance");
 
@@ -50,7 +56,7 @@ export async function requireGenerationCredits(
   if (account.balance < cost) {
     return {
       ok: false as const,
-      error: `点数不足，后续可购买生成点数。本次生成需要 ${cost} 点，当前余额 ${account.balance} 点。`,
+      error: formatCreditShortfall(account.balance, cost),
       status: 402,
       balance: account.balance,
     };

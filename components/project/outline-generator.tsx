@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
+import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
 import {
   CHAPTER_INTERVENTION_LIMITS,
   EMPTY_CHAPTER_INTERVENTION,
@@ -154,6 +155,14 @@ export function OutlineGenerator({
   const chapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
   const hasEnoughOutlineCredits = creditBalance === null || creditBalance >= outlineCost;
   const hasEnoughChapterCredits = creditBalance === null || creditBalance >= chapterCost;
+  const outlineCreditShortfallMessage =
+    creditBalance === null || hasEnoughOutlineCredits
+      ? ""
+      : formatCreditShortfall(creditBalance, outlineCost);
+  const chapterCreditShortfallMessage =
+    creditBalance === null || hasEnoughChapterCredits
+      ? ""
+      : formatCreditShortfall(creditBalance, chapterCost);
 
   async function generateOutline() {
     if (!hasPrerequisites) {
@@ -162,7 +171,7 @@ export function OutlineGenerator({
     }
 
     if (!hasEnoughOutlineCredits) {
-      setError("点数不足，后续可购买生成点数。");
+      setError(outlineCreditShortfallMessage);
       return;
     }
 
@@ -194,7 +203,7 @@ export function OutlineGenerator({
 
   async function generateChapter(chapter: ChapterDisplay) {
     if (!hasEnoughChapterCredits) {
-      setError("点数不足，后续可购买生成点数。");
+      setError(chapterCreditShortfallMessage);
       return;
     }
 
@@ -335,6 +344,15 @@ export function OutlineGenerator({
       {error ? (
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
           {error}
+        </p>
+      ) : null}
+
+      {outlineCreditShortfallMessage || chapterCreditShortfallMessage ? (
+        <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
+          {chapterCreditShortfallMessage || outlineCreditShortfallMessage}
+          <Link className="ml-2 font-bold underline" href="/account/credits">
+            查看点数
+          </Link>
         </p>
       ) : null}
 

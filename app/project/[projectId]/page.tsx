@@ -193,9 +193,12 @@ export default async function ProjectDetailPage({
           NovelForge / 小说工坊
         </Link>
         <div className="flex flex-wrap items-center gap-3">
-          <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-sm font-bold text-[var(--accent-strong)]">
+          <Link
+            className="rounded-full bg-[#eef4f2] px-3 py-1 text-sm font-bold text-[var(--accent-strong)]"
+            href="/account/credits"
+          >
             点数余额：{creditBalance ?? "读取失败"}
-          </span>
+          </Link>
           <SignOutButton />
         </div>
       </nav>
