@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { CREDIT_PACKAGES } from "@/lib/credits";
+import type { CREDIT_PACKAGES } from "@/lib/payments/packages";
 
 type CreditPackage = (typeof CREDIT_PACKAGES)[number];
 
@@ -25,13 +25,13 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
   const [message, setMessage] = useState("");
   const router = useRouter();
 
-  async function createOrder(packageName: string) {
+  async function createOrder(packageId: string) {
     if (pendingPackageName) {
       return;
     }
 
     setMessage("");
-    setPendingPackageName(packageName);
+    setPendingPackageName(packageId);
 
     try {
       const response = await fetch("/api/credits/orders", {
@@ -39,7 +39,7 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ packageName }),
+        body: JSON.stringify({ packageId }),
       });
 
       const payload = (await response.json().catch(() => null)) as CreateOrderResponse | null;
@@ -72,10 +72,10 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
         {packages.map((item) => (
           <div
             className="rounded-md border border-dashed border-[var(--line)] bg-white/70 px-4 py-4"
-            key={item.packageName}
+            key={item.packageId}
           >
             <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-              {item.label}
+              {item.packageName}
             </p>
             <p className="mt-1 text-2xl font-black text-[var(--ink)]">
               {item.creditsAmount} 点
@@ -84,10 +84,10 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
             <button
               className="button-secondary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60"
               disabled={Boolean(pendingPackageName)}
-              onClick={() => createOrder(item.packageName)}
+              onClick={() => createOrder(item.packageId)}
               type="button"
             >
-              {pendingPackageName === item.packageName ? "创建中..." : "创建占位订单"}
+              {pendingPackageName === item.packageId ? "创建中..." : "创建占位订单"}
             </button>
           </div>
         ))}

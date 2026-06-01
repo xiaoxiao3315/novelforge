@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { CREDIT_PACKAGES, type CreditPackageName } from "@/lib/credits";
+import { getCreditPackage } from "@/lib/payments/packages";
+import type { CreditOrderStatus, PaymentProvider } from "@/lib/payments/types";
 import { createClient } from "@/lib/supabase/server";
 
 type CreateCreditOrderBody = {
-  packageName?: unknown;
+  packageId?: unknown;
   user_id?: unknown;
 };
 
@@ -14,9 +15,16 @@ type CreditOrderRow = {
   credits_amount: number;
   price_amount: number;
   currency: string;
-  status: string;
+  status: CreditOrderStatus;
+  provider: PaymentProvider | null;
+  checkout_url: string | null;
+  idempotency_key: string | null;
   created_at: string;
 };
+
+const PLACEHOLDER_PROVIDER = "placeholder" satisfies PaymentProvider;
+const orderSelectFields =
+  "id,order_no,package_name,credits_amount,price_amount,currency,status,provider,checkout_url,idempotency_key,created_at";
 
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -30,6 +38,12 @@ function createOrderNo() {
   const randomPart = crypto.randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase();
 
   return `NF-${Date.now()}-${randomPart}`;
+}
+
+function createPlaceholderIdempotencyKey(packageId: string) {
+  const randomPart = crypto.randomUUID().replaceAll("-", "").slice(0, 16);
+
+  return `${PLACEHOLDER_PROVIDER}:${packageId}:${randomPart}`;
 }
 
 export async function POST(request: Request) {
@@ -52,29 +66,68 @@ export async function POST(request: Request) {
     return validationError("创建点数订单时不能从前端传 user_id。");
   }
 
-  const packageName =
-    typeof body.packageName === "string" ? (body.packageName.trim() as CreditPackageName) : "";
-  const creditPackage = CREDIT_PACKAGES.find((item) => item.packageName === packageName);
+  const packageId = typeof body.packageId === "string" ? body.packageId.trim() : "";
+  const creditPackage = getCreditPackage(packageId);
 
   if (!creditPackage) {
     return validationError("未知点数包。");
+  }
+
+  const idempotencyKey = createPlaceholderIdempotencyKey(creditPackage.packageId);
+  const { data: existingOrder, error: existingOrderError } = await supabase
+    .from("credit_orders")
+    .select(orderSelectFields)
+    .eq("provider", PLACEHOLDER_PROVIDER)
+    .eq("package_name", creditPackage.packageId)
+    .eq("status", "pending")
+    .maybeSingle<CreditOrderRow>();
+
+  if (existingOrderError) {
+    return serverError(existingOrderError.message);
+  }
+
+  if (existingOrder) {
+    return NextResponse.json({
+      order: existingOrder,
+      reused: true,
+      message: "已返回现有 pending 占位订单。支付尚未接入，不会增加点数余额。",
+    });
   }
 
   const { data: order, error: orderError } = await supabase
     .from("credit_orders")
     .insert({
       order_no: createOrderNo(),
-      package_name: creditPackage.packageName,
+      package_name: creditPackage.packageId,
       credits_amount: creditPackage.creditsAmount,
       price_amount: creditPackage.priceAmount,
       currency: creditPackage.currency,
       status: "pending",
+      provider: PLACEHOLDER_PROVIDER,
+      checkout_url: null,
+      idempotency_key: idempotencyKey,
     })
-    .select("id,order_no,package_name,credits_amount,price_amount,currency,status,created_at")
+    .select(orderSelectFields)
     .single<CreditOrderRow>();
 
   if (orderError || !order) {
-    return serverError(orderError?.message || "点数订单创建失败。");
+    const { data: racedOrder, error: racedOrderError } = await supabase
+      .from("credit_orders")
+      .select(orderSelectFields)
+      .eq("provider", PLACEHOLDER_PROVIDER)
+      .eq("package_name", creditPackage.packageId)
+      .eq("status", "pending")
+      .maybeSingle<CreditOrderRow>();
+
+    if (racedOrder) {
+      return NextResponse.json({
+        order: racedOrder,
+        reused: true,
+        message: "已返回现有 pending 占位订单。支付尚未接入，不会增加点数余额。",
+      });
+    }
+
+    return serverError(racedOrderError?.message || orderError?.message || "点数订单创建失败。");
   }
 
   return NextResponse.json({

@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import { CreditPackagePanel } from "@/components/account/credit-package-panel";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import {
-  CREDIT_PACKAGES,
   GENERATION_CREDIT_COSTS,
   ensureCreditAccount,
   type GenerationCreditOperation,
 } from "@/lib/credits";
+import { CREDIT_ORDER_STATUS_LABELS } from "@/lib/payments/order-status";
+import { CREDIT_PACKAGES } from "@/lib/payments/packages";
+import type { CreditOrderStatus } from "@/lib/payments/types";
 import { createClient } from "@/lib/supabase/server";
 
 type CreditTransactionRow = {
@@ -25,7 +27,7 @@ type CreditOrderRow = {
   order_no: string;
   package_name: string;
   credits_amount: number;
-  status: string;
+  status: CreditOrderStatus;
   created_at: string;
 };
 
@@ -37,6 +39,10 @@ const operationLabels: Record<GenerationCreditOperation, string> = {
   generate_chapter_summary: "章节摘要",
   set_official: "设为正式稿",
 };
+
+const packageLabels = Object.fromEntries(
+  CREDIT_PACKAGES.map((item) => [item.packageId, item.packageName]),
+) as Record<string, string>;
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -161,14 +167,17 @@ export default async function CreditsPage() {
                   <div>
                     <p className="font-bold text-[var(--ink)]">{order.order_no}</p>
                     <p className="mt-1 text-xs text-[var(--muted)]">
-                      {order.package_name} · {formatDate(order.created_at)}
+                      {packageLabels[order.package_name] ?? order.package_name} ·{" "}
+                      {formatDate(order.created_at)}
                     </p>
                   </div>
                   <div className="text-right">
                     <p className="text-lg font-black text-[var(--accent-strong)]">
                       {order.credits_amount} 点
                     </p>
-                    <p className="text-xs text-[var(--muted)]">{order.status}</p>
+                    <p className="text-xs text-[var(--muted)]">
+                      {CREDIT_ORDER_STATUS_LABELS[order.status] ?? order.status}
+                    </p>
                   </div>
                 </div>
               </div>
