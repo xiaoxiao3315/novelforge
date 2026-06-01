@@ -90,6 +90,26 @@ export const conceptJsonSchema = {
   },
 } as const;
 
+const conceptJsonStructureExample = JSON.stringify(
+  {
+    workTitle: "示例作品名",
+    logline: "一句话说明主角、冲突和追更卖点。",
+    premise: "故事前提，说明核心处境与长期悬念。",
+    protagonist: "主角身份、能力边界和初始状态。",
+    protagonistGoal: "主角在第一阶段必须追求的明确目标。",
+    protagonistWeakness: "主角会持续制造代价或阻碍的弱点。",
+    antagonistOrObstacle: "主要反派、制度性阻碍或不可回避的外部压力。",
+    worldRules: "世界运行规则、限制和可连载的变化空间。",
+    surfaceConflict: "当前最直观、最容易推动剧情的冲突。",
+    middleConflict: "牵动阵营、资源或关系变化的中层冲突。",
+    deepConflict: "价值观、命运或世界真相层面的深层冲突。",
+    firstVolumeHook: "第一卷结尾前必须兑现或升级的追更钩子。",
+    readerHookQuestions: ["读者追问一？", "读者追问二？", "读者追问三？"],
+  },
+  null,
+  2,
+);
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -270,5 +290,8 @@ export function buildConceptPrompt(input: ConceptPromptInput) {
     "- workTitle 使用或微调用户作品名。",
     "- logline 必须是一句话卖点。",
     "- readerHookQuestions 给出 3 到 6 个读者会继续追问的问题。",
+    "",
+    "目标 JSON 结构示例（必须输出同结构 JSON object，不要照抄示例内容）：",
+    conceptJsonStructureExample,
   ].join("\n");
 }

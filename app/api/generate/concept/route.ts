@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { findPlotFilterLabel } from "@/data/plot-filters";
+import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildConceptPrompt,
-  conceptJsonSchema,
   CONCEPT_PROMPT_VERSION,
   validateStoryConceptSchema,
   type ConceptPromptInput,
@@ -33,20 +33,8 @@ type StoryConfigRow = {
   extra_ideas: string | null;
 };
 
-type ResponsesApiPayload = {
-  output_text?: unknown;
-  output?: Array<{
-    content?: Array<{
-      type?: string;
-      text?: unknown;
-    }>;
-  }>;
-  error?: {
-    message?: string;
-  };
-};
-
-const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const CONCEPT_SYSTEM_PROMPT =
+  "你只输出可解析 JSON object。不得生成整本小说、章节正文、章节大纲、故事圣经或角色卡。输出必须是 JSON，不能使用 Markdown。";
 
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -54,25 +42,6 @@ function validationError(message: string) {
 
 function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
-}
-
-function extractOutputText(payload: ResponsesApiPayload) {
-  if (typeof payload.output_text === "string") {
-    return payload.output_text;
-  }
-
-  for (const item of payload.output ?? []) {
-    for (const content of item.content ?? []) {
-      if (
-        (content.type === "output_text" || content.type === "text") &&
-        typeof content.text === "string"
-      ) {
-        return content.text;
-      }
-    }
-  }
-
-  return "";
 }
 
 function parseJsonObject(text: string) {
@@ -172,7 +141,7 @@ export async function POST(request: Request) {
   }
 
   const promptInput = buildPromptInput(visibleProject, config);
-  const model = process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+  const model = getDeepSeekModel();
   const logInput = {
     project: visibleProject,
     storyConfig: promptInput.config,
@@ -190,62 +159,24 @@ export async function POST(request: Request) {
     });
   }
 
-  const openAiApiKey = process.env.OPENAI_API_KEY;
+  let outputText = "";
 
-  if (!openAiApiKey) {
-    const message = "缺少 OPENAI_API_KEY。";
-    await writeErrorLog(message);
-    return serverError(message);
+  try {
+    const result = await generateDeepSeekJson({
+      systemPrompt: CONCEPT_SYSTEM_PROMPT,
+      userPrompt: buildConceptPrompt(promptInput),
+    });
+
+    outputText = result.outputText;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "DeepSeek 请求失败。";
+    const errorMessage = `DeepSeek 生成失败：${message.slice(0, 800)}`;
+    await writeErrorLog(errorMessage);
+    return serverError(errorMessage);
   }
 
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${openAiApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      input: [
-        {
-          role: "system",
-          content:
-            "你只输出可解析 JSON。不得生成整本小说、章节正文、章节大纲、故事圣经或角色卡。",
-        },
-        {
-          role: "user",
-          content: buildConceptPrompt(promptInput),
-        },
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "novel_concept",
-          schema: conceptJsonSchema,
-          strict: true,
-        },
-      },
-      max_output_tokens: 1800,
-    }),
-  }).catch((error: unknown) => ({
-    ok: false,
-    status: 500,
-    text: async () => (error instanceof Error ? error.message : "OpenAI 请求失败。"),
-    json: async () => ({}),
-  }));
-
-  if (!response.ok) {
-    const message = await response.text();
-    const error = `OpenAI 生成失败：${message.slice(0, 800)}`;
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
-  const payload = (await response.json().catch(() => null)) as ResponsesApiPayload | null;
-  const outputText = payload ? extractOutputText(payload) : "";
-
-  if (!payload || payload.error?.message || !outputText) {
-    const error = payload?.error?.message || "OpenAI 响应缺少 JSON 文本。";
+  if (!outputText) {
+    const error = "DeepSeek 响应缺少 JSON 文本。";
     await writeErrorLog(error);
     return serverError(error);
   }

@@ -1,5 +1,8 @@
 # dependencies
 node_modules/
+.deps-tmp/
+.npm-cache/
+/*.tgz
 
 # next.js
 .next/
