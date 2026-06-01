@@ -1,12 +1,19 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { BibleGenerator } from "@/components/project/bible-generator";
 import { ConceptGenerator } from "@/components/project/concept-generator";
 import {
   findPlotFilterLabel,
   type PlotFilterKey,
 } from "@/data/plot-filters";
 import { createClient } from "@/lib/supabase/server";
+import {
+  normalizeCharacterCards,
+  normalizeStoryBible,
+  type CharacterCard,
+  type StoryBible,
+} from "@/prompts/bible";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 
 type StoryConfig = {
@@ -23,6 +30,14 @@ type StoryConfig = {
 
 type StoryConceptRow = {
   content: StoryConcept | null;
+};
+
+type StoryBibleRow = {
+  content: StoryBible | null;
+};
+
+type CharacterRow = {
+  content: CharacterCard | null;
 };
 
 const configRows: Array<{
@@ -80,6 +95,22 @@ export default async function ProjectDetailPage({
     .maybeSingle<StoryConceptRow>();
 
   const concept = normalizeStoryConcept(storyConcept?.content);
+
+  const { data: storyBible } = await supabase
+    .from("story_bibles")
+    .select("content")
+    .eq("project_id", projectId)
+    .maybeSingle<StoryBibleRow>();
+
+  const { data: characterRows } = await supabase
+    .from("characters")
+    .select("content")
+    .eq("project_id", projectId)
+    .order("sort_order", { ascending: true })
+    .returns<CharacterRow[]>();
+
+  const bible = normalizeStoryBible(storyBible?.content);
+  const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
 
   return (
     <main className="app-shell py-8">
@@ -160,7 +191,15 @@ export default async function ProjectDetailPage({
       </section>
 
       {config ? (
-        <ConceptGenerator initialConcept={concept} projectId={projectId} />
+        <>
+          <ConceptGenerator initialConcept={concept} projectId={projectId} />
+          <BibleGenerator
+            hasConcept={Boolean(concept)}
+            initialBible={bible}
+            initialCharacters={characters}
+            projectId={projectId}
+          />
+        </>
       ) : (
         <section className="surface mt-6 p-6">
           <h2 className="text-2xl font-black text-[var(--ink)]">作品设定</h2>
