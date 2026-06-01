@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { BibleGenerator } from "@/components/project/bible-generator";
 import { ConceptGenerator } from "@/components/project/concept-generator";
+import { OutlineGenerator } from "@/components/project/outline-generator";
 import {
   findPlotFilterLabel,
   type PlotFilterKey,
@@ -15,6 +16,12 @@ import {
   type StoryBible,
 } from "@/prompts/bible";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
+import {
+  normalizeChapterOutlines,
+  normalizeVolumeOutline,
+  type ChapterOutline,
+  type VolumeOutline,
+} from "@/prompts/outline";
 
 type StoryConfig = {
   theme: string | null;
@@ -38,6 +45,14 @@ type StoryBibleRow = {
 
 type CharacterRow = {
   content: CharacterCard | null;
+};
+
+type VolumeRow = {
+  content: VolumeOutline | null;
+};
+
+type ChapterRow = {
+  content: ChapterOutline | null;
 };
 
 const configRows: Array<{
@@ -111,6 +126,24 @@ export default async function ProjectDetailPage({
 
   const bible = normalizeStoryBible(storyBible?.content);
   const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
+
+  const { data: volumeRow } = await supabase
+    .from("volumes")
+    .select("content")
+    .eq("project_id", projectId)
+    .order("volume_number", { ascending: true })
+    .limit(1)
+    .maybeSingle<VolumeRow>();
+
+  const { data: chapterRows } = await supabase
+    .from("chapters")
+    .select("content")
+    .eq("project_id", projectId)
+    .order("chapter_number", { ascending: true })
+    .returns<ChapterRow[]>();
+
+  const volume = normalizeVolumeOutline(volumeRow?.content);
+  const chapters = normalizeChapterOutlines(chapterRows?.map((row) => row.content) ?? []);
 
   return (
     <main className="app-shell py-8">
@@ -197,6 +230,12 @@ export default async function ProjectDetailPage({
             hasConcept={Boolean(concept)}
             initialBible={bible}
             initialCharacters={characters}
+            projectId={projectId}
+          />
+          <OutlineGenerator
+            hasPrerequisites={Boolean(concept && bible && characters.length > 0)}
+            initialChapters={chapters}
+            initialVolume={volume}
             projectId={projectId}
           />
         </>
