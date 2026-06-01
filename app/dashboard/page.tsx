@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { ProjectCard, type ProjectCardData } from "@/components/project/project-card";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function DashboardPage() {
@@ -12,6 +13,11 @@ export default async function DashboardPage() {
   if (!user) {
     redirect("/login?redirectTo=/dashboard");
   }
+
+  const { data: projects, error: projectsError } = await supabase
+    .from("projects")
+    .select("id,title,description,status,created_at,updated_at")
+    .order("updated_at", { ascending: false });
 
   return (
     <main className="app-shell py-8">
@@ -37,23 +43,37 @@ export default async function DashboardPage() {
           <div>
             <h2 className="text-2xl font-black text-[var(--ink)]">作品列表</h2>
             <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-              WO-001 暂不创建业务数据库表，所以这里先展示空状态。WO-003 会接入
-              projects 查询和作品卡片。
+              这里显示当前账号通过 RLS 可访问的作品。刷新页面后会重新从
+              Supabase 读取。
             </p>
           </div>
-          <button className="button-secondary" disabled>
-            创建作品将在 WO-003 开放
-          </button>
+          <Link className="button-primary" href="/create">
+            创建作品
+          </Link>
         </div>
 
-        <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-8 text-center">
-          <p className="font-bold text-[var(--ink)]">还没有作品</p>
-          <p className="mt-2 text-sm text-[var(--muted)]">
-            下一阶段会先建立最小数据库和 RLS，再开放创建流程。
-          </p>
-        </div>
+        {projectsError ? (
+          <div className="mt-6 rounded-md border border-[#e2b6a6] bg-[#fff4ef] p-4 text-sm text-[#7f2f1d]">
+            读取作品失败：{projectsError.message}
+          </div>
+        ) : projects && projects.length > 0 ? (
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
+            {(projects as ProjectCardData[]).map((project) => (
+              <ProjectCard key={project.id} project={project} />
+            ))}
+          </div>
+        ) : (
+          <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-8 text-center">
+            <p className="font-bold text-[var(--ink)]">还没有作品</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              先创建一个作品，保存剧情筛选器和补充想法。
+            </p>
+            <Link className="button-primary mt-5" href="/create">
+              创建第一个作品
+            </Link>
+          </div>
+        )}
       </section>
     </main>
   );
 }
-
