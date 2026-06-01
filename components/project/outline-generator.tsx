@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { ChapterContent } from "@/prompts/chapter";
+import {
+  CHAPTER_INTERVENTION_LIMITS,
+  EMPTY_CHAPTER_INTERVENTION,
+  type ChapterContent,
+  type ChapterIntervention,
+} from "@/prompts/chapter";
 import type { ChapterOutline, VolumeOutline } from "@/prompts/outline";
 
 type ChapterDisplay = ChapterContent & {
@@ -66,6 +71,57 @@ function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
 }
 
+const interventionFields: Array<{
+  key: keyof ChapterIntervention;
+  label: string;
+  placeholder: string;
+  rows: number;
+}> = [
+  {
+    key: "directorInstruction",
+    label: "导演指令",
+    placeholder: "这一章要更热血，让主角第一次意识到能力有代价。",
+    rows: 3,
+  },
+  {
+    key: "styleFocus",
+    label: "风格倾向",
+    placeholder: "热血 / 悬疑 / 黑暗 / 情感 / 打斗 / 快节奏 / 细腻",
+    rows: 2,
+  },
+  {
+    key: "mustInclude",
+    label: "本章必须出现",
+    placeholder: "妹妹的旧照片、黑色灵纹失控、监察官的试探",
+    rows: 2,
+  },
+  {
+    key: "mustAvoid",
+    label: "本章不能出现",
+    placeholder: "不要提前揭露最终反派身份，不要让女主突然表白",
+    rows: 2,
+  },
+  {
+    key: "endingRequirement",
+    label: "结尾要求",
+    placeholder: "结尾留下主角记忆缺失的悬念",
+    rows: 2,
+  },
+];
+
+function chapterKey(chapter: Pick<ChapterDisplay, "chapterNumber">) {
+  return String(chapter.chapterNumber);
+}
+
+function getInitialInterventions(chapters: ChapterDisplay[]) {
+  return Object.fromEntries(
+    chapters.map((chapter) => [
+      chapterKey(chapter),
+      chapter.draft?.intervention ?? { ...EMPTY_CHAPTER_INTERVENTION },
+    ]),
+  ) as Record<string, ChapterIntervention>;
+}
+
 export function OutlineGenerator({
   projectId,
   initialVolume,
@@ -74,6 +130,9 @@ export function OutlineGenerator({
 }: OutlineGeneratorProps) {
   const [volume, setVolume] = useState(initialVolume);
   const [chapters, setChapters] = useState(initialChapters);
+  const [interventions, setInterventions] = useState(() =>
+    getInitialInterventions(initialChapters),
+  );
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
@@ -107,12 +166,15 @@ export function OutlineGenerator({
 
     setVolume(payload.volume);
     setChapters(payload.chapters);
+    setInterventions(getInitialInterventions(payload.chapters));
     router.refresh();
   }
 
   async function generateChapter(chapter: ChapterDisplay) {
     setError("");
     setGeneratingChapterNumber(chapter.chapterNumber);
+    const currentIntervention =
+      interventions[chapterKey(chapter)] ?? { ...EMPTY_CHAPTER_INTERVENTION };
 
     const response = await fetch("/api/generate/chapter", {
       method: "POST",
@@ -123,6 +185,7 @@ export function OutlineGenerator({
         projectId,
         chapterId: chapter.id,
         chapterNumber: chapter.chapterNumber,
+        intervention: currentIntervention,
       }),
     });
 
@@ -140,6 +203,11 @@ export function OutlineGenerator({
       id: payload.chapterId || chapter.id,
     };
 
+    setInterventions((currentInterventions) => ({
+      ...currentInterventions,
+      [chapterKey(generatedChapter)]:
+        generatedChapter.draft?.intervention ?? currentIntervention,
+    }));
     setChapters((currentChapters) =>
       currentChapters.map((currentChapter) =>
         currentChapter.chapterNumber === generatedChapter.chapterNumber
@@ -148,6 +216,25 @@ export function OutlineGenerator({
       ),
     );
     router.refresh();
+  }
+
+  function updateIntervention(
+    chapter: ChapterDisplay,
+    key: keyof ChapterIntervention,
+    value: string,
+  ) {
+    setInterventions((currentInterventions) => {
+      const currentIntervention =
+        currentInterventions[chapterKey(chapter)] ?? { ...EMPTY_CHAPTER_INTERVENTION };
+
+      return {
+        ...currentInterventions,
+        [chapterKey(chapter)]: {
+          ...currentIntervention,
+          [key]: value,
+        },
+      };
+    });
   }
 
   return (
@@ -256,6 +343,35 @@ export function OutlineGenerator({
                       </p>
                     </div>
                   ))}
+                </div>
+
+                <div className="mt-5 border-t border-[var(--line)] pt-4">
+                  <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                    本章导演指令 / 互动干预
+                  </p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {interventionFields.map((field) => (
+                      <label className="grid gap-1" key={field.key}>
+                        <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                          {field.label}
+                        </span>
+                        <textarea
+                          className="min-h-20 resize-y rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
+                          disabled={generatingChapterNumber !== null}
+                          maxLength={CHAPTER_INTERVENTION_LIMITS[field.key]}
+                          onChange={(event) =>
+                            updateIntervention(chapter, field.key, event.target.value)
+                          }
+                          placeholder={field.placeholder}
+                          rows={field.rows}
+                          value={
+                            interventions[chapterKey(chapter)]?.[field.key] ??
+                            EMPTY_CHAPTER_INTERVENTION[field.key]
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
                 </div>
 
                 {chapter.draft?.body ? (

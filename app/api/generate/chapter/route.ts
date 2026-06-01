@@ -13,8 +13,11 @@ import {
   buildChapterDraft,
   buildChapterPrompt,
   buildPreviousChapterContext,
+  CHAPTER_INTERVENTION_LIMITS,
   CHAPTER_PROMPT_VERSION,
   DEFAULT_CHAPTER_WORD_TARGET,
+  EMPTY_CHAPTER_INTERVENTION,
+  type ChapterIntervention,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
 import {
@@ -35,6 +38,7 @@ type GenerateChapterBody = {
   projectId?: unknown;
   chapterId?: unknown;
   chapterNumber?: unknown;
+  intervention?: unknown;
   user_id?: unknown;
 };
 
@@ -135,6 +139,81 @@ function parseJsonObject(text: string) {
   return JSON.parse(trimmed) as unknown;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readInterventionField(
+  source: Record<string, unknown>,
+  key: keyof ChapterIntervention,
+): { ok: true; value: string } | { ok: false; error: string } {
+  const rawValue = source[key];
+
+  if (rawValue === undefined || rawValue === null) {
+    return { ok: true, value: "" };
+  }
+
+  if (typeof rawValue !== "string") {
+    return { ok: false, error: `干预字段 ${key} 必须是字符串。` };
+  }
+
+  const value = rawValue.trim();
+  const limit = CHAPTER_INTERVENTION_LIMITS[key];
+
+  if (value.length > limit) {
+    return { ok: false, error: `干预字段 ${key} 不能超过 ${limit} 字符。` };
+  }
+
+  return { ok: true, value };
+}
+
+function parseChapterIntervention(value: unknown) {
+  if (value === undefined || value === null) {
+    return { ok: true as const, intervention: EMPTY_CHAPTER_INTERVENTION };
+  }
+
+  if (!isRecord(value)) {
+    return { ok: false as const, error: "intervention 必须是 JSON object。" };
+  }
+
+  const directorInstruction = readInterventionField(value, "directorInstruction");
+  const styleFocus = readInterventionField(value, "styleFocus");
+  const mustInclude = readInterventionField(value, "mustInclude");
+  const mustAvoid = readInterventionField(value, "mustAvoid");
+  const endingRequirement = readInterventionField(value, "endingRequirement");
+
+  if (!directorInstruction.ok) {
+    return directorInstruction;
+  }
+
+  if (!styleFocus.ok) {
+    return styleFocus;
+  }
+
+  if (!mustInclude.ok) {
+    return mustInclude;
+  }
+
+  if (!mustAvoid.ok) {
+    return mustAvoid;
+  }
+
+  if (!endingRequirement.ok) {
+    return endingRequirement;
+  }
+
+  return {
+    ok: true as const,
+    intervention: {
+      directorInstruction: directorInstruction.value,
+      styleFocus: styleFocus.value,
+      mustInclude: mustInclude.value,
+      mustAvoid: mustAvoid.value,
+      endingRequirement: endingRequirement.value,
+    },
+  };
+}
+
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
   return normalizeChapterOutlines([
     {
@@ -160,6 +239,7 @@ function buildPromptInput(
   volume: VolumeOutline,
   chapter: ChapterOutline,
   previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
+  intervention: ChapterIntervention,
 ): ChapterPromptInput {
   return {
     project: {
@@ -183,6 +263,7 @@ function buildPromptInput(
     volume,
     chapter,
     previousChapters,
+    intervention,
     wordTarget: chapter.estimatedWords || DEFAULT_CHAPTER_WORD_TARGET,
   };
 }
@@ -206,6 +287,14 @@ export async function POST(request: Request) {
   if ("user_id" in body) {
     return validationError("生成章节正文时不能从前端传 user_id。");
   }
+
+  const interventionValidation = parseChapterIntervention(body.intervention);
+
+  if (!interventionValidation.ok) {
+    return validationError(interventionValidation.error);
+  }
+
+  const { intervention } = interventionValidation;
 
   const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
   const chapterId = typeof body.chapterId === "string" ? body.chapterId.trim() : "";
@@ -282,7 +371,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const baseLogInput = { project: visibleProject };
+  const baseLogInput = { project: visibleProject, intervention };
 
   const { data: config, error: configError } = await supabase
     .from("story_configs")
@@ -441,6 +530,7 @@ export async function POST(request: Request) {
     volume,
     chapter,
     previousChapters,
+    intervention,
   );
   const logInput = {
     project: visibleProject,
@@ -451,6 +541,7 @@ export async function POST(request: Request) {
     volume,
     chapter,
     previousChapters,
+    intervention,
   };
 
   let outputText = "";
@@ -476,11 +567,12 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const draft = buildChapterDraft(outputText, model, promptInput.wordTarget);
+  const draft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
   const summaryLogInput = {
     project: visibleProject,
     chapter,
     previousChapters,
+    intervention,
     draft,
     body: outputText,
   };

@@ -16,6 +16,15 @@ export type ChapterDraft = {
   model: string;
   promptVersion: string;
   wordTarget: number;
+  intervention?: ChapterIntervention;
+};
+
+export type ChapterIntervention = {
+  directorInstruction: string;
+  styleFocus: string;
+  mustInclude: string;
+  mustAvoid: string;
+  endingRequirement: string;
 };
 
 export type ChapterContent = ChapterOutline & {
@@ -50,8 +59,25 @@ export type ChapterPromptInput = {
   volume: VolumeOutline;
   chapter: ChapterOutline;
   previousChapters: PreviousChapterContext[];
+  intervention: ChapterIntervention;
   wordTarget: number;
 };
+
+export const EMPTY_CHAPTER_INTERVENTION: ChapterIntervention = {
+  directorInstruction: "",
+  styleFocus: "",
+  mustInclude: "",
+  mustAvoid: "",
+  endingRequirement: "",
+};
+
+export const CHAPTER_INTERVENTION_LIMITS = {
+  directorInstruction: 800,
+  styleFocus: 160,
+  mustInclude: 600,
+  mustAvoid: 600,
+  endingRequirement: 500,
+} as const satisfies Record<keyof ChapterIntervention, number>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -63,6 +89,26 @@ function cleanText(value: unknown, maxLength = 200000) {
   }
 
   return value.trim().slice(0, maxLength);
+}
+
+export function normalizeChapterIntervention(value: unknown): ChapterIntervention | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  return {
+    directorInstruction: cleanText(
+      value.directorInstruction,
+      CHAPTER_INTERVENTION_LIMITS.directorInstruction,
+    ),
+    styleFocus: cleanText(value.styleFocus, CHAPTER_INTERVENTION_LIMITS.styleFocus),
+    mustInclude: cleanText(value.mustInclude, CHAPTER_INTERVENTION_LIMITS.mustInclude),
+    mustAvoid: cleanText(value.mustAvoid, CHAPTER_INTERVENTION_LIMITS.mustAvoid),
+    endingRequirement: cleanText(
+      value.endingRequirement,
+      CHAPTER_INTERVENTION_LIMITS.endingRequirement,
+    ),
+  };
 }
 
 function excerptText(value: string, maxLength = 900) {
@@ -87,6 +133,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   const generatedAt = cleanText(value.generatedAt, 80);
   const model = cleanText(value.model, 120);
   const promptVersion = cleanText(value.promptVersion, 80);
+  const intervention = normalizeChapterIntervention(value.intervention);
   const wordTarget = value.wordTarget;
 
   if (
@@ -107,6 +154,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
     model,
     promptVersion,
     wordTarget,
+    ...(intervention ? { intervention } : {}),
   };
 }
 
@@ -146,6 +194,7 @@ export function buildChapterDraft(
   body: string,
   model: string,
   wordTarget = DEFAULT_CHAPTER_WORD_TARGET,
+  intervention: ChapterIntervention = EMPTY_CHAPTER_INTERVENTION,
 ): ChapterDraft {
   return {
     body,
@@ -153,6 +202,7 @@ export function buildChapterDraft(
     model,
     promptVersion: CHAPTER_PROMPT_VERSION,
     wordTarget,
+    intervention,
   };
 }
 
@@ -241,6 +291,24 @@ function formatPreviousChapters(previousChapters: PreviousChapterContext[]) {
     .join("\n\n");
 }
 
+function hasIntervention(intervention: ChapterIntervention) {
+  return Object.values(intervention).some(Boolean);
+}
+
+function formatChapterIntervention(intervention: ChapterIntervention) {
+  if (!hasIntervention(intervention)) {
+    return "无。按当前章节大纲、故事圣经和前文连续性生成。";
+  }
+
+  return [
+    `- directorInstruction：${intervention.directorInstruction || "未填写"}`,
+    `- styleFocus：${intervention.styleFocus || "未填写"}`,
+    `- mustInclude：${intervention.mustInclude || "未填写"}`,
+    `- mustAvoid：${intervention.mustAvoid || "未填写"}`,
+    `- endingRequirement：${intervention.endingRequirement || "未填写"}`,
+  ].join("\n");
+}
+
 export function buildChapterPrompt(input: ChapterPromptInput) {
   return [
     "你是严谨的中文长篇网文单章正文作者。请基于已保存的项目设定、故事圣经、角色卡、第一卷信息、当前章节大纲和前文信息，只生成当前一章正文。",
@@ -252,6 +320,8 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "- 不得生成 TipTap、改写、续写、多章批量、收费、社区、排行榜、AI 绘图或漫画分镜相关内容。",
     "- 必须完成当前章节大纲中的事件、冲突、看点、伏笔和角色变化。",
     "- 不得违背 story_bible 的不可变规则、世界观、力量系统、角色卡和第一卷主线。",
+    "- 本章导演指令 / 互动干预必须尽量吸收，但优先级低于 story_bible、characters、immutableRules、前文摘要和当前章节大纲。",
+    "- 如果导演指令和故事圣经或不可变规则冲突，必须遵守故事圣经，并用不冲突的方式吸收用户意图。",
     "- 结尾必须保留明确的悬念或情绪钩子，但不能直接进入下一章正文。",
     "- 文风必须符合项目 tone / genre，内容必须是中文小说正文。",
     "",
@@ -318,6 +388,9 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     `- foreshadowing：${input.chapter.foreshadowing}`,
     `- endingHook：${input.chapter.endingHook}`,
     `- estimatedWords：${input.chapter.estimatedWords}`,
+    "",
+    "本章导演指令 / 互动干预：",
+    formatChapterIntervention(input.intervention),
     "",
     "现在只输出当前章中文小说正文。",
   ].join("\n");
