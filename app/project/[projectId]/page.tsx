@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { ConceptGenerator } from "@/components/project/concept-generator";
 import {
   findPlotFilterLabel,
   type PlotFilterKey,
 } from "@/data/plot-filters";
 import { createClient } from "@/lib/supabase/server";
+import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 
 type StoryConfig = {
   theme: string | null;
@@ -17,6 +19,10 @@ type StoryConfig = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+};
+
+type StoryConceptRow = {
+  content: StoryConcept | null;
 };
 
 const configRows: Array<{
@@ -66,6 +72,14 @@ export default async function ProjectDetailPage({
     )
     .eq("project_id", projectId)
     .maybeSingle<StoryConfig>();
+
+  const { data: storyConcept } = await supabase
+    .from("story_concepts")
+    .select("content")
+    .eq("project_id", projectId)
+    .maybeSingle<StoryConceptRow>();
+
+  const concept = normalizeStoryConcept(storyConcept?.content);
 
   return (
     <main className="app-shell py-8">
@@ -145,12 +159,16 @@ export default async function ProjectDetailPage({
         )}
       </section>
 
-      <section className="surface mt-6 p-6">
-        <h2 className="text-2xl font-black text-[var(--ink)]">下一步</h2>
-        <p className="mt-2 leading-7 text-[var(--muted)]">
-          WO-003 到此为止。作品设定生成、故事圣经、章节大纲和正文不在当前工作单范围内。
-        </p>
-      </section>
+      {config ? (
+        <ConceptGenerator initialConcept={concept} projectId={projectId} />
+      ) : (
+        <section className="surface mt-6 p-6">
+          <h2 className="text-2xl font-black text-[var(--ink)]">作品设定</h2>
+          <p className="mt-2 leading-7 text-[var(--muted)]">
+            缺少 story_config，不能生成作品设定。
+          </p>
+        </section>
+      )}
     </main>
   );
 }
