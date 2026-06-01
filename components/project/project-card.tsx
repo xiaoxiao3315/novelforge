@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PROJECT_MODE_LABELS, type ProjectMode } from "@/lib/projects/modes";
 
 export type ProjectCardData = {
   id: string;
@@ -7,6 +8,7 @@ export type ProjectCardData = {
   status: string;
   updated_at: string;
   created_at: string;
+  mode: ProjectMode;
 };
 
 function formatDate(value: string) {
@@ -31,12 +33,13 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
           </p>
         </div>
         <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
-          {project.status}
+          {PROJECT_MODE_LABELS[project.mode]}
         </span>
       </div>
-      <p className="mt-5 text-xs font-semibold text-[var(--muted)]">
-        最近更新 {formatDate(project.updated_at || project.created_at)}
-      </p>
+      <div className="mt-5 flex flex-wrap items-center gap-2 text-xs font-semibold text-[var(--muted)]">
+        <span>{project.status}</span>
+        <span>最近更新 {formatDate(project.updated_at || project.created_at)}</span>
+      </div>
     </Link>
   );
 }

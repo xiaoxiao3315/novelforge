@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { isValidPlotFilterValue } from "@/data/plot-filters";
+import { isProjectMode, normalizeProjectMode } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 
 type ProjectRequestBody = {
@@ -14,6 +15,7 @@ type ProjectRequestBody = {
   tone?: unknown;
   serialStructure?: unknown;
   extraIdeas?: unknown;
+  mode?: unknown;
   user_id?: unknown;
 };
 
@@ -52,9 +54,14 @@ export async function POST(request: Request) {
   const title = cleanText(body.title, 80);
   const description = cleanText(body.description, 200);
   const extraIdeas = cleanText(body.extraIdeas, 1200);
+  const mode = normalizeProjectMode(body.mode);
 
   if (!title) {
     return validationError("请填写作品名。");
+  }
+
+  if (body.mode !== undefined && !isProjectMode(body.mode)) {
+    return validationError("项目模式不合法。");
   }
 
   const requiredFilters = [
@@ -114,6 +121,7 @@ export async function POST(request: Request) {
       tone: body.tone,
       serialStructure: body.serialStructure,
       extraIdeas,
+      mode,
     },
   });
 

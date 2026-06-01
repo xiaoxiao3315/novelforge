@@ -4,6 +4,11 @@ import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { plotFilters, type PlotFilterOption } from "@/data/plot-filters";
+import {
+  DEFAULT_PROJECT_MODE,
+  PROJECT_MODE_OPTIONS,
+  type ProjectMode,
+} from "@/lib/projects/modes";
 import { formatUserFacingError } from "@/lib/ui/errors";
 
 type SelectFieldProps = {
@@ -26,6 +31,7 @@ type FormState = {
   tone: string;
   serialStructure: string;
   extraIdeas: string;
+  mode: ProjectMode;
 };
 
 const initialState: FormState = {
@@ -40,6 +46,7 @@ const initialState: FormState = {
   tone: plotFilters.tones[0]?.value || "",
   serialStructure: plotFilters.serialStructures[0]?.value || "",
   extraIdeas: "",
+  mode: DEFAULT_PROJECT_MODE,
 };
 
 function SelectField({ name, label, options, value, onChange }: SelectFieldProps) {
@@ -106,6 +113,7 @@ export function CreateProjectForm() {
         tone: form.tone,
         serialStructure: form.serialStructure,
         extraIdeas: form.extraIdeas,
+        mode: form.mode,
       }),
     });
 
@@ -127,6 +135,39 @@ export function CreateProjectForm() {
   return (
     <form className="surface p-6" onSubmit={handleSubmit}>
       <div className="grid gap-5 md:grid-cols-2">
+        <fieldset className="md:col-span-2">
+          <legend className="mb-3 block text-sm font-bold text-[var(--ink)]">项目模式</legend>
+          <div className="grid gap-3 md:grid-cols-2">
+            {PROJECT_MODE_OPTIONS.map((option) => (
+              <label
+                className={`rounded-md border px-4 py-4 transition ${
+                  form.mode === option.value
+                    ? "border-[var(--accent)] bg-[#eef4f2]"
+                    : "border-[var(--line)] bg-white"
+                }`}
+                key={option.value}
+              >
+                <span className="flex items-start gap-3">
+                  <input
+                    checked={form.mode === option.value}
+                    className="mt-1"
+                    name="projectMode"
+                    onChange={() => updateField("mode", option.value)}
+                    type="radio"
+                    value={option.value}
+                  />
+                  <span>
+                    <span className="block font-black text-[var(--ink)]">{option.label}</span>
+                    <span className="mt-1 block text-sm leading-6 text-[var(--muted)]">
+                      {option.description}
+                    </span>
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
         <label className="block md:col-span-2">
           <span className="mb-2 block text-sm font-bold text-[var(--ink)]">作品名</span>
           <input

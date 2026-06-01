@@ -9,6 +9,11 @@ import {
   type PlotFilterKey,
 } from "@/data/plot-filters";
 import { ensureCreditAccount } from "@/lib/credits";
+import {
+  getProjectModeFromConfig,
+  PROJECT_MODE_LABELS,
+  type ProjectMode,
+} from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -33,6 +38,7 @@ type StoryConfig = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+  config_json: unknown;
 };
 
 type StoryConceptRow = {
@@ -65,8 +71,10 @@ type ChapterVersionRow = {
   chapter_id: string;
 };
 
+type StoryConfigDisplayKey = Exclude<keyof StoryConfig, "config_json">;
+
 const configRows: Array<{
-  key: keyof StoryConfig;
+  key: StoryConfigDisplayKey;
   filterKey?: PlotFilterKey;
   label: string;
 }> = [
@@ -79,6 +87,12 @@ const configRows: Array<{
   { key: "tone", filterKey: "tones", label: "基调" },
   { key: "serial_structure", filterKey: "serialStructures", label: "连载结构" },
 ];
+
+const modeDescriptions: Record<ProjectMode, string> = {
+  classic: "经典小说模式：按现有流程生成作品设定、故事圣经、章节大纲和单章正文。",
+  interactive:
+    "互动剧情模式：作为独立产品分支预留。后续将支持章节选择、状态变化和剧情路线图，本轮不生成真实决策点。",
+};
 
 export default async function ProjectDetailPage({
   params,
@@ -111,10 +125,11 @@ export default async function ProjectDetailPage({
   const { data: config } = await supabase
     .from("story_configs")
     .select(
-      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas",
+      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
     .maybeSingle<StoryConfig>();
+  const projectMode = getProjectModeFromConfig(config?.config_json);
 
   const { data: storyConcept } = await supabase
     .from("story_concepts")
@@ -196,6 +211,9 @@ export default async function ProjectDetailPage({
         </p>
         <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
           <div>
+            <span className="mb-3 inline-flex rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
+              {PROJECT_MODE_LABELS[projectMode]}
+            </span>
             <h1 className="text-4xl font-black text-[var(--ink)]">{project.title}</h1>
             <p className="mt-3 max-w-3xl leading-7 text-[var(--muted)]">
               {project.description || "暂未填写简介"}
@@ -213,6 +231,9 @@ export default async function ProjectDetailPage({
             <h2 className="text-2xl font-black text-[var(--ink)]">创作流程</h2>
             <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">
               按顺序推进会最稳定。每次 AI 生成可能需要几十秒；生成失败不会覆盖已保存内容，也不会扣点。
+            </p>
+            <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">
+              {modeDescriptions[projectMode]}
             </p>
           </div>
           <Link className="button-secondary" href="/account/credits">

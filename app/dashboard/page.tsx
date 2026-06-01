@@ -3,7 +3,18 @@ import { redirect } from "next/navigation";
 import { AppNav } from "@/components/app/app-nav";
 import { ProjectCard, type ProjectCardData } from "@/components/project/project-card";
 import { ensureCreditAccount } from "@/lib/credits";
+import {
+  getProjectModeFromConfig,
+  type ProjectMode,
+} from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
+
+type ProjectRow = Omit<ProjectCardData, "mode">;
+
+type StoryConfigModeRow = {
+  project_id: string;
+  config_json: unknown;
+};
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -19,6 +30,26 @@ export default async function DashboardPage() {
     .from("projects")
     .select("id,title,description,status,created_at,updated_at")
     .order("updated_at", { ascending: false });
+  const projectRows = (projects ?? []) as ProjectRow[];
+  const projectIds = projectRows.map((project) => project.id);
+  const { data: storyConfigRows } =
+    projectIds.length > 0
+      ? await supabase
+          .from("story_configs")
+          .select("project_id,config_json")
+          .in("project_id", projectIds)
+          .returns<StoryConfigModeRow[]>()
+      : { data: [] as StoryConfigModeRow[] };
+  const modeByProjectId = new Map<string, ProjectMode>(
+    (storyConfigRows ?? []).map((row) => [
+      row.project_id,
+      getProjectModeFromConfig(row.config_json),
+    ]),
+  );
+  const projectCards: ProjectCardData[] = projectRows.map((project) => ({
+    ...project,
+    mode: modeByProjectId.get(project.id) ?? "classic",
+  }));
   const creditAccount = await ensureCreditAccount(supabase);
   const creditBalance = creditAccount.ok ? creditAccount.balance : null;
 
@@ -60,9 +91,9 @@ export default async function DashboardPage() {
           <div className="mt-6 rounded-md border border-[#e2b6a6] bg-[#fff4ef] p-4 text-sm text-[#7f2f1d]">
             作品列表暂时读取失败，请刷新页面重试。
           </div>
-        ) : projects && projects.length > 0 ? (
+        ) : projectCards.length > 0 ? (
           <div className="mt-6 grid gap-4 md:grid-cols-2">
-            {(projects as ProjectCardData[]).map((project) => (
+            {projectCards.map((project) => (
               <ProjectCard key={project.id} project={project} />
             ))}
           </div>
