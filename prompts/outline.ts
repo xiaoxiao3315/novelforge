@@ -1,7 +1,7 @@
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 import type { StoryConcept } from "@/prompts/concept";
 
-export const OUTLINE_PROMPT_VERSION = "outline-v1";
+export const OUTLINE_PROMPT_VERSION = "outline-v2";
 export const DEFAULT_OUTLINE_CHAPTER_COUNT = 20;
 export const DEFAULT_ESTIMATED_WORDS = 2500;
 
@@ -401,7 +401,9 @@ export function buildOutlinePrompt(input: OutlinePromptInput) {
     "硬性要求：",
     "- 只生成第一卷章节大纲，不生成任何章节正文。",
     `- 必须生成 ${DEFAULT_OUTLINE_CHAPTER_COUNT} 章，每章 estimatedWords 默认围绕 ${DEFAULT_ESTIMATED_WORDS} 字。`,
-    "- 输出必须是可被 JSON.parse 解析的 JSON object，不要使用 Markdown，不要添加解释文字。",
+    "- 只能输出一个 JSON object，首字符必须是 {，末字符必须是 }。",
+    "- 不要 Markdown，不要代码块，不要解释，不要前言或结语，不要在 JSON 前后输出任何多余文本。",
+    "- 必须严格符合下方目标 JSON 结构示例：顶层只能有 volume 和 chapters，字段名、层级和类型必须一致，不得添加 schema 外字段。",
     "- 不得生成 TipTap、改写、续写、收费、社区或排行榜相关内容。",
     "- 每章必须服务第一卷主线冲突，并保留足够的结尾钩子供后续单章正文生成使用。",
     "",
@@ -464,7 +466,7 @@ export function buildOutlinePrompt(input: OutlinePromptInput) {
     "- chapterNumber 必须从 1 到 20 连续，不能跳号，不能重复。",
     "- event/conflict/characterChange/highlight/foreshadowing/endingHook 都只写大纲，不写正文段落。",
     "",
-    "目标 JSON 结构示例（必须输出同结构 JSON object，不要照抄示例内容）：",
+    "目标 JSON 结构示例（最终答案必须是同结构 JSON object，不要照抄示例内容）：",
     outlineJsonStructureExample,
   ].join("\n");
 }

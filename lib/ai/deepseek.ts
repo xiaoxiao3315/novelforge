@@ -7,6 +7,7 @@ type GenerateDeepSeekJsonOptions = {
   systemPrompt: string;
   userPrompt: string;
   maxTokens?: number;
+  temperature?: number;
 };
 
 export function getDeepSeekModel() {
@@ -34,6 +35,7 @@ export async function generateDeepSeekJson({
   systemPrompt,
   userPrompt,
   maxTokens = 1800,
+  temperature,
 }: GenerateDeepSeekJsonOptions) {
   const model = getDeepSeekModel();
   const completion = await createDeepSeekClient().chat.completions.create({
@@ -44,16 +46,15 @@ export async function generateDeepSeekJson({
     ],
     response_format: { type: "json_object" },
     max_tokens: maxTokens,
+    ...(temperature === undefined ? {} : { temperature }),
   });
 
-  const outputText = completion.choices[0]?.message?.content?.trim() ?? "";
-
-  if (!outputText) {
-    throw new Error("DeepSeek 响应缺少 JSON 文本。");
-  }
+  const choice = completion.choices[0];
+  const outputText = choice?.message?.content?.trim() ?? "";
 
   return {
     model,
     outputText,
+    finishReason: choice?.finish_reason ?? null,
   };
 }

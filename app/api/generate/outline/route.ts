@@ -57,8 +57,26 @@ type VolumeIdRow = {
   id: string;
 };
 
-const OUTLINE_SYSTEM_PROMPT =
-  "你只输出可解析 JSON object。只生成第一卷章节大纲，不得生成章节正文、TipTap、改写、续写、收费、社区或排行榜内容。输出必须是 JSON，不能使用 Markdown。";
+const OUTLINE_GENERATION_ATTEMPTS = 2;
+const OUTLINE_MAX_TOKENS = 8192;
+const OUTLINE_TEMPERATURE = 0.1;
+const RAW_OUTPUT_PREVIEW_LENGTH = 1000;
+const OUTLINE_SYSTEM_PROMPT = [
+  "你只输出一个可被 JSON.parse 解析的 JSON object。",
+  "不要 Markdown。不要代码块。不要解释。不要任何 JSON 前后的多余文本。",
+  "首字符必须是 {，末字符必须是 }。",
+  "严格匹配用户提供的目标 JSON 结构：顶层只能包含 volume 和 chapters。",
+  "只生成第一卷章节大纲，不得生成章节正文、TipTap、改写、续写、收费、社区或排行榜内容。",
+].join(" ");
+
+type JsonParseFailure = {
+  attempt: number;
+  errorType: string;
+  message: string;
+  outputLength: number;
+  finishReason: string | null;
+  rawPreview: string;
+};
 
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -76,6 +94,69 @@ function parseJsonObject(text: string) {
     .trim();
 
   return JSON.parse(trimmed) as unknown;
+}
+
+function getErrorType(error: unknown) {
+  if (error instanceof Error && error.name) {
+    return error.name;
+  }
+
+  return typeof error;
+}
+
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function buildJsonParseFailure(
+  attempt: number,
+  outputText: string,
+  finishReason: string | null,
+  error: unknown,
+): JsonParseFailure {
+  return {
+    attempt,
+    errorType: getErrorType(error),
+    message: getErrorMessage(error).slice(0, 800),
+    outputLength: outputText.length,
+    finishReason,
+    rawPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+  };
+}
+
+function buildEmptyOutputFailure(
+  attempt: number,
+  finishReason: string | null,
+): JsonParseFailure {
+  return {
+    attempt,
+    errorType: "EmptyOutput",
+    message: "DeepSeek 响应缺少 JSON 文本。",
+    outputLength: 0,
+    finishReason,
+    rawPreview: "",
+  };
+}
+
+function formatJsonParseFailureLog(failures: JsonParseFailure[]) {
+  return [
+    `AI 输出不是有效 JSON（已尝试 ${failures.length} 次）。`,
+    ...failures.flatMap((failure) => [
+      [
+        `attempt=${failure.attempt}`,
+        `errorType=${failure.errorType}`,
+        `message=${failure.message}`,
+        `outputLength=${failure.outputLength}`,
+        `finishReason=${failure.finishReason ?? "unknown"}`,
+        `rawPreviewFirst${RAW_OUTPUT_PREVIEW_LENGTH}Chars:`,
+      ].join("; "),
+      failure.rawPreview,
+    ]),
+  ].join("\n");
 }
 
 function buildPromptInput(
@@ -265,34 +346,54 @@ export async function POST(request: Request) {
     });
   }
 
-  let outputText = "";
-
-  try {
-    const result = await generateDeepSeekJson({
-      systemPrompt: OUTLINE_SYSTEM_PROMPT,
-      userPrompt: buildOutlinePrompt(promptInput),
-      maxTokens: 7200,
-    });
-
-    outputText = result.outputText;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "DeepSeek 请求失败。";
-    const errorMessage = `DeepSeek 生成失败：${message.slice(0, 800)}`;
-    await writeErrorLog(errorMessage);
-    return serverError(errorMessage);
-  }
-
-  if (!outputText) {
-    const error = "DeepSeek 响应缺少 JSON 文本。";
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
+  const userPrompt = buildOutlinePrompt(promptInput);
+  const parseFailures: JsonParseFailure[] = [];
   let parsed: unknown;
+  let parsedSuccessfully = false;
 
-  try {
-    parsed = parseJsonObject(outputText);
-  } catch {
+  for (let attempt = 1; attempt <= OUTLINE_GENERATION_ATTEMPTS; attempt += 1) {
+    let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
+
+    try {
+      result = await generateDeepSeekJson({
+        systemPrompt: OUTLINE_SYSTEM_PROMPT,
+        userPrompt,
+        maxTokens: OUTLINE_MAX_TOKENS,
+        temperature: OUTLINE_TEMPERATURE,
+      });
+    } catch (error) {
+      const message = getErrorMessage(error);
+      const errorMessage = `DeepSeek 生成失败（第 ${attempt} 次）：${message.slice(0, 800)}`;
+      const logMessage =
+        parseFailures.length > 0
+          ? `${errorMessage}\n\n此前 JSON parse 失败详情：\n${formatJsonParseFailureLog(parseFailures)}`
+          : errorMessage;
+
+      await writeErrorLog(logMessage);
+      return serverError(errorMessage);
+    }
+
+    if (!result.outputText) {
+      parseFailures.push(buildEmptyOutputFailure(attempt, result.finishReason));
+    } else {
+      try {
+        parsed = parseJsonObject(result.outputText);
+        parsedSuccessfully = true;
+        break;
+      } catch (error) {
+        parseFailures.push(
+          buildJsonParseFailure(attempt, result.outputText, result.finishReason, error),
+        );
+      }
+    }
+
+    if (attempt === OUTLINE_GENERATION_ATTEMPTS) {
+      await writeErrorLog(formatJsonParseFailureLog(parseFailures));
+      return serverError("AI 输出不是有效 JSON。");
+    }
+  }
+
+  if (!parsedSuccessfully) {
     const error = "AI 输出不是有效 JSON。";
     await writeErrorLog(error);
     return serverError(error);
