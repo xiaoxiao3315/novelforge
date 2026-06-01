@@ -1,6 +1,6 @@
 import type { ChapterOutline } from "@/prompts/outline";
 
-export const CHAPTER_SUMMARY_PROMPT_VERSION = "chapter-summary-v1";
+export const CHAPTER_SUMMARY_PROMPT_VERSION = "chapter-summary-v2";
 
 export type ChapterSummary = {
   keyEvents: string[];
@@ -224,8 +224,11 @@ export function buildChapterSummaryPrompt(input: ChapterSummaryPromptInput) {
     "- 只总结当前一章，不生成正文，不续写，不改写，不生成整本小说。",
     "- 摘要必须为后续章节生成服务，重点记录已发生事件、人物状态、关系变化、伏笔、未解决悬念和结尾状态。",
     "- 不要编造正文中没有发生的事实；不确定的信息写成待确认悬念。",
-    "- 只输出 JSON object，不要 Markdown，不要代码块，不要解释。",
+    "- 只输出一个 JSON object，首字符必须是 {，末字符必须是 }。",
+    "- 不要 Markdown，不要代码块，不要解释，不要输出 JSON 前后的多余文本。",
     "- 必须严格符合目标 JSON 结构，顶层只能包含示例中的 7 个字段。",
+    "- 所有字符串字段必须是单行短句，不要在 JSON string 中输出裸换行、制表符或任何控制字符。",
+    "- 如果需要多条信息，使用数组，每项只写一条单行短句。",
     "",
     "前文已保存摘要：",
     formatPreviousSummaries(input.previousSummaries),

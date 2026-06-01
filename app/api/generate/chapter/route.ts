@@ -92,8 +92,10 @@ type ChapterRow = {
 
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
+const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const RAW_OUTPUT_PREVIEW_LENGTH = 1000;
 const CHAPTER_SYSTEM_PROMPT = [
   "你只输出中文小说正文。",
   "不要 Markdown，不要代码块，不要解释，不要大纲，不要标题分析。",
@@ -102,8 +104,18 @@ const CHAPTER_SYSTEM_PROMPT = [
 const CHAPTER_SUMMARY_SYSTEM_PROMPT = [
   "你只输出一个可被 JSON.parse 解析的 JSON object。",
   "不要 Markdown，不要代码块，不要解释，不要输出 JSON 前后的多余文本。",
+  "所有字符串字段必须是单行短句，不要在 JSON string 中输出裸换行、制表符或控制字符。",
   "只总结当前章节，不写正文，不续写，不生成整本小说。",
 ].join(" ");
+
+type SummaryJsonParseFailure = {
+  attempt: number;
+  errorType: string;
+  message: string;
+  outputLength: number;
+  finishReason: string | null;
+  rawPreview: string;
+};
 
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
@@ -119,6 +131,14 @@ function getErrorMessage(error: unknown) {
   }
 
   return String(error);
+}
+
+function getErrorType(error: unknown) {
+  if (error instanceof Error && error.name) {
+    return error.name;
+  }
+
+  return typeof error;
 }
 
 function cleanChapterBody(text: string) {
@@ -137,6 +157,129 @@ function parseJsonObject(text: string) {
     .trim();
 
   return JSON.parse(trimmed) as unknown;
+}
+
+function isControlCharacterJsonError(error: unknown) {
+  return /control character|bad control|unexpected token[\s\S]*(?:\n|\r|\t)/i.test(
+    getErrorMessage(error),
+  );
+}
+
+function escapeControlCharactersInJsonStrings(text: string) {
+  let result = "";
+  let inString = false;
+  let escaping = false;
+
+  for (const character of text) {
+    if (!inString) {
+      result += character;
+
+      if (character === "\"") {
+        inString = true;
+      }
+
+      continue;
+    }
+
+    if (escaping) {
+      result += character;
+      escaping = false;
+      continue;
+    }
+
+    if (character === "\\") {
+      result += character;
+      escaping = true;
+      continue;
+    }
+
+    if (character === "\"") {
+      result += character;
+      inString = false;
+      continue;
+    }
+
+    const codePoint = character.codePointAt(0) ?? 0;
+
+    if (character === "\n") {
+      result += "\\n";
+    } else if (character === "\r") {
+      result += "\\r";
+    } else if (character === "\t") {
+      result += "\\t";
+    } else if (codePoint >= 0 && codePoint <= 0x1f) {
+      result += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+    } else {
+      result += character;
+    }
+  }
+
+  return result;
+}
+
+function parseSummaryJsonObject(text: string) {
+  try {
+    return parseJsonObject(text);
+  } catch (error) {
+    if (!isControlCharacterJsonError(error)) {
+      throw error;
+    }
+
+    const trimmed = text
+      .trim()
+      .replace(/^```(?:json)?/i, "")
+      .replace(/```$/i, "")
+      .trim();
+
+    return JSON.parse(escapeControlCharactersInJsonStrings(trimmed)) as unknown;
+  }
+}
+
+function buildSummaryJsonParseFailure(
+  attempt: number,
+  outputText: string,
+  finishReason: string | null,
+  error: unknown,
+): SummaryJsonParseFailure {
+  return {
+    attempt,
+    errorType: getErrorType(error),
+    message: getErrorMessage(error).slice(0, 800),
+    outputLength: outputText.length,
+    finishReason,
+    rawPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+  };
+}
+
+function buildEmptySummaryOutputFailure(
+  attempt: number,
+  finishReason: string | null,
+): SummaryJsonParseFailure {
+  return {
+    attempt,
+    errorType: "EmptyOutput",
+    message: "DeepSeek 响应缺少章节摘要 JSON。",
+    outputLength: 0,
+    finishReason,
+    rawPreview: "",
+  };
+}
+
+function formatSummaryJsonFailureLog(failures: SummaryJsonParseFailure[]) {
+  return [
+    `DeepSeek 摘要 JSON 解析失败（已尝试 ${failures.length} 次）。`,
+    ...failures.flatMap((failure) => [
+      [
+        `attempt=${failure.attempt}`,
+        `errorType=${failure.errorType}`,
+        `message=${failure.message}`,
+        `outputLength=${failure.outputLength}`,
+        `finishReason=${failure.finishReason ?? "unknown"}`,
+        `rawPreviewFirst${RAW_OUTPUT_PREVIEW_LENGTH}Chars:`,
+      ].join("; "),
+      failure.rawPreview,
+    ]),
+  ].join("\n");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -576,34 +719,64 @@ export async function POST(request: Request) {
     draft,
     body: outputText,
   };
+  const summaryUserPrompt = buildChapterSummaryPrompt({
+    chapter,
+    body: outputText,
+    previousSummaries: previousChapters.map((previousChapter) => ({
+      ...previousChapter,
+      summary: previousChapter.summary,
+    })),
+  });
+  const summaryParseFailures: SummaryJsonParseFailure[] = [];
   let parsedSummary: unknown;
+  let parsedSummarySuccessfully = false;
 
-  try {
-    const result = await generateDeepSeekJson({
-      systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
-      userPrompt: buildChapterSummaryPrompt({
-        chapter,
-        body: outputText,
-        previousSummaries: previousChapters.map((previousChapter) => ({
-          ...previousChapter,
-          summary: previousChapter.summary,
-        })),
-      }),
-      maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
-      temperature: CHAPTER_SUMMARY_TEMPERATURE,
-    });
+  for (let attempt = 1; attempt <= CHAPTER_SUMMARY_GENERATION_ATTEMPTS; attempt += 1) {
+    let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
 
-    if (!result.outputText) {
-      const error = "DeepSeek 响应缺少章节摘要 JSON。";
-      await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
-      return serverError(error);
+    try {
+      result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
+        userPrompt: summaryUserPrompt,
+        maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
+        temperature: CHAPTER_SUMMARY_TEMPERATURE,
+      });
+    } catch (error) {
+      const errorMessage = `DeepSeek 摘要生成失败（第 ${attempt} 次）：${getErrorMessage(error).slice(0, 800)}`;
+      const logMessage =
+        summaryParseFailures.length > 0
+          ? `${errorMessage}\n\n此前摘要 JSON 解析失败详情：\n${formatSummaryJsonFailureLog(summaryParseFailures)}`
+          : errorMessage;
+
+      await writeSummaryErrorLog(logMessage, summaryLogInput, chapterRow.id);
+      return serverError(errorMessage);
     }
 
-    parsedSummary = parseJsonObject(result.outputText);
-  } catch (error) {
-    const errorMessage = `DeepSeek 摘要生成失败：${getErrorMessage(error).slice(0, 800)}`;
-    await writeSummaryErrorLog(errorMessage, summaryLogInput, chapterRow.id);
-    return serverError(errorMessage);
+    if (!result.outputText) {
+      summaryParseFailures.push(buildEmptySummaryOutputFailure(attempt, result.finishReason));
+    } else {
+      try {
+        parsedSummary = parseSummaryJsonObject(result.outputText);
+        parsedSummarySuccessfully = true;
+        break;
+      } catch (error) {
+        summaryParseFailures.push(
+          buildSummaryJsonParseFailure(attempt, result.outputText, result.finishReason, error),
+        );
+      }
+    }
+
+    if (attempt === CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
+      const errorLog = formatSummaryJsonFailureLog(summaryParseFailures);
+      await writeSummaryErrorLog(errorLog, summaryLogInput, chapterRow.id);
+      return serverError("DeepSeek 摘要生成失败：AI 输出不是有效 JSON。");
+    }
+  }
+
+  if (!parsedSummarySuccessfully) {
+    const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
+    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
+    return serverError(error);
   }
 
   const summaryValidation = validateChapterSummaryOutput(parsedSummary);
