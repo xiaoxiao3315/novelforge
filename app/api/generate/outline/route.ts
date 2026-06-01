@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { findPlotFilterLabel } from "@/data/plot-filters";
 import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import {
+  GENERATION_CREDIT_COSTS,
+  requireGenerationCredits,
+  spendGenerationCredits,
+} from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -54,6 +59,10 @@ type CharacterRow = {
 };
 
 type VolumeIdRow = {
+  id: string;
+};
+
+type GenerationLogIdRow = {
   id: string;
 };
 
@@ -326,6 +335,12 @@ export async function POST(request: Request) {
 
   const promptInput = buildPromptInput(visibleProject, config, concept, bible, characters);
   const model = getDeepSeekModel();
+  const creditCheck = await requireGenerationCredits(supabase, "generate_outline");
+
+  if (!creditCheck.ok) {
+    return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
+  }
+
   const logInput = {
     project: visibleProject,
     storyConfig: promptInput.config,
@@ -436,27 +451,47 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const { error: logError } = await supabase.from("generation_logs").insert({
-    project_id: visibleProject.id,
+  const { data: generationLog, error: logError } = await supabase
+    .from("generation_logs")
+    .insert({
+      project_id: visibleProject.id,
+      operation: "generate_outline",
+      target_type: "volume",
+      target_id: savedVolume.id,
+      model,
+      prompt_version: OUTLINE_PROMPT_VERSION,
+      input: logInput,
+      output: {
+        volume,
+        chapters,
+      },
+    })
+    .select("id")
+    .single<GenerationLogIdRow>();
+
+  if (logError || !generationLog) {
+    return serverError(`章节大纲已保存，但生成日志写入失败：${logError?.message || "未知错误"}`);
+  }
+
+  const creditSpend = await spendGenerationCredits({
+    supabase,
+    projectId: visibleProject.id,
+    generationLogId: generationLog.id,
     operation: "generate_outline",
-    target_type: "volume",
-    target_id: savedVolume.id,
-    model,
-    prompt_version: OUTLINE_PROMPT_VERSION,
-    input: logInput,
-    output: {
-      volume,
-      chapters,
-    },
+    reason: "生成章节大纲",
   });
 
-  if (logError) {
-    return serverError(`章节大纲已保存，但生成日志写入失败：${logError.message}`);
+  if (!creditSpend.ok) {
+    return serverError(`章节大纲已保存，但点数扣除失败：${creditSpend.error}`);
   }
 
   return NextResponse.json({
     volumeId: savedVolume.id,
     volume,
     chapters,
+    credits: {
+      cost: GENERATION_CREDIT_COSTS.generate_outline,
+      balance: creditSpend.balanceAfter,
+    },
   });
 }

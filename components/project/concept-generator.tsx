@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import type { StoryConcept } from "@/prompts/concept";
 
 type ConceptGeneratorProps = {
   projectId: string;
   initialConcept: StoryConcept | null;
+  creditBalance: number | null;
 };
 
 type ConceptResponse = {
@@ -32,13 +34,24 @@ const conceptSections: Array<{
   { key: "firstVolumeHook", label: "第一卷钩子" },
 ];
 
-export function ConceptGenerator({ projectId, initialConcept }: ConceptGeneratorProps) {
+export function ConceptGenerator({
+  projectId,
+  initialConcept,
+  creditBalance,
+}: ConceptGeneratorProps) {
   const [concept, setConcept] = useState(initialConcept);
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const router = useRouter();
+  const generationCost = GENERATION_CREDIT_COSTS.generate_concept;
+  const hasEnoughCredits = creditBalance === null || creditBalance >= generationCost;
 
   async function generateConcept() {
+    if (!hasEnoughCredits) {
+      setError("点数不足，后续可购买生成点数。");
+      return;
+    }
+
     setError("");
     setIsGenerating(true);
 
@@ -74,11 +87,15 @@ export function ConceptGenerator({ projectId, initialConcept }: ConceptGenerator
         </div>
         <button
           className="button-primary"
-          disabled={isGenerating}
+          disabled={isGenerating || !hasEnoughCredits}
           onClick={generateConcept}
           type="button"
         >
-          {isGenerating ? "生成中..." : concept ? "重新生成" : "生成作品设定"}
+          {isGenerating
+            ? "生成中..."
+            : concept
+              ? `重新生成 · ${generationCost} 点`
+              : `生成作品设定 · ${generationCost} 点`}
         </button>
       </div>
 

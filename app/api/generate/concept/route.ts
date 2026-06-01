@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { findPlotFilterLabel } from "@/data/plot-filters";
 import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import {
+  GENERATION_CREDIT_COSTS,
+  requireGenerationCredits,
+  spendGenerationCredits,
+} from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildConceptPrompt,
@@ -31,6 +36,10 @@ type StoryConfigRow = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+};
+
+type GenerationLogIdRow = {
+  id: string;
 };
 
 const CONCEPT_SYSTEM_PROMPT =
@@ -142,6 +151,12 @@ export async function POST(request: Request) {
 
   const promptInput = buildPromptInput(visibleProject, config);
   const model = getDeepSeekModel();
+  const creditCheck = await requireGenerationCredits(supabase, "generate_concept");
+
+  if (!creditCheck.ok) {
+    return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
+  }
+
   const logInput = {
     project: visibleProject,
     storyConfig: promptInput.config,
@@ -225,23 +240,43 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const { error: logError } = await supabase.from("generation_logs").insert({
-    project_id: visibleProject.id,
+  const { data: generationLog, error: logError } = await supabase
+    .from("generation_logs")
+    .insert({
+      project_id: visibleProject.id,
+      operation: "generate_concept",
+      target_type: "story_concept",
+      target_id: storyConcept.id,
+      model,
+      prompt_version: CONCEPT_PROMPT_VERSION,
+      input: logInput,
+      output: concept,
+    })
+    .select("id")
+    .single<GenerationLogIdRow>();
+
+  if (logError || !generationLog) {
+    return serverError(`作品设定已保存，但生成日志写入失败：${logError?.message || "未知错误"}`);
+  }
+
+  const creditSpend = await spendGenerationCredits({
+    supabase,
+    projectId: visibleProject.id,
+    generationLogId: generationLog.id,
     operation: "generate_concept",
-    target_type: "story_concept",
-    target_id: storyConcept.id,
-    model,
-    prompt_version: CONCEPT_PROMPT_VERSION,
-    input: logInput,
-    output: concept,
+    reason: "生成作品设定",
   });
 
-  if (logError) {
-    return serverError(`作品设定已保存，但生成日志写入失败：${logError.message}`);
+  if (!creditSpend.ok) {
+    return serverError(`作品设定已保存，但点数扣除失败：${creditSpend.error}`);
   }
 
   return NextResponse.json({
     conceptId: storyConcept.id,
     concept,
+    credits: {
+      cost: GENERATION_CREDIT_COSTS.generate_concept,
+      balance: creditSpend.balanceAfter,
+    },
   });
 }

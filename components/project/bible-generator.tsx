@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 
 type BibleGeneratorProps = {
@@ -9,6 +10,7 @@ type BibleGeneratorProps = {
   initialBible: StoryBible | null;
   initialCharacters: CharacterCard[];
   hasConcept: boolean;
+  creditBalance: number | null;
 };
 
 type BibleResponse = {
@@ -51,16 +53,24 @@ export function BibleGenerator({
   initialBible,
   initialCharacters,
   hasConcept,
+  creditBalance,
 }: BibleGeneratorProps) {
   const [bible, setBible] = useState(initialBible);
   const [characters, setCharacters] = useState(initialCharacters);
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const router = useRouter();
+  const generationCost = GENERATION_CREDIT_COSTS.generate_bible;
+  const hasEnoughCredits = creditBalance === null || creditBalance >= generationCost;
 
   async function generateBible() {
     if (!hasConcept) {
       setError("请先生成作品设定。");
+      return;
+    }
+
+    if (!hasEnoughCredits) {
+      setError("点数不足，后续可购买生成点数。");
       return;
     }
 
@@ -100,11 +110,15 @@ export function BibleGenerator({
         </div>
         <button
           className="button-primary"
-          disabled={isGenerating || !hasConcept}
+          disabled={isGenerating || !hasConcept || !hasEnoughCredits}
           onClick={generateBible}
           type="button"
         >
-          {isGenerating ? "生成中..." : bible ? "重新生成" : "生成故事圣经"}
+          {isGenerating
+            ? "生成中..."
+            : bible
+              ? `重新生成 · ${generationCost} 点`
+              : `生成故事圣经 · ${generationCost} 点`}
         </button>
       </div>
 

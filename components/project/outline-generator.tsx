@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import {
   CHAPTER_INTERVENTION_LIMITS,
   EMPTY_CHAPTER_INTERVENTION,
@@ -19,6 +20,7 @@ type OutlineGeneratorProps = {
   initialVolume: VolumeOutline | null;
   initialChapters: ChapterDisplay[];
   hasPrerequisites: boolean;
+  creditBalance: number | null;
 };
 
 type OutlineResponse = {
@@ -134,6 +136,7 @@ export function OutlineGenerator({
   initialVolume,
   initialChapters,
   hasPrerequisites,
+  creditBalance,
 }: OutlineGeneratorProps) {
   const [volume, setVolume] = useState(initialVolume);
   const [chapters, setChapters] = useState(initialChapters);
@@ -147,10 +150,19 @@ export function OutlineGenerator({
     null,
   );
   const router = useRouter();
+  const outlineCost = GENERATION_CREDIT_COSTS.generate_outline;
+  const chapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
+  const hasEnoughOutlineCredits = creditBalance === null || creditBalance >= outlineCost;
+  const hasEnoughChapterCredits = creditBalance === null || creditBalance >= chapterCost;
 
   async function generateOutline() {
     if (!hasPrerequisites) {
       setError("请先完成作品设定、故事圣经和角色卡。");
+      return;
+    }
+
+    if (!hasEnoughOutlineCredits) {
+      setError("点数不足，后续可购买生成点数。");
       return;
     }
 
@@ -181,6 +193,11 @@ export function OutlineGenerator({
   }
 
   async function generateChapter(chapter: ChapterDisplay) {
+    if (!hasEnoughChapterCredits) {
+      setError("点数不足，后续可购买生成点数。");
+      return;
+    }
+
     setError("");
     setGeneratingChapterNumber(chapter.chapterNumber);
     const currentIntervention =
@@ -303,11 +320,15 @@ export function OutlineGenerator({
         </div>
         <button
           className="button-primary"
-          disabled={isGenerating || !hasPrerequisites}
+          disabled={isGenerating || !hasPrerequisites || !hasEnoughOutlineCredits}
           onClick={generateOutline}
           type="button"
         >
-          {isGenerating ? "生成中..." : volume ? "重新生成" : "生成章节大纲"}
+          {isGenerating
+            ? "生成中..."
+            : volume
+              ? `重新生成 · ${outlineCost} 点`
+              : `生成章节大纲 · ${outlineCost} 点`}
         </button>
       </div>
 
@@ -382,15 +403,19 @@ export function OutlineGenerator({
                     ) : null}
                     <button
                       className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={generatingChapterNumber !== null || settingOfficialChapterNumber !== null}
+                      disabled={
+                        generatingChapterNumber !== null ||
+                        settingOfficialChapterNumber !== null ||
+                        !hasEnoughChapterCredits
+                      }
                       onClick={() => generateChapter(chapter)}
                       type="button"
                     >
                       {generatingChapterNumber === chapter.chapterNumber
                         ? "正文生成中..."
                         : chapter.draft?.body
-                          ? "重新生成正文"
-                          : "生成正文"}
+                          ? `重新生成正文 · ${chapterCost} 点`
+                          : `生成正文 · ${chapterCost} 点`}
                     </button>
                     {chapter.draft?.body ? (
                       <button

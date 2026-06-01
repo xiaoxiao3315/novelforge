@@ -8,6 +8,7 @@ import {
   findPlotFilterLabel,
   type PlotFilterKey,
 } from "@/data/plot-filters";
+import { ensureCreditAccount } from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -104,6 +105,9 @@ export default async function ProjectDetailPage({
     notFound();
   }
 
+  const creditAccount = await ensureCreditAccount(supabase);
+  const creditBalance = creditAccount.ok ? creditAccount.balance : null;
+
   const { data: config } = await supabase
     .from("story_configs")
     .select(
@@ -188,7 +192,12 @@ export default async function ProjectDetailPage({
         <Link href="/dashboard" className="text-xl font-black">
           NovelForge / 小说工坊
         </Link>
-        <SignOutButton />
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-sm font-bold text-[var(--accent-strong)]">
+            点数余额：{creditBalance ?? "读取失败"}
+          </span>
+          <SignOutButton />
+        </div>
       </nav>
 
       <section className="mt-8">
@@ -262,14 +271,20 @@ export default async function ProjectDetailPage({
 
       {config ? (
         <>
-          <ConceptGenerator initialConcept={concept} projectId={projectId} />
+          <ConceptGenerator
+            creditBalance={creditBalance}
+            initialConcept={concept}
+            projectId={projectId}
+          />
           <BibleGenerator
+            creditBalance={creditBalance}
             hasConcept={Boolean(concept)}
             initialBible={bible}
             initialCharacters={characters}
             projectId={projectId}
           />
           <OutlineGenerator
+            creditBalance={creditBalance}
             hasPrerequisites={Boolean(concept && bible && characters.length > 0)}
             initialChapters={chapters}
             initialVolume={volume}

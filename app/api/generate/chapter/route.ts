@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { findPlotFilterLabel } from "@/data/plot-filters";
 import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
+import {
+  GENERATION_CREDIT_COSTS,
+  requireGenerationCredits,
+  spendGenerationCredits,
+} from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -97,6 +102,10 @@ type ChapterVersionNumberRow = {
 type ChapterVersionIdRow = {
   id: string;
   version_number: number;
+};
+
+type GenerationLogIdRow = {
+  id: string;
 };
 
 const CHAPTER_MAX_TOKENS = 6000;
@@ -695,6 +704,11 @@ export async function POST(request: Request) {
     previousChapters,
     intervention,
   };
+  const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
+
+  if (!creditCheck.ok) {
+    return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
+  }
 
   let outputText = "";
 
@@ -867,8 +881,9 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const { error: logError } = await supabase.from("generation_logs").insert([
-    {
+  const { data: generationLog, error: chapterLogError } = await supabase
+    .from("generation_logs")
+    .insert({
       project_id: visibleProject.id,
       operation: "generate_chapter",
       target_type: "chapter",
@@ -879,27 +894,51 @@ export async function POST(request: Request) {
       output: {
         chapter: chapterContent,
       },
-    },
-    {
-      project_id: visibleProject.id,
-      operation: "generate_chapter_summary",
-      target_type: "chapter",
-      target_id: savedChapter.id,
-      model,
-      prompt_version: CHAPTER_SUMMARY_PROMPT_VERSION,
-      input: summaryLogInput,
-      output: {
-        summary,
-      },
-    },
-  ]);
+    })
+    .select("id")
+    .single<GenerationLogIdRow>();
 
-  if (logError) {
-    return serverError(`章节正文和摘要已保存，但生成日志写入失败：${logError.message}`);
+  if (chapterLogError || !generationLog) {
+    return serverError(
+      `章节正文和摘要已保存，但生成日志写入失败：${chapterLogError?.message || "未知错误"}`,
+    );
+  }
+
+  const { error: summaryLogError } = await supabase.from("generation_logs").insert({
+    project_id: visibleProject.id,
+    operation: "generate_chapter_summary",
+    target_type: "chapter",
+    target_id: savedChapter.id,
+    model,
+    prompt_version: CHAPTER_SUMMARY_PROMPT_VERSION,
+    input: summaryLogInput,
+    output: {
+      summary,
+    },
+  });
+
+  if (summaryLogError) {
+    return serverError(`章节正文和摘要已保存，但摘要日志写入失败：${summaryLogError.message}`);
+  }
+
+  const creditSpend = await spendGenerationCredits({
+    supabase,
+    projectId: visibleProject.id,
+    generationLogId: generationLog.id,
+    operation: "generate_chapter",
+    reason: "生成章节正文和摘要",
+  });
+
+  if (!creditSpend.ok) {
+    return serverError(`章节正文和摘要已保存，但点数扣除失败：${creditSpend.error}`);
   }
 
   return NextResponse.json({
     chapterId: savedChapter.id,
     chapter: chapterContent,
+    credits: {
+      cost: GENERATION_CREDIT_COSTS.generate_chapter,
+      balance: creditSpend.balanceAfter,
+    },
   });
 }
