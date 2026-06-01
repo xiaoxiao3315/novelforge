@@ -55,6 +55,15 @@ type ChapterRow = {
   content: ChapterContent | null;
 };
 
+type ChapterDisplay = ChapterContent & {
+  id: string;
+  versionCount: number;
+};
+
+type ChapterVersionRow = {
+  chapter_id: string;
+};
+
 const configRows: Array<{
   key: keyof StoryConfig;
   filterKey?: PlotFilterKey;
@@ -142,14 +151,36 @@ export default async function ProjectDetailPage({
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();
 
+  const { data: chapterVersionRows } = await supabase
+    .from("chapter_versions")
+    .select("chapter_id")
+    .eq("project_id", projectId)
+    .returns<ChapterVersionRow[]>();
+
+  const chapterVersionCounts = new Map<string, number>();
+
+  for (const row of chapterVersionRows ?? []) {
+    chapterVersionCounts.set(row.chapter_id, (chapterVersionCounts.get(row.chapter_id) ?? 0) + 1);
+  }
+
   const volume = normalizeVolumeOutline(volumeRow?.content);
-  const chapters = (chapterRows ?? [])
-    .map((row) => {
-      const content = normalizeChapterContent(row.content);
-      return content ? { ...content, id: row.id } : null;
-    })
-    .filter((chapter): chapter is ChapterContent & { id: string } => Boolean(chapter))
-    .sort((left, right) => left.chapterNumber - right.chapterNumber);
+  const chapters: ChapterDisplay[] = [];
+
+  for (const row of chapterRows ?? []) {
+    const content = normalizeChapterContent(row.content);
+
+    if (!content) {
+      continue;
+    }
+
+    chapters.push({
+      ...content,
+      id: row.id,
+      versionCount: chapterVersionCounts.get(row.id) ?? content.versionCount ?? 0,
+    });
+  }
+
+  chapters.sort((left, right) => left.chapterNumber - right.chapterNumber);
 
   return (
     <main className="app-shell py-8">

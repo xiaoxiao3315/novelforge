@@ -90,6 +90,15 @@ type ChapterRow = {
   estimated_words: number;
 };
 
+type ChapterVersionNumberRow = {
+  version_number: number;
+};
+
+type ChapterVersionIdRow = {
+  id: string;
+  version_number: number;
+};
+
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
@@ -788,7 +797,55 @@ export async function POST(request: Request) {
   }
 
   const summary = buildChapterSummary(summaryValidation.summary, model);
-  const chapterContent = buildChapterContent(chapter, draft, summary, chapterRow.content);
+  const { data: latestVersionRow, error: latestVersionError } = await supabase
+    .from("chapter_versions")
+    .select("version_number")
+    .eq("project_id", visibleProject.id)
+    .eq("chapter_id", chapterRow.id)
+    .eq("user_id", user.id)
+    .order("version_number", { ascending: false })
+    .limit(1)
+    .maybeSingle<ChapterVersionNumberRow>();
+
+  if (latestVersionError) {
+    const error = `章节版本号读取失败：${latestVersionError.message}`;
+    await writeErrorLog(error, logInput, chapterRow.id);
+    return serverError(error);
+  }
+
+  const nextVersionNumber = (latestVersionRow?.version_number ?? 0) + 1;
+  const { data: savedVersion, error: versionError } = await supabase
+    .from("chapter_versions")
+    .insert({
+      project_id: visibleProject.id,
+      chapter_id: chapterRow.id,
+      version_number: nextVersionNumber,
+      body: outputText,
+      summary,
+      intervention,
+      model,
+      prompt_version: CHAPTER_PROMPT_VERSION,
+    })
+    .select("id,version_number")
+    .single<ChapterVersionIdRow>();
+
+  if (versionError || !savedVersion) {
+    const error = versionError?.message || "章节版本保存失败。";
+    await writeErrorLog(error, logInput, chapterRow.id);
+    return serverError(error);
+  }
+
+  const versionedDraft = {
+    ...draft,
+    versionId: savedVersion.id,
+  };
+  const chapterContent = buildChapterContent(
+    chapter,
+    versionedDraft,
+    summary,
+    chapterRow.content,
+    savedVersion.version_number,
+  );
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -801,6 +858,11 @@ export async function POST(request: Request) {
 
   if (updateError || !savedChapter) {
     const error = updateError?.message || "章节正文保存失败。";
+    await supabase
+      .from("chapter_versions")
+      .delete()
+      .eq("id", savedVersion.id)
+      .eq("user_id", user.id);
     await writeErrorLog(error, logInput, chapterRow.id);
     return serverError(error);
   }

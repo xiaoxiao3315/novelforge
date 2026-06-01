@@ -11,6 +11,7 @@ export const CHAPTER_PROMPT_VERSION = "chapter-v1";
 export const DEFAULT_CHAPTER_WORD_TARGET = 2500;
 
 export type ChapterDraft = {
+  versionId?: string;
   body: string;
   generatedAt: string;
   model: string;
@@ -27,9 +28,21 @@ export type ChapterIntervention = {
   endingRequirement: string;
 };
 
+export type ChapterOfficial = {
+  versionId: string;
+  body: string;
+  summary: ChapterSummary;
+  intervention: ChapterIntervention;
+  confirmedAt: string;
+  model: string;
+  promptVersion: string;
+};
+
 export type ChapterContent = ChapterOutline & {
   draft?: ChapterDraft;
   summary?: ChapterSummary;
+  official?: ChapterOfficial;
+  versionCount?: number;
 };
 
 export type PreviousChapterContext = ChapterOutline & {
@@ -130,6 +143,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   }
 
   const body = cleanText(value.body);
+  const versionId = cleanText(value.versionId, 80);
   const generatedAt = cleanText(value.generatedAt, 80);
   const model = cleanText(value.model, 120);
   const promptVersion = cleanText(value.promptVersion, 80);
@@ -149,12 +163,49 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   }
 
   return {
+    ...(versionId ? { versionId } : {}),
     body,
     generatedAt,
     model,
     promptVersion,
     wordTarget,
     ...(intervention ? { intervention } : {}),
+  };
+}
+
+export function normalizeChapterOfficial(value: unknown): ChapterOfficial | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const versionId = cleanText(value.versionId, 80);
+  const body = cleanText(value.body);
+  const summary = normalizeChapterSummary(value.summary);
+  const intervention = normalizeChapterIntervention(value.intervention);
+  const confirmedAt = cleanText(value.confirmedAt, 80);
+  const model = cleanText(value.model, 120);
+  const promptVersion = cleanText(value.promptVersion, 80);
+
+  if (
+    !versionId ||
+    !body ||
+    !summary ||
+    !intervention ||
+    !confirmedAt ||
+    !model ||
+    !promptVersion
+  ) {
+    return null;
+  }
+
+  return {
+    versionId,
+    body,
+    summary,
+    intervention,
+    confirmedAt,
+    model,
+    promptVersion,
   };
 }
 
@@ -171,11 +222,18 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
 
   const draft = normalizeChapterDraft(value.draft);
   const summary = normalizeChapterSummary(value.summary);
+  const official = normalizeChapterOfficial(value.official);
+  const versionCount =
+    typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
+      ? Math.max(0, value.versionCount)
+      : 0;
 
   return {
     ...outline,
     ...(draft ? { draft } : {}),
     ...(summary ? { summary } : {}),
+    ...(official ? { official } : {}),
+    versionCount,
   };
 }
 
@@ -211,6 +269,7 @@ export function buildChapterContent(
   draft: ChapterDraft,
   summary: ChapterSummary,
   existingContent: unknown,
+  versionCount?: number,
 ): ChapterContent {
   const existing = isRecord(existingContent) ? existingContent : {};
 
@@ -219,6 +278,7 @@ export function buildChapterContent(
     ...chapter,
     draft,
     summary,
+    ...(versionCount === undefined ? {} : { versionCount }),
   };
 }
 
@@ -226,12 +286,18 @@ export function buildPreviousChapterContext(
   chapter: ChapterOutline,
   content: unknown,
 ): PreviousChapterContext {
+  const official = isRecord(content) ? normalizeChapterOfficial(content.official) : null;
   const draft = isRecord(content) ? normalizeChapterDraft(content.draft) : null;
-  const summary = isRecord(content) ? normalizeChapterSummary(content.summary) : null;
+  const draftValue = isRecord(content) && isRecord(content.draft) ? content.draft : null;
+  const fallbackSummary = isRecord(content)
+    ? normalizeChapterSummary(content.summary) ?? normalizeChapterSummary(draftValue?.summary)
+    : null;
+  const summary = official?.summary ?? fallbackSummary;
+  const body = official?.body ?? draft?.body ?? "";
 
   return {
     ...chapter,
-    draftExcerpt: draft ? excerptText(draft.body) : null,
+    draftExcerpt: body ? excerptText(body) : null,
     summary,
   };
 }

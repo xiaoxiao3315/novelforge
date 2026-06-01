@@ -33,6 +33,13 @@ type ChapterResponse = {
   error?: string;
 };
 
+type SetOfficialResponse = {
+  chapterId?: string;
+  versionId?: string;
+  official?: NonNullable<ChapterContent["official"]>;
+  error?: string;
+};
+
 const volumeSections: Array<{
   key: keyof Omit<VolumeOutline, "volumeNumber" | "title">;
   label: string;
@@ -136,6 +143,9 @@ export function OutlineGenerator({
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
+  const [settingOfficialChapterNumber, setSettingOfficialChapterNumber] = useState<number | null>(
+    null,
+  );
   const router = useRouter();
 
   async function generateOutline() {
@@ -212,6 +222,51 @@ export function OutlineGenerator({
       currentChapters.map((currentChapter) =>
         currentChapter.chapterNumber === generatedChapter.chapterNumber
           ? generatedChapter
+          : currentChapter,
+      ),
+    );
+    router.refresh();
+  }
+
+  async function setOfficialChapter(chapter: ChapterDisplay) {
+    const versionId = chapter.draft?.versionId;
+
+    if (!chapter.id || !versionId) {
+      setError("当前章节还没有可确认的正文版本。");
+      return;
+    }
+
+    setError("");
+    setSettingOfficialChapterNumber(chapter.chapterNumber);
+
+    const response = await fetch("/api/chapters/set-official", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        chapterId: chapter.id,
+        versionId,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as SetOfficialResponse | null;
+
+    setSettingOfficialChapterNumber(null);
+
+    if (!response.ok || !payload?.official) {
+      setError(payload?.error || "正式稿设置失败，请稍后重试。");
+      return;
+    }
+
+    setChapters((currentChapters) =>
+      currentChapters.map((currentChapter) =>
+        currentChapter.id === chapter.id
+          ? {
+              ...currentChapter,
+              official: payload.official,
+            }
           : currentChapter,
       ),
     );
@@ -317,9 +372,17 @@ export function OutlineGenerator({
                     <span className="rounded-full bg-[#f7efe6] px-3 py-1 text-xs font-bold text-[#80522f]">
                       预计 {chapter.estimatedWords} 字
                     </span>
+                    <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
+                      {chapter.versionCount ?? 0} 个版本
+                    </span>
+                    {chapter.official ? (
+                      <span className="rounded-full bg-[#e8f3ff] px-3 py-1 text-xs font-bold text-[#285f8f]">
+                        正式稿已确认
+                      </span>
+                    ) : null}
                     <button
                       className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                      disabled={generatingChapterNumber !== null}
+                      disabled={generatingChapterNumber !== null || settingOfficialChapterNumber !== null}
                       onClick={() => generateChapter(chapter)}
                       type="button"
                     >
@@ -329,6 +392,25 @@ export function OutlineGenerator({
                           ? "重新生成正文"
                           : "生成正文"}
                     </button>
+                    {chapter.draft?.body ? (
+                      <button
+                        className="button-primary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={
+                          !chapter.draft.versionId ||
+                          chapter.official?.versionId === chapter.draft.versionId ||
+                          generatingChapterNumber !== null ||
+                          settingOfficialChapterNumber !== null
+                        }
+                        onClick={() => setOfficialChapter(chapter)}
+                        type="button"
+                      >
+                        {settingOfficialChapterNumber === chapter.chapterNumber
+                          ? "确认中..."
+                          : chapter.official?.versionId === chapter.draft.versionId
+                            ? "当前为正式稿"
+                            : "设为正式稿"}
+                      </button>
+                    ) : null}
                   </div>
                 </div>
 
@@ -377,10 +459,21 @@ export function OutlineGenerator({
                 {chapter.draft?.body ? (
                   <div className="mt-5 border-t border-[var(--line)] pt-4">
                     <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                      章节正文
+                      当前 draft 正文
                     </p>
                     <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#fffaf0] px-4 py-4 leading-8 text-[var(--ink)]">
                       {chapter.draft.body}
+                    </div>
+                  </div>
+                ) : null}
+
+                {chapter.official ? (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                      正式稿
+                    </p>
+                    <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#eef4f2] px-4 py-4 leading-8 text-[var(--ink)]">
+                      {chapter.official.body}
                     </div>
                   </div>
                 ) : null}
