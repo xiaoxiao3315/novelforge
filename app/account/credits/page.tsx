@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CreditPackagePanel } from "@/components/account/credit-package-panel";
+import { MockPaymentActions } from "@/components/account/mock-payment-actions";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import {
   GENERATION_CREDIT_COSTS,
   ensureCreditAccount,
   type GenerationCreditOperation,
 } from "@/lib/credits";
+import { isMockPaymentEnabled } from "@/lib/payments/mock";
 import { CREDIT_ORDER_STATUS_LABELS } from "@/lib/payments/order-status";
 import { CREDIT_PACKAGES } from "@/lib/payments/packages";
 import type { CreditOrderStatus } from "@/lib/payments/types";
@@ -28,6 +30,9 @@ type CreditOrderRow = {
   package_name: string;
   credits_amount: number;
   status: CreditOrderStatus;
+  credit_transaction_id: string | null;
+  paid_at: string | null;
+  cancelled_at: string | null;
   created_at: string;
 };
 
@@ -63,6 +68,7 @@ export default async function CreditsPage() {
 
   const creditAccount = await ensureCreditAccount(supabase);
   const balance = creditAccount.ok ? creditAccount.balance : null;
+  const mockPaymentEnabled = isMockPaymentEnabled();
   const { data: transactions, error: transactionsError } = await supabase
     .from("credit_transactions")
     .select("id,operation,amount,balance_after,reason,status,created_at")
@@ -71,7 +77,7 @@ export default async function CreditsPage() {
     .returns<CreditTransactionRow[]>();
   const { data: orders, error: ordersError } = await supabase
     .from("credit_orders")
-    .select("id,order_no,package_name,credits_amount,status,created_at")
+    .select("id,order_no,package_name,credits_amount,status,credit_transaction_id,paid_at,cancelled_at,created_at")
     .order("created_at", { ascending: false })
     .limit(10)
     .returns<CreditOrderRow[]>();
@@ -144,13 +150,13 @@ export default async function CreditsPage() {
             暂不可购买
           </span>
         </div>
-        <CreditPackagePanel packages={CREDIT_PACKAGES} />
+        <CreditPackagePanel packages={CREDIT_PACKAGES} mockPaymentEnabled={mockPaymentEnabled} />
       </section>
 
       <section className="surface mt-6 p-6">
         <h2 className="text-2xl font-black text-[var(--ink)]">订单占位记录</h2>
         <p className="mt-2 text-sm text-[var(--muted)]">
-          这里仅记录 pending 占位订单。支付尚未接入，不会增加余额。
+          这里记录测试订单状态。支付尚未接入真实网关，Mock 支付仅用于本地验收。
         </p>
         {ordersError ? (
           <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
@@ -180,6 +186,27 @@ export default async function CreditsPage() {
                     </p>
                   </div>
                 </div>
+                {order.status === "paid" ? (
+                  <p className="mt-3 rounded-md bg-[#eef4f2] px-3 py-2 text-sm font-bold text-[var(--accent-strong)]">
+                    已入账
+                    {order.credit_transaction_id
+                      ? ` · 流水 ${order.credit_transaction_id.slice(0, 8)}`
+                      : ""}
+                  </p>
+                ) : null}
+                {order.status === "failed" ? (
+                  <p className="mt-3 rounded-md bg-[#fff4ef] px-3 py-2 text-sm font-bold text-[#7f2f1d]">
+                    支付失败，未增加余额。
+                  </p>
+                ) : null}
+                {order.status === "cancelled" ? (
+                  <p className="mt-3 rounded-md bg-[#f7efe6] px-3 py-2 text-sm font-bold text-[#80522f]">
+                    已取消，未增加余额。
+                  </p>
+                ) : null}
+                {mockPaymentEnabled && order.status === "pending" ? (
+                  <MockPaymentActions orderId={order.id} orderNo={order.order_no} />
+                ) : null}
               </div>
             ))}
           </div>

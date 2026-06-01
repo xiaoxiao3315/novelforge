@@ -8,6 +8,7 @@ type CreditPackage = (typeof CREDIT_PACKAGES)[number];
 
 type CreditPackagePanelProps = {
   packages: readonly CreditPackage[];
+  mockPaymentEnabled: boolean;
 };
 
 type CreateOrderResponse = {
@@ -20,7 +21,7 @@ type CreateOrderResponse = {
   error?: string;
 };
 
-export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
+export function CreditPackagePanel({ packages, mockPaymentEnabled }: CreditPackagePanelProps) {
   const [pendingPackageName, setPendingPackageName] = useState("");
   const [message, setMessage] = useState("");
   const router = useRouter();
@@ -50,7 +51,7 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
       }
 
       setMessage(
-        `${payload.order.credits_amount} 点订单 ${payload.order.order_no} 已创建，支付尚未接入，不会增加余额。`,
+        `${payload.order.credits_amount} 点订单 ${payload.order.order_no} 已创建，可在订单列表使用 Mock 支付测试闭环。`,
       );
       router.refresh();
     } catch {
@@ -80,7 +81,9 @@ export function CreditPackagePanel({ packages }: CreditPackagePanelProps) {
             <p className="mt-1 text-2xl font-black text-[var(--ink)]">
               {item.creditsAmount} 点
             </p>
-            <p className="mt-2 text-sm text-[var(--muted)]">小额充值即将开放</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              {mockPaymentEnabled ? "Mock 支付，仅测试" : "支付尚未接入"}
+            </p>
             <button
               className="button-secondary mt-4 w-full disabled:cursor-not-allowed disabled:opacity-60"
               disabled={Boolean(pendingPackageName)}

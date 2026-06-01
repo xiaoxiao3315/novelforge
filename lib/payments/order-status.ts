@@ -11,7 +11,7 @@ export const CREDIT_ORDER_STATUSES = [
 
 export const CREDIT_ORDER_STATUS_LABELS: Record<CreditOrderStatus, string> = {
   pending: "等待支付接入",
-  paid: "已支付",
+  paid: "已入账",
   failed: "支付失败",
   cancelled: "已取消",
   expired: "已过期",
