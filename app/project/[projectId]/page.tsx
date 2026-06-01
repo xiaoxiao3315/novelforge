@@ -332,6 +332,7 @@ export default async function ProjectDetailPage({
             hasPrerequisites={Boolean(concept && bible && characters.length > 0)}
             initialChapters={chapters}
             initialVolume={volume}
+            projectMode={projectMode}
             projectId={projectId}
           />
         </>

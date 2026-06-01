@@ -1,4 +1,9 @@
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
+import {
+  formatSelectedChapterDecision,
+  normalizeChapterDecision,
+  type ChapterDecision,
+} from "@/prompts/chapter-decision";
 import { normalizeChapterSummary, type ChapterSummary } from "@/prompts/chapter-summary";
 import type { StoryConcept } from "@/prompts/concept";
 import {
@@ -42,6 +47,7 @@ export type ChapterContent = ChapterOutline & {
   draft?: ChapterDraft;
   summary?: ChapterSummary;
   official?: ChapterOfficial;
+  decision?: ChapterDecision;
   versionCount?: number;
 };
 
@@ -73,6 +79,7 @@ export type ChapterPromptInput = {
   chapter: ChapterOutline;
   previousChapters: PreviousChapterContext[];
   intervention: ChapterIntervention;
+  decision?: ChapterDecision | null;
   wordTarget: number;
 };
 
@@ -223,6 +230,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   const draft = normalizeChapterDraft(value.draft);
   const summary = normalizeChapterSummary(value.summary);
   const official = normalizeChapterOfficial(value.official);
+  const decision = normalizeChapterDecision(value.decision);
   const versionCount =
     typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
       ? Math.max(0, value.versionCount)
@@ -233,6 +241,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
     ...(draft ? { draft } : {}),
     ...(summary ? { summary } : {}),
     ...(official ? { official } : {}),
+    ...(decision ? { decision } : {}),
     versionCount,
   };
 }
@@ -387,6 +396,7 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "- 必须完成当前章节大纲中的事件、冲突、看点、伏笔和角色变化。",
     "- 不得违背 story_bible 的不可变规则、世界观、力量系统、角色卡和第一卷主线。",
     "- 本章导演指令 / 互动干预必须尽量吸收，但优先级低于 story_bible、characters、immutableRules、前文摘要和当前章节大纲。",
+    "- 如果存在已保存的互动剧情选择，正文必须明显吸收该选择；如果不存在选择，则按导演指令和章节大纲推进。",
     "- 如果导演指令和故事圣经或不可变规则冲突，必须遵守故事圣经，并用不冲突的方式吸收用户意图。",
     "- 结尾必须保留明确的悬念或情绪钩子，但不能直接进入下一章正文。",
     "- 文风必须符合项目 tone / genre，内容必须是中文小说正文。",
@@ -457,6 +467,9 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "",
     "本章导演指令 / 互动干预：",
     formatChapterIntervention(input.intervention),
+    "",
+    "互动剧情选择：",
+    formatSelectedChapterDecision(input.decision),
     "",
     "现在只输出当前章中文小说正文。",
   ].join("\n");

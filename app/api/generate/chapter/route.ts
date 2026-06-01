@@ -6,6 +6,7 @@ import {
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -25,6 +26,7 @@ import {
   type ChapterIntervention,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
+import { normalizeChapterDecision } from "@/prompts/chapter-decision";
 import {
   buildChapterSummary,
   buildChapterSummaryPrompt,
@@ -63,6 +65,7 @@ type StoryConfigRow = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+  config_json: unknown;
 };
 
 type StoryConceptRow = {
@@ -401,6 +404,7 @@ function buildPromptInput(
   chapter: ChapterOutline,
   previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
   intervention: ChapterIntervention,
+  decision: ChapterPromptInput["decision"],
 ): ChapterPromptInput {
   return {
     project: {
@@ -425,6 +429,7 @@ function buildPromptInput(
     chapter,
     previousChapters,
     intervention,
+    decision,
     wordTarget: chapter.estimatedWords || DEFAULT_CHAPTER_WORD_TARGET,
   };
 }
@@ -537,7 +542,7 @@ export async function POST(request: Request) {
   const { data: config, error: configError } = await supabase
     .from("story_configs")
     .select(
-      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas",
+      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
     .maybeSingle<StoryConfigRow>();
@@ -681,6 +686,15 @@ export async function POST(request: Request) {
       return outline ? buildPreviousChapterContext(outline, row.content) : null;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const projectMode = getProjectModeFromConfig(config.config_json);
+  const decision =
+    projectMode === "interactive"
+      ? normalizeChapterDecision(
+          isRecord(chapterRow.content)
+            ? (chapterRow.content as { decision?: unknown }).decision
+            : null,
+        )
+      : null;
 
   const promptInput = buildPromptInput(
     visibleProject,
@@ -692,6 +706,7 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
+    decision,
   );
   const logInput = {
     project: visibleProject,
@@ -703,6 +718,7 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
+    decision,
   };
   const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
 
