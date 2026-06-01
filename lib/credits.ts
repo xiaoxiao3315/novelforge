@@ -11,6 +11,31 @@ export const GENERATION_CREDIT_COSTS = {
   set_official: 0,
 } as const;
 
+export const CREDIT_PACKAGES = [
+  {
+    packageName: "credits_30",
+    label: "轻量补给",
+    creditsAmount: 30,
+    priceAmount: 0,
+    currency: "CNY",
+  },
+  {
+    packageName: "credits_100",
+    label: "连载常用",
+    creditsAmount: 100,
+    priceAmount: 0,
+    currency: "CNY",
+  },
+  {
+    packageName: "credits_300",
+    label: "长篇储备",
+    creditsAmount: 300,
+    priceAmount: 0,
+    currency: "CNY",
+  },
+] as const;
+
+export type CreditPackageName = (typeof CREDIT_PACKAGES)[number]["packageName"];
 export type GenerationCreditOperation = keyof typeof GENERATION_CREDIT_COSTS;
 
 type SpendCreditsRow = {

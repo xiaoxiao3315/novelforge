@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { CreditPackagePanel } from "@/components/account/credit-package-panel";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import {
+  CREDIT_PACKAGES,
   GENERATION_CREDIT_COSTS,
   ensureCreditAccount,
   type GenerationCreditOperation,
@@ -18,6 +20,15 @@ type CreditTransactionRow = {
   created_at: string;
 };
 
+type CreditOrderRow = {
+  id: string;
+  order_no: string;
+  package_name: string;
+  credits_amount: number;
+  status: string;
+  created_at: string;
+};
+
 const operationLabels: Record<GenerationCreditOperation, string> = {
   generate_concept: "生成作品设定",
   generate_bible: "生成故事圣经",
@@ -26,12 +37,6 @@ const operationLabels: Record<GenerationCreditOperation, string> = {
   generate_chapter_summary: "章节摘要",
   set_official: "设为正式稿",
 };
-
-const creditPackages = [
-  { points: 30, label: "轻量补给" },
-  { points: 100, label: "连载常用" },
-  { points: 300, label: "长篇储备" },
-];
 
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("zh-CN", {
@@ -58,6 +63,12 @@ export default async function CreditsPage() {
     .order("created_at", { ascending: false })
     .limit(30)
     .returns<CreditTransactionRow[]>();
+  const { data: orders, error: ordersError } = await supabase
+    .from("credit_orders")
+    .select("id,order_no,package_name,credits_amount,status,created_at")
+    .order("created_at", { ascending: false })
+    .limit(10)
+    .returns<CreditOrderRow[]>();
 
   return (
     <main className="app-shell py-8">
@@ -127,22 +138,50 @@ export default async function CreditsPage() {
             暂不可购买
           </span>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          {creditPackages.map((item) => (
-            <div
-              className="rounded-md border border-dashed border-[var(--line)] bg-white/70 px-4 py-4"
-              key={item.points}
-            >
-              <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                {item.label}
-              </p>
-              <p className="mt-1 text-2xl font-black text-[var(--ink)]">{item.points} 点</p>
-              <button className="button-secondary mt-4 w-full opacity-60" disabled type="button">
-                小额充值即将开放
-              </button>
-            </div>
-          ))}
-        </div>
+        <CreditPackagePanel packages={CREDIT_PACKAGES} />
+      </section>
+
+      <section className="surface mt-6 p-6">
+        <h2 className="text-2xl font-black text-[var(--ink)]">订单占位记录</h2>
+        <p className="mt-2 text-sm text-[var(--muted)]">
+          这里仅记录 pending 占位订单。支付尚未接入，不会增加余额。
+        </p>
+        {ordersError ? (
+          <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
+            读取订单失败：{ordersError.message}
+          </p>
+        ) : orders && orders.length > 0 ? (
+          <div className="mt-5 grid gap-3">
+            {orders.map((order) => (
+              <div
+                className="rounded-md border border-[var(--line)] bg-white px-4 py-3"
+                key={order.id}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="font-bold text-[var(--ink)]">{order.order_no}</p>
+                    <p className="mt-1 text-xs text-[var(--muted)]">
+                      {order.package_name} · {formatDate(order.created_at)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-black text-[var(--accent-strong)]">
+                      {order.credits_amount} 点
+                    </p>
+                    <p className="text-xs text-[var(--muted)]">{order.status}</p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
+            <p className="font-bold text-[var(--ink)]">还没有占位订单</p>
+            <p className="mt-2 text-sm text-[var(--muted)]">
+              点击点数包会创建 pending 订单，但不会充值。
+            </p>
+          </div>
+        )}
       </section>
 
       <section className="surface mt-6 p-6">
