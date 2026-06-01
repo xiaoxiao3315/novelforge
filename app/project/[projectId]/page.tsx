@@ -15,11 +15,10 @@ import {
   type CharacterCard,
   type StoryBible,
 } from "@/prompts/bible";
+import { normalizeChapterContent, type ChapterContent } from "@/prompts/chapter";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 import {
-  normalizeChapterOutlines,
   normalizeVolumeOutline,
-  type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
 
@@ -52,7 +51,8 @@ type VolumeRow = {
 };
 
 type ChapterRow = {
-  content: ChapterOutline | null;
+  id: string;
+  content: ChapterContent | null;
 };
 
 const configRows: Array<{
@@ -137,13 +137,19 @@ export default async function ProjectDetailPage({
 
   const { data: chapterRows } = await supabase
     .from("chapters")
-    .select("content")
+    .select("id,content")
     .eq("project_id", projectId)
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();
 
   const volume = normalizeVolumeOutline(volumeRow?.content);
-  const chapters = normalizeChapterOutlines(chapterRows?.map((row) => row.content) ?? []);
+  const chapters = (chapterRows ?? [])
+    .map((row) => {
+      const content = normalizeChapterContent(row.content);
+      return content ? { ...content, id: row.id } : null;
+    })
+    .filter((chapter): chapter is ChapterContent & { id: string } => Boolean(chapter))
+    .sort((left, right) => left.chapterNumber - right.chapterNumber);
 
   return (
     <main className="app-shell py-8">

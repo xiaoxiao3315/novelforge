@@ -2,18 +2,29 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import type { ChapterContent } from "@/prompts/chapter";
 import type { ChapterOutline, VolumeOutline } from "@/prompts/outline";
+
+type ChapterDisplay = ChapterContent & {
+  id?: string;
+};
 
 type OutlineGeneratorProps = {
   projectId: string;
   initialVolume: VolumeOutline | null;
-  initialChapters: ChapterOutline[];
+  initialChapters: ChapterDisplay[];
   hasPrerequisites: boolean;
 };
 
 type OutlineResponse = {
   volume?: VolumeOutline;
   chapters?: ChapterOutline[];
+  error?: string;
+};
+
+type ChapterResponse = {
+  chapterId?: string;
+  chapter?: ChapterContent;
   error?: string;
 };
 
@@ -48,6 +59,7 @@ export function OutlineGenerator({
   const [chapters, setChapters] = useState(initialChapters);
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
   const router = useRouter();
 
   async function generateOutline() {
@@ -78,6 +90,46 @@ export function OutlineGenerator({
 
     setVolume(payload.volume);
     setChapters(payload.chapters);
+    router.refresh();
+  }
+
+  async function generateChapter(chapter: ChapterDisplay) {
+    setError("");
+    setGeneratingChapterNumber(chapter.chapterNumber);
+
+    const response = await fetch("/api/generate/chapter", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        chapterId: chapter.id,
+        chapterNumber: chapter.chapterNumber,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as ChapterResponse | null;
+
+    setGeneratingChapterNumber(null);
+
+    if (!response.ok || !payload?.chapter) {
+      setError(payload?.error || "章节正文生成失败，请稍后重试。");
+      return;
+    }
+
+    const generatedChapter = {
+      ...payload.chapter,
+      id: payload.chapterId || chapter.id,
+    };
+
+    setChapters((currentChapters) =>
+      currentChapters.map((currentChapter) =>
+        currentChapter.chapterNumber === generatedChapter.chapterNumber
+          ? generatedChapter
+          : currentChapter,
+      ),
+    );
     router.refresh();
   }
 
@@ -157,9 +209,23 @@ export function OutlineGenerator({
                       {chapter.title}
                     </h4>
                   </div>
-                  <span className="rounded-full bg-[#f7efe6] px-3 py-1 text-xs font-bold text-[#80522f]">
-                    预计 {chapter.estimatedWords} 字
-                  </span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-[#f7efe6] px-3 py-1 text-xs font-bold text-[#80522f]">
+                      预计 {chapter.estimatedWords} 字
+                    </span>
+                    <button
+                      className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={generatingChapterNumber !== null}
+                      onClick={() => generateChapter(chapter)}
+                      type="button"
+                    >
+                      {generatingChapterNumber === chapter.chapterNumber
+                        ? "正文生成中..."
+                        : chapter.draft?.body
+                          ? "重新生成正文"
+                          : "生成正文"}
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -174,6 +240,17 @@ export function OutlineGenerator({
                     </div>
                   ))}
                 </div>
+
+                {chapter.draft?.body ? (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                      章节正文
+                    </p>
+                    <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#fffaf0] px-4 py-4 leading-8 text-[var(--ink)]">
+                      {chapter.draft.body}
+                    </div>
+                  </div>
+                ) : null}
               </article>
             ))}
           </div>

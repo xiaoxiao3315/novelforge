@@ -10,6 +10,8 @@ type GenerateDeepSeekJsonOptions = {
   temperature?: number;
 };
 
+type GenerateDeepSeekTextOptions = GenerateDeepSeekJsonOptions;
+
 export function getDeepSeekModel() {
   return process.env.DEEPSEEK_MODEL?.trim() || DEFAULT_DEEPSEEK_MODEL;
 }
@@ -45,6 +47,33 @@ export async function generateDeepSeekJson({
       { role: "user", content: userPrompt },
     ],
     response_format: { type: "json_object" },
+    max_tokens: maxTokens,
+    ...(temperature === undefined ? {} : { temperature }),
+  });
+
+  const choice = completion.choices[0];
+  const outputText = choice?.message?.content?.trim() ?? "";
+
+  return {
+    model,
+    outputText,
+    finishReason: choice?.finish_reason ?? null,
+  };
+}
+
+export async function generateDeepSeekText({
+  systemPrompt,
+  userPrompt,
+  maxTokens = 3000,
+  temperature,
+}: GenerateDeepSeekTextOptions) {
+  const model = getDeepSeekModel();
+  const completion = await createDeepSeekClient().chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
     max_tokens: maxTokens,
     ...(temperature === undefined ? {} : { temperature }),
   });
