@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { findPlotFilterLabel } from "@/data/plot-filters";
-import { generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -17,6 +17,12 @@ import {
   DEFAULT_CHAPTER_WORD_TARGET,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
+import {
+  buildChapterSummary,
+  buildChapterSummaryPrompt,
+  CHAPTER_SUMMARY_PROMPT_VERSION,
+  validateChapterSummaryOutput,
+} from "@/prompts/chapter-summary";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 import {
   normalizeChapterOutlines,
@@ -82,10 +88,17 @@ type ChapterRow = {
 
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
+const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
+const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
 const CHAPTER_SYSTEM_PROMPT = [
   "你只输出中文小说正文。",
   "不要 Markdown，不要代码块，不要解释，不要大纲，不要标题分析。",
   "只写当前一章，不提前生成下一章，不生成整本小说。",
+].join(" ");
+const CHAPTER_SUMMARY_SYSTEM_PROMPT = [
+  "你只输出一个可被 JSON.parse 解析的 JSON object。",
+  "不要 Markdown，不要代码块，不要解释，不要输出 JSON 前后的多余文本。",
+  "只总结当前章节，不写正文，不续写，不生成整本小说。",
 ].join(" ");
 
 function validationError(message: string) {
@@ -110,6 +123,16 @@ function cleanChapterBody(text: string) {
     .replace(/^```(?:text|markdown)?/i, "")
     .replace(/```$/i, "")
     .trim();
+}
+
+function parseJsonObject(text: string) {
+  const trimmed = text
+    .trim()
+    .replace(/^```(?:json)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  return JSON.parse(trimmed) as unknown;
 }
 
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
@@ -216,17 +239,47 @@ export async function POST(request: Request) {
   const visibleProject = project;
   const model = getDeepSeekModel();
 
-  async function writeErrorLog(error: string, input: Record<string, unknown>, targetId?: string) {
+  async function writeGenerationErrorLog(
+    operation: string,
+    promptVersion: string,
+    error: string,
+    input: Record<string, unknown>,
+    targetId?: string,
+  ) {
     await supabase.from("generation_logs").insert({
       project_id: visibleProject.id,
-      operation: "generate_chapter",
+      operation,
       target_type: "chapter",
       ...(targetId ? { target_id: targetId } : {}),
       model,
-      prompt_version: CHAPTER_PROMPT_VERSION,
+      prompt_version: promptVersion,
       input,
       error,
     });
+  }
+
+  async function writeErrorLog(error: string, input: Record<string, unknown>, targetId?: string) {
+    await writeGenerationErrorLog(
+      "generate_chapter",
+      CHAPTER_PROMPT_VERSION,
+      error,
+      input,
+      targetId,
+    );
+  }
+
+  async function writeSummaryErrorLog(
+    error: string,
+    input: Record<string, unknown>,
+    targetId?: string,
+  ) {
+    await writeGenerationErrorLog(
+      "generate_chapter_summary",
+      CHAPTER_SUMMARY_PROMPT_VERSION,
+      error,
+      input,
+      targetId,
+    );
   }
 
   const baseLogInput = { project: visibleProject };
@@ -424,7 +477,53 @@ export async function POST(request: Request) {
   }
 
   const draft = buildChapterDraft(outputText, model, promptInput.wordTarget);
-  const chapterContent = buildChapterContent(chapter, draft, chapterRow.content);
+  const summaryLogInput = {
+    project: visibleProject,
+    chapter,
+    previousChapters,
+    draft,
+    body: outputText,
+  };
+  let parsedSummary: unknown;
+
+  try {
+    const result = await generateDeepSeekJson({
+      systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
+      userPrompt: buildChapterSummaryPrompt({
+        chapter,
+        body: outputText,
+        previousSummaries: previousChapters.map((previousChapter) => ({
+          ...previousChapter,
+          summary: previousChapter.summary,
+        })),
+      }),
+      maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
+      temperature: CHAPTER_SUMMARY_TEMPERATURE,
+    });
+
+    if (!result.outputText) {
+      const error = "DeepSeek 响应缺少章节摘要 JSON。";
+      await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
+      return serverError(error);
+    }
+
+    parsedSummary = parseJsonObject(result.outputText);
+  } catch (error) {
+    const errorMessage = `DeepSeek 摘要生成失败：${getErrorMessage(error).slice(0, 800)}`;
+    await writeSummaryErrorLog(errorMessage, summaryLogInput, chapterRow.id);
+    return serverError(errorMessage);
+  }
+
+  const summaryValidation = validateChapterSummaryOutput(parsedSummary);
+
+  if (!summaryValidation.ok) {
+    const error = `章节摘要 JSON 未通过 schema 校验：${summaryValidation.error}`;
+    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
+    return serverError(error);
+  }
+
+  const summary = buildChapterSummary(summaryValidation.summary, model);
+  const chapterContent = buildChapterContent(chapter, draft, summary, chapterRow.content);
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -441,21 +540,35 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const { error: logError } = await supabase.from("generation_logs").insert({
-    project_id: visibleProject.id,
-    operation: "generate_chapter",
-    target_type: "chapter",
-    target_id: savedChapter.id,
-    model,
-    prompt_version: CHAPTER_PROMPT_VERSION,
-    input: logInput,
-    output: {
-      chapter: chapterContent,
+  const { error: logError } = await supabase.from("generation_logs").insert([
+    {
+      project_id: visibleProject.id,
+      operation: "generate_chapter",
+      target_type: "chapter",
+      target_id: savedChapter.id,
+      model,
+      prompt_version: CHAPTER_PROMPT_VERSION,
+      input: logInput,
+      output: {
+        chapter: chapterContent,
+      },
     },
-  });
+    {
+      project_id: visibleProject.id,
+      operation: "generate_chapter_summary",
+      target_type: "chapter",
+      target_id: savedChapter.id,
+      model,
+      prompt_version: CHAPTER_SUMMARY_PROMPT_VERSION,
+      input: summaryLogInput,
+      output: {
+        summary,
+      },
+    },
+  ]);
 
   if (logError) {
-    return serverError(`章节正文已保存，但生成日志写入失败：${logError.message}`);
+    return serverError(`章节正文和摘要已保存，但生成日志写入失败：${logError.message}`);
   }
 
   return NextResponse.json({

@@ -49,6 +49,23 @@ const chapterSections: Array<{
   { key: "endingHook", label: "结尾钩子" },
 ];
 
+const summarySections: Array<{
+  key: keyof NonNullable<ChapterContent["summary"]>;
+  label: string;
+}> = [
+  { key: "keyEvents", label: "关键事件" },
+  { key: "characterStateChanges", label: "角色状态变化" },
+  { key: "relationshipChanges", label: "关系变化" },
+  { key: "foreshadowingAndClues", label: "伏笔和线索" },
+  { key: "unresolvedQuestions", label: "未解决悬念" },
+  { key: "endingState", label: "结尾状态" },
+  { key: "continuityNotes", label: "下一章上下文" },
+];
+
+function formatSummaryValue(value: string | string[]) {
+  return Array.isArray(value) ? value.join("；") : value;
+}
+
 export function OutlineGenerator({
   projectId,
   initialVolume,
@@ -248,6 +265,29 @@ export function OutlineGenerator({
                     </p>
                     <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#fffaf0] px-4 py-4 leading-8 text-[var(--ink)]">
                       {chapter.draft.body}
+                    </div>
+                  </div>
+                ) : null}
+
+                {chapter.summary ? (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                      章节摘要 / 连续性状态
+                    </p>
+                    <div className="mt-3 grid gap-3 md:grid-cols-2">
+                      {summarySections.map((section) => (
+                        <div
+                          className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3"
+                          key={section.key}
+                        >
+                          <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                            {section.label}
+                          </p>
+                          <p className="mt-1 line-clamp-3 leading-7 text-[var(--ink)]">
+                            {formatSummaryValue(chapter.summary?.[section.key] ?? "")}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : null}

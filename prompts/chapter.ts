@@ -1,4 +1,5 @@
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
+import { normalizeChapterSummary, type ChapterSummary } from "@/prompts/chapter-summary";
 import type { StoryConcept } from "@/prompts/concept";
 import {
   normalizeChapterOutlines,
@@ -19,10 +20,12 @@ export type ChapterDraft = {
 
 export type ChapterContent = ChapterOutline & {
   draft?: ChapterDraft;
+  summary?: ChapterSummary;
 };
 
 export type PreviousChapterContext = ChapterOutline & {
   draftExcerpt: string | null;
+  summary: ChapterSummary | null;
 };
 
 export type ChapterPromptInput = {
@@ -119,10 +122,12 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   }
 
   const draft = normalizeChapterDraft(value.draft);
+  const summary = normalizeChapterSummary(value.summary);
 
   return {
     ...outline,
     ...(draft ? { draft } : {}),
+    ...(summary ? { summary } : {}),
   };
 }
 
@@ -154,6 +159,7 @@ export function buildChapterDraft(
 export function buildChapterContent(
   chapter: ChapterOutline,
   draft: ChapterDraft,
+  summary: ChapterSummary,
   existingContent: unknown,
 ): ChapterContent {
   const existing = isRecord(existingContent) ? existingContent : {};
@@ -162,6 +168,7 @@ export function buildChapterContent(
     ...existing,
     ...chapter,
     draft,
+    summary,
   };
 }
 
@@ -170,10 +177,12 @@ export function buildPreviousChapterContext(
   content: unknown,
 ): PreviousChapterContext {
   const draft = isRecord(content) ? normalizeChapterDraft(content.draft) : null;
+  const summary = isRecord(content) ? normalizeChapterSummary(content.summary) : null;
 
   return {
     ...chapter,
     draftExcerpt: draft ? excerptText(draft.body) : null,
+    summary,
   };
 }
 
@@ -201,8 +210,24 @@ function formatPreviousChapters(previousChapters: PreviousChapterContext[]) {
   }
 
   return previousChapters
-    .map((chapter) =>
-      [
+    .map((chapter) => {
+      const continuityLines = chapter.summary
+        ? [
+            `- 已发生事件：${chapter.summary.keyEvents.join("；")}`,
+            `- 角色状态变化：${chapter.summary.characterStateChanges.join("；")}`,
+            `- 关系变化：${chapter.summary.relationshipChanges.join("；")}`,
+            `- 伏笔和线索：${chapter.summary.foreshadowingAndClues.join("；")}`,
+            `- 未解决悬念：${chapter.summary.unresolvedQuestions.join("；")}`,
+            `- 结尾状态：${chapter.summary.endingState}`,
+            `- 后续生成上下文：${chapter.summary.continuityNotes.join("；")}`,
+          ]
+        : [
+            chapter.draftExcerpt
+              ? `- 已生成正文节选：${chapter.draftExcerpt}`
+              : "- 尚无摘要或正文节选，仅按本章大纲作为前文信息。",
+          ];
+
+      return [
         `第 ${chapter.chapterNumber} 章《${chapter.title}》`,
         `- 大纲事件：${chapter.event}`,
         `- 大纲冲突：${chapter.conflict}`,
@@ -210,11 +235,9 @@ function formatPreviousChapters(previousChapters: PreviousChapterContext[]) {
         `- 看点：${chapter.highlight}`,
         `- 伏笔：${chapter.foreshadowing}`,
         `- 结尾钩子：${chapter.endingHook}`,
-        chapter.draftExcerpt
-          ? `- 已生成正文节选：${chapter.draftExcerpt}`
-          : "- 尚无正文摘要或正文节选，仅按本章大纲作为前文信息。",
-      ].join("\n"),
-    )
+        ...continuityLines,
+      ].join("\n");
+    })
     .join("\n\n");
 }
 
