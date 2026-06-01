@@ -1,33 +1,77 @@
 # NovelForge / 小说工坊
 
-NovelForge is a minimal AI novel creation workspace built with Next.js App Router, TypeScript, Tailwind CSS, and Supabase Auth.
+NovelForge 是一个互动小说生成工作台。用户通过剧情筛选器创建作品，再使用 DeepSeek 逐步生成作品设定、故事圣经、章节大纲和单章正文；章节阶段支持导演指令干预，并保留章节版本与正式稿。
 
-Current milestone: WO-001 only.
+当前版本：`v0.1` 内测准备版。
 
-## Included In WO-001
+## 当前功能
 
-- Next.js App Router project skeleton
-- TypeScript and Tailwind CSS setup
-- Supabase browser, server, and request-bound auth clients
-- `/login`
-- `/dashboard`
-- dashboard route protection
-- `.env.example`
+- Supabase 邮箱密码登录和受保护页面。
+- Dashboard 作品列表和创建作品入口。
+- 剧情筛选器：题材、背景、世界、主角、冲突、基调、连载结构和补充想法。
+- DeepSeek 生成作品设定、故事圣经、角色卡、第一卷 20 章大纲、单章正文。
+- 单章导演指令：风格倾向、必须出现、必须避免、结尾要求。
+- 章节摘要、章节版本、正式稿确认。
+- 点数系统：生成成功后扣点，失败不扣点。
+- 点数账户页：余额、成本表、交易流水、订单状态。
+- Mock 支付闭环：仅非生产环境测试用，不接真实支付。
 
-## Not Included Yet
-
-- Database business tables
-- Story project creation
-- AI generation
-- Plot filters
-- Chapter workflows
-
-## Local Run
+## 本地启动
 
 ```bash
 npm install
 npm run dev
 ```
 
-Then open `http://localhost:3000`.
+打开 `http://localhost:3000`。
 
+常用检查：
+
+```bash
+npm run typecheck
+npm run lint
+git diff --check
+```
+
+## 必要环境变量
+
+参考 `.env.example` 配置本地环境。至少需要：
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
+- `DEEPSEEK_API_KEY`
+- `DEEPSEEK_BASE_URL`
+- `DEEPSEEK_MODEL`
+
+不要把 `.env.local` 或任何密钥提交到仓库。
+
+## 支付状态
+
+当前不接真实支付，不接 Stripe、微信支付、支付宝，也没有真实 webhook。
+
+`/account/credits` 中的 Mock 支付只用于本地或测试环境验证订单状态、入账流水和幂等逻辑。生产环境下 mock-complete API 会拒绝执行。
+
+## 手动验收清单
+
+1. 注册或登录账号。
+2. 进入 Dashboard。
+3. 创建一个作品。
+4. 在项目页生成作品设定。
+5. 生成故事圣经和角色卡。
+6. 生成第一卷章节大纲。
+7. 在某一章填写导演指令。
+8. 生成该章正文。
+9. 重新生成同一章，确认版本数量增加。
+10. 将满意版本设为正式稿。
+11. 查看点数余额和扣点流水。
+12. 在点数页创建点数包 pending 订单。
+13. 使用 Mock 支付模拟成功，确认余额增加、订单 paid、流水为 `purchase_credits`。
+14. 使用 Mock 支付模拟失败或取消，确认余额不增加。
+
+## 已知限制
+
+- AI 输出仍可能需要人工校对和修改。
+- 长 JSON 输出已做重试和清洗，但模型异常时仍可能失败。
+- 当前只做单章正文生成，不做批量生成整本小说。
+- 当前没有 TipTap 编辑器、改写、续写、多分支树、社区、排行榜、AI 绘图或漫画分镜。
+- 当前没有真实充值、退款、发票、订阅或正式支付对账流程。

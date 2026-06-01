@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { plotFilters, type PlotFilterOption } from "@/data/plot-filters";
+import { formatUserFacingError } from "@/lib/ui/errors";
 
 type SelectFieldProps = {
   name: string;
@@ -115,7 +116,7 @@ export function CreateProjectForm() {
     setIsSubmitting(false);
 
     if (!response.ok || !payload?.projectId) {
-      setError(payload?.error || "创建失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "作品创建失败，请稍后重试。"));
       return;
     }
 
@@ -226,7 +227,7 @@ export function CreateProjectForm() {
 
       <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--muted)]">
-          创建时只写入 projects 和 story_configs，不触发 AI 生成。
+          创建时只保存剧情筛选器，不触发 AI 生成，也不消耗点数。
         </p>
         <button className="button-primary" disabled={isSubmitting} type="submit">
           {isSubmitting ? "创建中..." : "创建作品"}

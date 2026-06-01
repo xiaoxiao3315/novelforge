@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { CREDIT_PACKAGES } from "@/lib/payments/packages";
+import { formatUserFacingError } from "@/lib/ui/errors";
 
 type CreditPackage = (typeof CREDIT_PACKAGES)[number];
 
@@ -46,7 +47,7 @@ export function CreditPackagePanel({ packages, mockPaymentEnabled }: CreditPacka
       const payload = (await response.json().catch(() => null)) as CreateOrderResponse | null;
 
       if (!response.ok || !payload?.order) {
-        setMessage(payload?.error || "点数订单创建失败，请稍后重试。");
+        setMessage(formatUserFacingError(payload?.error, "点数订单创建失败，请稍后重试。"));
         return;
       }
 

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { formatUserFacingError } from "@/lib/ui/errors";
 
 type MockPaymentResult = "success" | "failed" | "cancelled";
 
@@ -46,7 +47,7 @@ export function MockPaymentActions({ orderId, orderNo }: MockPaymentActionsProps
       const payload = (await response.json().catch(() => null)) as MockCompleteResponse | null;
 
       if (!response.ok) {
-        setMessage(payload?.error || "Mock 支付处理失败，请稍后重试。");
+        setMessage(formatUserFacingError(payload?.error, "Mock 支付处理失败，请稍后重试。"));
         return;
       }
 

@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { formatUserFacingError } from "@/lib/ui/errors";
 
 type Mode = "sign-in" | "sign-up";
 
@@ -30,7 +31,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     setIsSubmitting(false);
 
     if (error) {
-      setMessage(error.message);
+      setMessage(formatUserFacingError(error.message, "登录或注册失败，请检查邮箱和密码后重试。"));
       return;
     }
 

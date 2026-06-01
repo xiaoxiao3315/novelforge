@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { AppNav } from "@/components/app/app-nav";
 import { LoginForm } from "@/components/auth/login-form";
 import { createClient } from "@/lib/supabase/server";
 
@@ -27,17 +28,19 @@ export default async function LoginPage({
   }
 
   return (
-    <main className="app-shell flex min-h-screen items-center justify-center py-8">
-      <section className="grid w-full gap-8 md:grid-cols-[1fr_420px]">
+    <main className="app-shell py-8">
+      <AppNav isAuthed={false} />
+
+      <section className="grid min-h-[calc(100vh-140px)] items-center gap-8 md:grid-cols-[1fr_420px]">
         <div className="flex flex-col justify-center">
           <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
-            NovelForge
+            beta access
           </p>
           <h1 className="text-5xl font-black leading-tight text-[var(--ink)]">
-            登录小说工坊
+            登录 NovelForge 内测
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-8 text-[var(--muted)]">
-            WO-001 只处理账户入口和受保护工作台。作品、数据库业务表和 AI 生成会在后续工作单进入。
+            登录后可以创建作品，使用 DeepSeek 生成设定、故事圣经、章节大纲和正文。点数只限制 AI 生成，查看和确认正式稿不扣点。
           </p>
         </div>
         <LoginForm redirectTo={redirectTo} />

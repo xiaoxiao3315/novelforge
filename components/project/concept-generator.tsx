@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
+import { formatUserFacingError } from "@/lib/ui/errors";
 import type { StoryConcept } from "@/prompts/concept";
 
 type ConceptGeneratorProps = {
@@ -73,7 +74,7 @@ export function ConceptGenerator({
     setIsGenerating(false);
 
     if (!response.ok || !payload?.concept) {
-      setError(payload?.error || "作品设定生成失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "作品设定生成失败，请稍后重试。"));
       return;
     }
 
@@ -87,7 +88,7 @@ export function ConceptGenerator({
         <div>
           <h2 className="text-2xl font-black text-[var(--ink)]">作品设定</h2>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-            基于已保存的剧情筛选器和补充想法生成 concept。重新生成会覆盖当前作品设定，并保留生成日志。
+            基于已保存的剧情筛选器和补充想法生成作品设定。生成可能需要几十秒；重新生成会覆盖当前设定，并保留生成日志。
           </p>
         </div>
         <button

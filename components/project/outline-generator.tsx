@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
+import { formatUserFacingError } from "@/lib/ui/errors";
 import {
   CHAPTER_INTERVENTION_LIMITS,
   EMPTY_CHAPTER_INTERVENTION,
@@ -191,7 +192,7 @@ export function OutlineGenerator({
     setIsGenerating(false);
 
     if (!response.ok || !payload?.volume || !payload.chapters) {
-      setError(payload?.error || "章节大纲生成失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "章节大纲生成失败，请稍后重试。"));
       return;
     }
 
@@ -230,7 +231,7 @@ export function OutlineGenerator({
     setGeneratingChapterNumber(null);
 
     if (!response.ok || !payload?.chapter) {
-      setError(payload?.error || "章节正文生成失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "章节正文生成失败，请稍后重试。"));
       return;
     }
 
@@ -282,7 +283,7 @@ export function OutlineGenerator({
     setSettingOfficialChapterNumber(null);
 
     if (!response.ok || !payload?.official) {
-      setError(payload?.error || "正式稿设置失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "正式稿设置失败，请稍后重试。"));
       return;
     }
 
@@ -324,7 +325,7 @@ export function OutlineGenerator({
         <div>
           <h2 className="text-2xl font-black text-[var(--ink)]">章节大纲</h2>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-            基于已保存的 story_config、story_concept、story_bible 和 characters 生成第一卷 20 章大纲。重新生成会覆盖当前卷信息和章节大纲，并记录生成日志。
+            基于已保存的设定、故事圣经和角色卡生成第一卷 20 章大纲。生成可能需要几十秒；重新生成会覆盖当前卷信息和章节大纲，并记录生成日志。
           </p>
         </div>
         <button

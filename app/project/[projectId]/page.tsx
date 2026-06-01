@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
-import { SignOutButton } from "@/components/auth/sign-out-button";
+import { AppNav } from "@/components/app/app-nav";
 import { BibleGenerator } from "@/components/project/bible-generator";
 import { ConceptGenerator } from "@/components/project/concept-generator";
 import { OutlineGenerator } from "@/components/project/outline-generator";
@@ -188,20 +188,7 @@ export default async function ProjectDetailPage({
 
   return (
     <main className="app-shell py-8">
-      <nav className="flex flex-wrap items-center justify-between gap-4 py-4">
-        <Link href="/dashboard" className="text-xl font-black">
-          NovelForge / 小说工坊
-        </Link>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link
-            className="rounded-full bg-[#eef4f2] px-3 py-1 text-sm font-bold text-[var(--accent-strong)]"
-            href="/account/credits"
-          >
-            点数余额：{creditBalance ?? "读取失败"}
-          </Link>
-          <SignOutButton />
-        </div>
-      </nav>
+      <AppNav isAuthed creditBalance={creditBalance} />
 
       <section className="mt-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
@@ -220,12 +207,45 @@ export default async function ProjectDetailPage({
         </div>
       </section>
 
+      <section className="surface mt-6 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="text-2xl font-black text-[var(--ink)]">创作流程</h2>
+            <p className="mt-2 max-w-3xl leading-7 text-[var(--muted)]">
+              按顺序推进会最稳定。每次 AI 生成可能需要几十秒；生成失败不会覆盖已保存内容，也不会扣点。
+            </p>
+          </div>
+          <Link className="button-secondary" href="/account/credits">
+            点数与 Mock 支付
+          </Link>
+        </div>
+        <div className="mt-5 grid gap-3 md:grid-cols-5">
+          {[
+            "第一步：生成作品设定",
+            "第二步：生成故事圣经",
+            "第三步：生成章节大纲",
+            "第四步：填写导演指令并生成正文",
+            "第五步：设为正式稿",
+          ].map((step) => (
+            <div
+              className="rounded-md border border-[var(--line)] bg-white px-3 py-3 text-sm font-bold text-[var(--ink)]"
+              key={step}
+            >
+              {step}
+            </div>
+          ))}
+        </div>
+        <p className="mt-4 text-sm leading-6 text-[var(--muted)]">
+          内测提示：AI 生成内容可能需要人工调整；章节正文可以多次重新生成，每次都会保留版本，确认满意后再设为正式稿。
+        </p>
+      </section>
+
       <section className="surface mt-8 p-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-2xl font-black text-[var(--ink)]">剧情筛选器</h2>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              这些输入已保存到 story_configs，WO-004 会基于它们生成作品设定。
+              这些输入会作为后续 AI 生成的基础，影响作品设定、故事圣经、大纲和正文风格。
             </p>
           </div>
           <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">

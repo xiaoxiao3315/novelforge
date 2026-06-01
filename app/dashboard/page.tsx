@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { SignOutButton } from "@/components/auth/sign-out-button";
+import { AppNav } from "@/components/app/app-nav";
 import { ProjectCard, type ProjectCardData } from "@/components/project/project-card";
 import { ensureCreditAccount } from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
@@ -24,26 +24,23 @@ export default async function DashboardPage() {
 
   return (
     <main className="app-shell py-8">
-      <nav className="flex flex-wrap items-center justify-between gap-4 py-4">
-        <Link href="/" className="text-xl font-black">
-          NovelForge / 小说工坊
-        </Link>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link className="button-secondary" href="/account/credits">
-            点数余额：{creditBalance ?? "读取失败"}
-          </Link>
-          <SignOutButton />
-        </div>
-      </nav>
+      <AppNav isAuthed creditBalance={creditBalance} />
 
       <section className="mt-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
           dashboard
         </p>
-        <h1 className="mt-2 text-4xl font-black text-[var(--ink)]">我的作品</h1>
-        <p className="mt-3 text-[var(--muted)]">
-          当前登录账号：{user.email || user.id}
-        </p>
+        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-4xl font-black text-[var(--ink)]">我的作品</h1>
+            <p className="mt-3 text-[var(--muted)]">
+              从这里进入完整创作流程：创建作品、生成设定、生成大纲、写正文并确认正式稿。
+            </p>
+          </div>
+          <Link className="button-primary" href="/create">
+            创建作品
+          </Link>
+        </div>
       </section>
 
       <section className="surface mt-8 p-6">
@@ -51,18 +48,17 @@ export default async function DashboardPage() {
           <div>
             <h2 className="text-2xl font-black text-[var(--ink)]">作品列表</h2>
             <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-              这里显示当前账号通过 RLS 可访问的作品。刷新页面后会重新从
-              Supabase 读取。
+              每个作品都会保存剧情筛选器、AI 生成结果、章节版本和正式稿状态。内测期间建议从一个短篇或第一卷开始验收。
             </p>
           </div>
-          <Link className="button-primary" href="/create">
-            创建作品
+          <Link className="button-secondary" href="/account/credits">
+            查看点数与 Mock 支付
           </Link>
         </div>
 
         {projectsError ? (
           <div className="mt-6 rounded-md border border-[#e2b6a6] bg-[#fff4ef] p-4 text-sm text-[#7f2f1d]">
-            读取作品失败：{projectsError.message}
+            作品列表暂时读取失败，请刷新页面重试。
           </div>
         ) : projects && projects.length > 0 ? (
           <div className="mt-6 grid gap-4 md:grid-cols-2">
@@ -73,8 +69,8 @@ export default async function DashboardPage() {
         ) : (
           <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-8 text-center">
             <p className="font-bold text-[var(--ink)]">还没有作品</p>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              先创建一个作品，保存剧情筛选器和补充想法。
+            <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-[var(--muted)]">
+              先创建一个作品，选择题材、背景、主角和冲突。创建后就能按页面提示生成设定、故事圣经、章节大纲和正文。
             </p>
             <Link className="button-primary mt-5" href="/create">
               创建第一个作品

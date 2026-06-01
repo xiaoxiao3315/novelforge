@@ -27,7 +27,7 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
         <div>
           <h3 className="text-xl font-black text-[var(--ink)]">{project.title}</h3>
           <p className="mt-2 line-clamp-2 text-sm leading-6 text-[var(--muted)]">
-            {project.description || "暂未填写简介"}
+            {project.description || "暂无简介，进入项目后可继续生成设定和章节。"}
           </p>
         </div>
         <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
@@ -35,7 +35,7 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
         </span>
       </div>
       <p className="mt-5 text-xs font-semibold text-[var(--muted)]">
-        更新于 {formatDate(project.updated_at || project.created_at)}
+        最近更新 {formatDate(project.updated_at || project.created_at)}
       </p>
     </Link>
   );

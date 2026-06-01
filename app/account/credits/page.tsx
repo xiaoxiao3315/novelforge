@@ -1,8 +1,7 @@
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { CreditPackagePanel } from "@/components/account/credit-package-panel";
 import { MockPaymentActions } from "@/components/account/mock-payment-actions";
-import { SignOutButton } from "@/components/auth/sign-out-button";
+import { AppNav } from "@/components/app/app-nav";
 import {
   GENERATION_CREDIT_COSTS,
   ensureCreditAccount,
@@ -84,17 +83,7 @@ export default async function CreditsPage() {
 
   return (
     <main className="app-shell py-8">
-      <nav className="flex flex-wrap items-center justify-between gap-4 py-4">
-        <Link href="/dashboard" className="text-xl font-black">
-          NovelForge / 小说工坊
-        </Link>
-        <div className="flex flex-wrap items-center gap-3">
-          <Link className="button-secondary" href="/dashboard">
-            返回工作台
-          </Link>
-          <SignOutButton />
-        </div>
-      </nav>
+      <AppNav isAuthed creditBalance={balance} />
 
       <section className="mt-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
@@ -160,7 +149,7 @@ export default async function CreditsPage() {
         </p>
         {ordersError ? (
           <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-            读取订单失败：{ordersError.message}
+            订单记录暂时读取失败，请刷新页面重试。
           </p>
         ) : orders && orders.length > 0 ? (
           <div className="mt-5 grid gap-3">
@@ -224,7 +213,7 @@ export default async function CreditsPage() {
         <h2 className="text-2xl font-black text-[var(--ink)]">最近点数流水</h2>
         {transactionsError ? (
           <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-            读取交易记录失败：{transactionsError.message}
+            点数流水暂时读取失败，请刷新页面重试。
           </p>
         ) : transactions && transactions.length > 0 ? (
           <div className="mt-5 grid gap-3">

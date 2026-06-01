@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
+import { formatUserFacingError } from "@/lib/ui/errors";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 
 type BibleGeneratorProps = {
@@ -95,7 +96,7 @@ export function BibleGenerator({
     setIsGenerating(false);
 
     if (!response.ok || !payload?.bible || !payload.characters) {
-      setError(payload?.error || "故事圣经生成失败，请稍后重试。");
+      setError(formatUserFacingError(payload?.error, "故事圣经生成失败，请稍后重试。"));
       return;
     }
 
@@ -110,7 +111,7 @@ export function BibleGenerator({
         <div>
           <h2 className="text-2xl font-black text-[var(--ink)]">故事圣经</h2>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-            基于剧情筛选器和作品设定生成故事圣经与主要角色卡。重新生成会覆盖当前故事圣经，并替换该项目角色卡。
+            基于剧情筛选器和作品设定生成故事圣经与主要角色卡。生成可能需要几十秒；重新生成会覆盖当前故事圣经，并替换该项目角色卡。
           </p>
         </div>
         <button
