@@ -23,11 +23,11 @@ export default async function CreateProjectPage() {
 
       <section className="mt-8">
         <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
-          create project
+          story gate
         </p>
-        <h1 className="mt-2 text-4xl font-black text-[var(--ink)]">创建作品</h1>
+        <h1 className="mt-2 text-4xl font-black text-[var(--ink)]">开启一本新故事</h1>
         <p className="mt-3 max-w-3xl leading-7 text-[var(--muted)]">
-          先用剧情筛选器固定题材、世界、主角、冲突和连载结构。创建动作不会消耗点数，AI 生成从项目页开始。
+          先选一条命运的起点，告诉 NovelForge 你想进入怎样的世界。这里会保存故事方向和读者期待，AI 生成从项目页开始。
         </p>
       </section>
 
