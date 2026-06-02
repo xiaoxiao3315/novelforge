@@ -30,7 +30,15 @@ type ChapterEndDecisionProps = {
   initialDecision?: ChapterDecision | null;
   initialInteractiveState?: InteractiveStoryState | null;
   initialStateChanges?: StoryStateChanges | null;
+  nextChapter?: NextChapterHint | null;
   projectId: string;
+};
+
+export type NextChapterHint = {
+  anchorId: string;
+  chapterNumber: number;
+  hasBody: boolean;
+  title: string;
 };
 
 function formatChangeValue(value: number) {
@@ -120,9 +128,34 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
   const hasChanges = Boolean(stateChanges && hasStoryStateChanges(stateChanges));
   const relationships = stateChanges?.relationships ?? [];
   const meters = stateChanges?.meters ?? [];
-  const flags = stateChanges?.flags ?? [];
   const clues = stateChanges?.clues ?? [];
   const routeTendency = stateChanges?.routeTendency ?? [];
+  const storyImpactGroups = [
+    {
+      emptyText: "这次选择暂时没有改变角色羁绊。",
+      items: relationships.slice(0, 2),
+      label: "羁绊变化",
+      renderValue: (item: StateChangeItem) => formatChangeValue(item.change ?? 0),
+    },
+    {
+      emptyText: "压力和风险还没有明显波动。",
+      items: meters.slice(0, 2),
+      label: "压力与风险",
+      renderValue: (item: StateChangeItem) => formatChangeValue(item.change ?? 0),
+    },
+    {
+      emptyText: "还没有被点亮的新线索。",
+      items: clues.slice(0, 2),
+      label: "被点亮的线索",
+      renderValue: (item: StateChangeItem) => item.status ?? "已记录",
+    },
+    {
+      emptyText: "命运倾向还没有明显变化。",
+      items: routeTendency.slice(0, 2),
+      label: "命运倾向",
+      renderValue: (item: StateChangeItem) => formatChangeValue(item.change ?? 0),
+    },
+  ].filter((group) => group.items.length > 0);
 
   return (
     <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.55)] p-4">
@@ -133,53 +166,25 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
         <BookBadge tone="warning">写入故事状态</BookBadge>
       </div>
       <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-        你的选择已经写入故事。下一章将沿用这条命运继续。
+        只保留最重要的故事反馈；下一章会沿着这些回声继续。
       </p>
-      {hasChanges ? (
+      {storyImpactGroups.length > 0 ? (
         <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">羁绊变化</p>
-            <StateChangeList
-              emptyText="这次选择暂时没有改变角色羁绊。"
-              items={relationships}
-              renderValue={(item) => formatChangeValue(item.change ?? 0)}
-            />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">压力与风险</p>
-            <StateChangeList
-              emptyText="压力和风险还没有明显波动。"
-              items={meters}
-              renderValue={(item) => formatChangeValue(item.change ?? 0)}
-            />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">故事标记</p>
-            <StateChangeList
-              emptyText="还没有新的故事标记。"
-              items={flags}
-              renderValue={(item) =>
-                item.value === undefined ? "已记录" : item.value ? "已点亮" : "未触发"
-              }
-            />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">被点亮的线索</p>
-            <StateChangeList
-              emptyText="还没有被点亮的新线索。"
-              items={clues}
-              renderValue={(item) => item.status ?? "已记录"}
-            />
-          </div>
-          <div className="md:col-span-2">
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">命运倾向</p>
-            <StateChangeList
-              emptyText="命运倾向还没有明显变化。"
-              items={routeTendency}
-              renderValue={(item) => formatChangeValue(item.change ?? 0)}
-            />
-          </div>
+          {storyImpactGroups.map((group) => (
+            <div key={group.label}>
+              <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">{group.label}</p>
+              <StateChangeList
+                emptyText={group.emptyText}
+                items={group.items}
+                renderValue={group.renderValue}
+              />
+            </div>
+          ))}
         </div>
+      ) : hasChanges ? (
+        <p className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.58)] px-3 py-3 text-sm leading-6 text-[var(--muted)]">
+          这次选择已记录到故事状态，主要影响会在后续章节中显现。
+        </p>
       ) : (
         <p className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.58)] px-3 py-3 text-sm leading-6 text-[var(--muted)]">
           做出选择后，这里会显示它带来的涟漪。
@@ -316,40 +321,119 @@ function FateFlowGuide({ hasDecision, hasSavedDecision }: { hasDecision: boolean
   );
 }
 
+function getChoiceImpactSummary(
+  stateChanges: StoryStateChanges | null,
+  expectedEffects: string[],
+) {
+  const impactSummary: string[] = [];
+  const relationship = stateChanges?.relationships[0];
+  const meter = stateChanges?.meters[0];
+  const clue = stateChanges?.clues[0];
+  const route = stateChanges?.routeTendency[0];
+
+  if (relationship) {
+    impactSummary.push(`羁绊变化：${relationship.name} ${formatChangeValue(relationship.change)}`);
+  }
+
+  if (meter) {
+    impactSummary.push(`压力与风险：${meter.name} ${formatChangeValue(meter.change)}`);
+  }
+
+  if (clue) {
+    impactSummary.push(`被点亮的线索：${clue.name} ${clue.status}`);
+  }
+
+  if (route) {
+    impactSummary.push(`命运倾向：${route.name} ${formatChangeValue(route.change)}`);
+  }
+
+  return [...impactSummary, ...expectedEffects.map((effect) => `预期回声：${effect}`)].slice(0, 4);
+}
+
+function NextChapterGuide({ nextChapter }: { nextChapter?: NextChapterHint | null }) {
+  const href = nextChapter ? `#${nextChapter.anchorId}` : "#story-director";
+  const body = nextChapter
+    ? nextChapter.hasBody
+      ? `第 ${nextChapter.chapterNumber} 章《${nextChapter.title}》已有正文，可以从目录卡片继续阅读。`
+      : `第 ${nextChapter.chapterNumber} 章《${nextChapter.title}》已在目录中，正文尚未生成；使用现有生成入口继续。`
+    : "下一章还没有出现在目录中；回到故事导演台继续推进章节。";
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-4 py-4">
+      <p className="font-serif text-lg font-black text-[var(--ink)]">
+        沿这条命运继续下一章
+      </p>
+      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{body}</p>
+      <a className="button-secondary mt-3 min-h-10 px-3 text-sm" href={href}>
+        沿这条命运继续下一章
+      </a>
+    </div>
+  );
+}
+
 function ChoiceConfirmationPanel({
   customChoice,
   decision,
   selectedOptionId,
+  stateChanges,
 }: {
   customChoice: string;
   decision: ChapterDecision;
   selectedOptionId: ChapterDecisionOptionId | "";
+  stateChanges: StoryStateChanges | null;
 }) {
   const selectedOption = decision.options.find((option) => option.id === selectedOptionId);
-  const selectedText = customChoice.trim()
-    ? customChoice.trim()
-    : selectedOption
-      ? `${selectedOption.id}. ${selectedOption.label}`
-      : "这条命运";
+  const trimmedCustomChoice = customChoice.trim();
+  const selectedText = selectedOption
+    ? `${selectedOption.id}. ${selectedOption.label}`
+    : trimmedCustomChoice || "自定义命运";
+  const impactSummary = getChoiceImpactSummary(
+    stateChanges,
+    selectedOption?.expectedEffects ?? [],
+  );
 
   return (
     <div className="rounded-md border border-[#b8d8c7] bg-[#f0fbf5] px-4 py-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="font-serif text-lg font-black text-[var(--ink)]">这条命运已确认</h4>
-        <BookBadge tone="success">已写入故事</BookBadge>
+        <h4 className="font-serif text-lg font-black text-[var(--ink)]">
+          命运已写入故事
+        </h4>
+        <BookBadge tone="success">这条命运已确认</BookBadge>
       </div>
       <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-        你的选择已经写入故事。下一章将沿用这条命运继续。
+        这条命运已经确认。下一章将继承这个选择。
       </p>
       <div className="mt-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.8)] px-3 py-3">
         <p className="text-xs font-black text-[var(--gold-strong)]">你选择了</p>
         <p className="mt-1 text-sm font-bold leading-6 text-[var(--ink)]">{selectedText}</p>
-        {selectedOption ? (
+        {trimmedCustomChoice && selectedOption ? (
           <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
-            可能影响：{selectedOption.expectedEffects.join("；")}
+            自定义补充：{trimmedCustomChoice}
           </p>
         ) : null}
       </div>
+      <div className="mt-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-3 py-3">
+        <p className="text-xs font-black text-[var(--gold-strong)]">主要影响摘要</p>
+        {impactSummary.length > 0 ? (
+          <div className="mt-2 grid gap-2">
+            {impactSummary.map((impact) => (
+              <p
+                className="rounded-sm bg-[rgba(255,255,255,0.52)] px-2 py-1 text-xs font-bold leading-5 text-[var(--ink)]"
+                key={impact}
+              >
+                {impact}
+              </p>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
+            主要影响已经记录，下一章会在关系、风险和线索中回应它。
+          </p>
+        )}
+      </div>
+      <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+        下一章将沿着这条命运继续。
+      </p>
     </div>
   );
 }
@@ -360,6 +444,7 @@ export function ChapterEndDecision({
   initialDecision,
   initialInteractiveState,
   initialStateChanges,
+  nextChapter,
   projectId,
 }: ChapterEndDecisionProps) {
   const [decision, setDecision] = useState(initialDecision ?? null);
@@ -389,12 +474,12 @@ export function ChapterEndDecision({
           body: "角色关系和故事状态已更新。下一章将沿用这条命运继续。",
           className: "border-[#b8d8c7] bg-[#f0fbf5]",
           title: "这条命运已确认",
-        }
-      : {
-          body: "读完正文后选择一个方向，也可以写下自定义命运。",
-          className: "border-[var(--line)] bg-[rgba(255,248,234,0.68)]",
-          title: "选择尚未落定",
-        };
+      }
+    : {
+        body: "这段故事还没有落定。读完本章后，选择你想走向的命运。",
+        className: "border-[var(--line)] bg-[rgba(255,248,234,0.68)]",
+        title: "选择尚未落定",
+      };
 
   async function generateDecision() {
     setError("");
@@ -584,18 +669,9 @@ export function ChapterEndDecision({
                 customChoice={customChoice}
                 decision={decision}
                 selectedOptionId={selectedOptionId}
+                stateChanges={stateChanges}
               />
-              <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-4 py-4">
-                <p className="font-serif text-lg font-black text-[var(--ink)]">
-                  沿这条命运继续下一章
-                </p>
-                <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-                  你可以回到故事导演台，生成或重读下一章正文；现有生成按钮和扣费规则保持不变。
-                </p>
-                <a className="button-secondary mt-3 min-h-10 px-3 text-sm" href="#story-director">
-                  去故事导演台
-                </a>
-              </div>
+              <NextChapterGuide nextChapter={nextChapter} />
             </div>
           ) : null}
           <ChapterStateChangesPanel stateChanges={stateChanges} />
@@ -603,7 +679,7 @@ export function ChapterEndDecision({
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">
-          本章还没有出现命运分歧。你可以在读完正文后生成本章选择。
+          这段故事还没有落定。读完本章后，选择你想走向的命运。
         </div>
       )}
     </PaperPanel>
