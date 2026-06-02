@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { BookBadge } from "@/components/ui/book";
 import { formatUserFacingError } from "@/lib/ui/errors";
 
 type MockPaymentResult = "success" | "failed" | "cancelled";
@@ -18,7 +19,7 @@ type MockCompleteResponse = {
 };
 
 const resultLabels: Record<MockPaymentResult, string> = {
-  success: "模拟支付成功",
+  success: "模拟成功入账",
   failed: "模拟支付失败",
   cancelled: "模拟取消支付",
 };
@@ -61,11 +62,16 @@ export function MockPaymentActions({ orderId, orderNo }: MockPaymentActionsProps
   }
 
   return (
-    <div className="mt-4 rounded-md border border-dashed border-[#e2b6a6] bg-[#fffaf6] px-3 py-3">
-      <p className="text-xs font-bold uppercase tracking-wide text-[#7f2f1d]">
-        Mock 支付，仅测试
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
+    <div className="mt-4 rounded-md border border-dashed border-[rgba(138,58,33,0.38)] bg-[rgba(138,58,33,0.07)] px-4 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <BookBadge tone="warning">Mock 支付，仅测试</BookBadge>
+          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+            真实支付尚未接入。这里仅用于验证 pending / paid / failed / cancelled 状态流转。
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
         {(Object.keys(resultLabels) as MockPaymentResult[]).map((result) => (
           <button
             className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
@@ -78,7 +84,7 @@ export function MockPaymentActions({ orderId, orderNo }: MockPaymentActionsProps
           </button>
         ))}
       </div>
-      {message ? <p className="mt-3 text-sm text-[#7f2f1d]">{message}</p> : null}
+      {message ? <p className="mt-3 text-sm font-bold text-[var(--warning)]">{message}</p> : null}
     </div>
   );
 }

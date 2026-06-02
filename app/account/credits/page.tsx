@@ -3,6 +3,14 @@ import { CreditPackagePanel } from "@/components/account/credit-package-panel";
 import { MockPaymentActions } from "@/components/account/mock-payment-actions";
 import { AppNav } from "@/components/app/app-nav";
 import {
+  BookBadge,
+  BookCard,
+  CreditBadge,
+  PaperPanel,
+  SectionTabs,
+  StatusBookmark,
+} from "@/components/ui/book";
+import {
   GENERATION_CREDIT_COSTS,
   ensureCreditAccount,
   type GenerationCreditOperation,
@@ -55,6 +63,22 @@ function formatDate(value: string) {
   }).format(new Date(value));
 }
 
+function formatTransactionAmount(amount: number) {
+  return `${amount > 0 ? "+" : ""}${amount} 点`;
+}
+
+function getStatusTone(status: CreditOrderStatus) {
+  if (status === "paid") {
+    return "success" as const;
+  }
+
+  if (status === "failed" || status === "cancelled" || status === "expired") {
+    return "warning" as const;
+  }
+
+  return "gold" as const;
+}
+
 export default async function CreditsPage() {
   const supabase = await createClient();
   const {
@@ -85,168 +109,244 @@ export default async function CreditsPage() {
     <main className="app-shell py-8">
       <AppNav isAuthed creditBalance={balance} />
 
-      <section className="mt-8">
-        <p className="text-sm font-semibold uppercase tracking-wide text-[var(--accent-strong)]">
-          credits
-        </p>
-        <div className="mt-2 flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <h1 className="text-4xl font-black text-[var(--ink)]">生成点数</h1>
-            <p className="mt-3 text-[var(--muted)]">
-              点数只用于大模型生成能力，查看内容、确认正式稿和摘要记录不额外扣点。
-            </p>
+      <section className="grid gap-6 py-10 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div>
+          <div className="flex flex-wrap items-center gap-3">
+            <StatusBookmark tone="gold">Credit Wallet</StatusBookmark>
+            <BookBadge tone="ink">创作券夹</BookBadge>
           </div>
-          <div className="rounded-md border border-[var(--line)] bg-white px-5 py-4">
-            <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-              当前余额
-            </p>
-            <p className="mt-1 text-3xl font-black text-[var(--accent-strong)]">
-              {balance ?? "读取失败"} 点
-            </p>
-          </div>
+          <h1 className="mt-8 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
+            点数钱包
+          </h1>
+          <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
+            点数只用于 AI 生成能力：生成设定、故事圣经、大纲和章节正文。查看内容、
+            确认正式稿和摘要记录不会额外扣点。
+          </p>
         </div>
+
+        <PaperPanel className="p-6">
+          <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+            Wallet Balance
+          </p>
+          <p className="mt-4 font-serif text-6xl font-black text-[var(--brown)]">
+            {balance ?? "--"}
+            <span className="ml-2 text-lg font-bold text-[var(--muted)]">点</span>
+          </p>
+          <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
+            余额读取自现有点数账户；生成成功后扣点，失败不扣点。
+          </p>
+          <CreditBadge balance={balance} className="mt-4" label="当前余额" />
+        </PaperPanel>
       </section>
 
-      <section className="surface mt-8 p-6">
-        <h2 className="text-2xl font-black text-[var(--ink)]">生成消耗</h2>
-        <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {Object.entries(GENERATION_CREDIT_COSTS).map(([operation, cost]) => (
-            <div
-              className="rounded-md border border-[var(--line)] bg-white px-4 py-3"
-              key={operation}
-            >
-              <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                {operation}
-              </p>
-              <p className="mt-1 font-bold text-[var(--ink)]">
-                {operationLabels[operation as GenerationCreditOperation]}
-              </p>
-              <p className="mt-2 text-lg font-black text-[var(--accent-strong)]">{cost} 点</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="surface mt-6 p-6">
+      <PaperPanel className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-black text-[var(--ink)]">点数包占位</h2>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              小额充值即将开放。未来可购买生成点数。
+            <BookBadge tone="warning">Mock 支付，仅测试</BookBadge>
+            <h2 className="mt-4 font-serif text-2xl font-black text-[var(--ink)]">
+              真实支付尚未接入
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-7 text-[var(--muted)]">
+              当前不会接入 Stripe、微信支付、支付宝或真实 checkout。点数包只创建测试订单，
+              用于验证订单状态、入账流水和幂等逻辑。
             </p>
           </div>
-          <span className="rounded-full bg-[#fff4ef] px-3 py-1 text-xs font-bold text-[#7f2f1d]">
-            暂不可购买
-          </span>
+          <BookBadge tone={mockPaymentEnabled ? "gold" : "paper"}>
+            {mockPaymentEnabled ? "Mock completion 可用" : "Mock completion 不可用"}
+          </BookBadge>
         </div>
-        <CreditPackagePanel packages={CREDIT_PACKAGES} mockPaymentEnabled={mockPaymentEnabled} />
-      </section>
+      </PaperPanel>
 
-      <section className="surface mt-6 p-6">
-        <h2 className="text-2xl font-black text-[var(--ink)]">订单占位记录</h2>
-        <p className="mt-2 text-sm text-[var(--muted)]">
-          这里记录测试订单状态。支付尚未接入真实网关，Mock 支付仅用于本地验收。
-        </p>
-        {ordersError ? (
-          <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-            订单记录暂时读取失败，请刷新页面重试。
-          </p>
-        ) : orders && orders.length > 0 ? (
-          <div className="mt-5 grid gap-3">
-            {orders.map((order) => (
-              <div
-                className="rounded-md border border-[var(--line)] bg-white px-4 py-3"
-                key={order.id}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-[var(--ink)]">{order.order_no}</p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      {packageLabels[order.package_name] ?? order.package_name} ·{" "}
-                      {formatDate(order.created_at)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-black text-[var(--accent-strong)]">
-                      {order.credits_amount} 点
-                    </p>
-                    <p className="text-xs text-[var(--muted)]">
-                      {CREDIT_ORDER_STATUS_LABELS[order.status] ?? order.status}
-                    </p>
-                  </div>
-                </div>
-                {order.status === "paid" ? (
-                  <p className="mt-3 rounded-md bg-[#eef4f2] px-3 py-2 text-sm font-bold text-[var(--accent-strong)]">
-                    已入账
-                    {order.credit_transaction_id
-                      ? ` · 流水 ${order.credit_transaction_id.slice(0, 8)}`
-                      : ""}
-                  </p>
-                ) : null}
-                {order.status === "failed" ? (
-                  <p className="mt-3 rounded-md bg-[#fff4ef] px-3 py-2 text-sm font-bold text-[#7f2f1d]">
-                    支付失败，未增加余额。
-                  </p>
-                ) : null}
-                {order.status === "cancelled" ? (
-                  <p className="mt-3 rounded-md bg-[#f7efe6] px-3 py-2 text-sm font-bold text-[#80522f]">
-                    已取消，未增加余额。
-                  </p>
-                ) : null}
-                {mockPaymentEnabled && order.status === "pending" ? (
-                  <MockPaymentActions orderId={order.id} orderNo={order.order_no} />
-                ) : null}
+      <section className="grid gap-6 py-8 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-6">
+          <PaperPanel className="p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+                  Credit Vouchers
+                </p>
+                <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
+                  点数券包
+                </h2>
+                <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+                  这些是测试用书券视觉。点击后只会创建 pending 测试订单，不会真实扣款。
+                </p>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
-            <p className="font-bold text-[var(--ink)]">还没有占位订单</p>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              点击点数包会创建 pending 订单，但不会充值。
-            </p>
-          </div>
-        )}
-      </section>
+              <BookBadge tone="warning">暂不支持真实购买</BookBadge>
+            </div>
+            <CreditPackagePanel packages={CREDIT_PACKAGES} mockPaymentEnabled={mockPaymentEnabled} />
+          </PaperPanel>
 
-      <section className="surface mt-6 p-6">
-        <h2 className="text-2xl font-black text-[var(--ink)]">最近点数流水</h2>
-        {transactionsError ? (
-          <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-            点数流水暂时读取失败，请刷新页面重试。
-          </p>
-        ) : transactions && transactions.length > 0 ? (
-          <div className="mt-5 grid gap-3">
-            {transactions.map((transaction) => (
-              <div
-                className="rounded-md border border-[var(--line)] bg-white px-4 py-3"
-                key={transaction.id}
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="font-bold text-[var(--ink)]">{transaction.reason}</p>
-                    <p className="mt-1 text-xs text-[var(--muted)]">
-                      {transaction.operation} · {formatDate(transaction.created_at)}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-lg font-black text-[#7f2f1d]">{transaction.amount} 点</p>
-                    <p className="text-xs text-[var(--muted)]">
-                      余额 {transaction.balance_after} 点
-                    </p>
-                  </div>
-                </div>
+          <PaperPanel className="p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+                  Wallet Ledger
+                </p>
+                <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
+                  账本记录
+                </h2>
               </div>
-            ))}
-          </div>
-        ) : (
-          <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
-            <p className="font-bold text-[var(--ink)]">还没有点数流水</p>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              生成成功后，扣点记录会按时间倒序显示在这里。
+              <SectionTabs
+                activeId="orders"
+                tabs={[
+                  { id: "orders", label: "最近订单" },
+                  { id: "transactions", label: "点数流水" },
+                ]}
+              />
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+              <section>
+                <h3 className="font-serif text-xl font-black text-[var(--ink)]">最近订单</h3>
+                <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+                  记录测试订单状态。pending 订单可使用 Mock 支付按钮验证状态变化。
+                </p>
+                {ordersError ? (
+                  <p className="mt-4 rounded-md border border-[rgba(138,58,33,0.32)] bg-[rgba(138,58,33,0.08)] px-4 py-3 text-sm font-bold text-[var(--warning)]">
+                    订单记录暂时读取失败，请刷新页面重试。
+                  </p>
+                ) : orders && orders.length > 0 ? (
+                  <div className="mt-4 grid gap-3">
+                    {orders.map((order) => (
+                      <article
+                        className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-4 py-4"
+                        key={order.id}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-bold text-[var(--ink)]">{order.order_no}</p>
+                            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                              {packageLabels[order.package_name] ?? order.package_name} ·{" "}
+                              {formatDate(order.created_at)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="font-serif text-2xl font-black text-[var(--brown)]">
+                              {order.credits_amount}
+                              <span className="ml-1 text-sm text-[var(--muted)]">点</span>
+                            </p>
+                            <BookBadge tone={getStatusTone(order.status)}>
+                              {CREDIT_ORDER_STATUS_LABELS[order.status] ?? order.status}
+                            </BookBadge>
+                          </div>
+                        </div>
+
+                        {order.status === "paid" ? (
+                          <p className="mt-3 rounded-md border border-[rgba(73,106,66,0.24)] bg-[rgba(73,106,66,0.1)] px-3 py-2 text-sm font-bold text-[var(--success)]">
+                            已入账
+                            {order.credit_transaction_id
+                              ? ` · 流水 ${order.credit_transaction_id.slice(0, 8)}`
+                              : ""}
+                          </p>
+                        ) : null}
+                        {order.status === "failed" ? (
+                          <p className="mt-3 rounded-md border border-[rgba(138,58,33,0.28)] bg-[rgba(138,58,33,0.08)] px-3 py-2 text-sm font-bold text-[var(--warning)]">
+                            支付失败，未增加余额。
+                          </p>
+                        ) : null}
+                        {order.status === "cancelled" ? (
+                          <p className="mt-3 rounded-md border border-[rgba(138,58,33,0.22)] bg-[rgba(138,58,33,0.06)] px-3 py-2 text-sm font-bold text-[var(--warning)]">
+                            已取消，未增加余额。
+                          </p>
+                        ) : null}
+                        {mockPaymentEnabled && order.status === "pending" ? (
+                          <MockPaymentActions orderId={order.id} orderNo={order.order_no} />
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-6 text-center">
+                    <p className="font-bold text-[var(--ink)]">还没有测试订单</p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                      创建点数券测试订单后，会在这里显示 pending 状态。
+                    </p>
+                  </div>
+                )}
+              </section>
+
+              <section>
+                <h3 className="font-serif text-xl font-black text-[var(--ink)]">点数流水</h3>
+                <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+                  像账本一样记录生成扣点、测试入账和余额变化。
+                </p>
+                {transactionsError ? (
+                  <p className="mt-4 rounded-md border border-[rgba(138,58,33,0.32)] bg-[rgba(138,58,33,0.08)] px-4 py-3 text-sm font-bold text-[var(--warning)]">
+                    点数流水暂时读取失败，请刷新页面重试。
+                  </p>
+                ) : transactions && transactions.length > 0 ? (
+                  <div className="mt-4 grid gap-3">
+                    {transactions.map((transaction) => (
+                      <article
+                        className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-4 py-4"
+                        key={transaction.id}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-bold text-[var(--ink)]">{transaction.reason}</p>
+                            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                              {transaction.operation} · {formatDate(transaction.created_at)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p
+                              className={
+                                transaction.amount > 0
+                                  ? "text-lg font-black text-[var(--success)]"
+                                  : "text-lg font-black text-[var(--warning)]"
+                              }
+                            >
+                              {formatTransactionAmount(transaction.amount)}
+                            </p>
+                            <p className="text-xs text-[var(--muted)]">
+                              余额 {transaction.balance_after} 点
+                            </p>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-6 text-center">
+                    <p className="font-bold text-[var(--ink)]">还没有点数流水</p>
+                    <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                      生成成功或测试入账后，流水会按时间倒序显示。
+                    </p>
+                  </div>
+                )}
+              </section>
+            </div>
+          </PaperPanel>
+        </div>
+
+        <aside className="grid gap-6 xl:sticky xl:top-6">
+          <PaperPanel className="p-6">
+            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+              Generation Costs
             </p>
-          </div>
-        )}
+            <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
+              生成消耗规则
+            </h2>
+            <div className="mt-5 grid gap-3">
+              {Object.entries(GENERATION_CREDIT_COSTS).map(([operation, cost]) => (
+                <BookCard key={operation} spine="消耗">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black text-[var(--gold-strong)]">
+                        {operation}
+                      </p>
+                      <p className="mt-1 font-bold leading-6 text-[var(--ink)]">
+                        {operationLabels[operation as GenerationCreditOperation]}
+                      </p>
+                    </div>
+                    <BookBadge tone={cost > 0 ? "gold" : "success"}>{cost} 点</BookBadge>
+                  </div>
+                </BookCard>
+              ))}
+            </div>
+          </PaperPanel>
+        </aside>
       </section>
     </main>
   );
