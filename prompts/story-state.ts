@@ -311,7 +311,7 @@ export function buildStoryStateChanges(decision: ChapterDecision): StoryStateCha
   const meters: StoryMeterChange[] = [];
   const flags: StoryFlagChange[] = [
     {
-      key: `章末抉择:${decisionLabel}`,
+      key: `命运分歧:${decisionLabel}`,
       value: true,
     },
   ];

@@ -170,7 +170,7 @@ export function hasSelectedChapterDecision(decision: ChapterDecision | null | un
 
 export function formatSelectedChapterDecision(decision: ChapterDecision | null | undefined) {
   if (!decision || !hasSelectedChapterDecision(decision)) {
-    return "无已保存选择。可以按导演指令和章节大纲生成。";
+    return "无已确认选择。可以按导演指令和章节大纲生成。";
   }
 
   const selectedOption = decision.selectedOptionId
@@ -225,13 +225,13 @@ function formatPreviousChapters(previousChapters: ChapterDecisionPreviousContext
 
 export function buildChapterDecisionPrompt(input: ChapterDecisionPromptInput) {
   return [
-    "你是互动小说剧情设计师。请基于当前项目上下文，为当前章节生成 3 个读完本章后出现的章末抉择。",
+    "你是互动小说剧情设计师。请基于当前项目上下文，为当前章节生成 3 个读完本章后出现的命运分歧。",
     "",
     "硬性输出要求：",
     "- 只输出一个 JSON object。",
     "- 不要 Markdown，不要代码块，不要解释，不要多余前后缀。",
     "- 必须严格符合示例结构。",
-    "- 只能生成当前章节读完后的章末抉择，不要生成后续章节正文，不要生成状态系统、路线图或多分支树。",
+    "- 只能生成当前章节读完后的命运分歧，不要生成后续章节正文，不要生成状态系统、路线图或多分支树。",
     "- 3 个选项必须都能服务当前 chapter outline，并且要产生不同的角色关系、风险或悬念效果。",
     "- 所有字符串字段必须是单行短句，不要在 JSON string 中输出裸换行、制表符或控制字符。",
     "",
@@ -303,6 +303,6 @@ export function buildChapterDecisionPrompt(input: ChapterDecisionPromptInput) {
     `- 伏笔：${input.chapter.foreshadowing}`,
     `- 结尾钩子：${input.chapter.endingHook}`,
     "",
-    "现在输出本章章末抉择 JSON。",
+    "现在输出本章命运分歧 JSON。",
   ].join("\n");
 }
