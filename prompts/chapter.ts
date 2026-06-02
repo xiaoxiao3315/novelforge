@@ -28,6 +28,7 @@ export const DEFAULT_CHAPTER_WORD_TARGET = 2500;
 
 export type ChapterDraftQuality = {
   mode?: string;
+  status?: string;
   critique?: {
     overallScore?: number;
     scores?: Record<string, number>;
@@ -170,6 +171,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
   }
 
   const mode = cleanText(value.mode, 80);
+  const status = cleanText(value.status, 80);
   const critiqueValue = isRecord(value.critique) ? value.critique : null;
   const overallScore = normalizeScore(critiqueValue?.overallScore);
   const scores = normalizeNumberRecord(critiqueValue?.scores);
@@ -179,6 +181,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
   const steps = normalizeStringRecord(value.steps);
   const quality: ChapterDraftQuality = {
     ...(mode ? { mode } : {}),
+    ...(status ? { status } : {}),
     ...(overallScore !== null || scores
       ? {
           critique: {

@@ -184,6 +184,7 @@ type ChapterGenerationQualityMode = "normal" | "quality";
 
 type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
+  status: ChapterQualityPipelineResult["status"];
   critique: {
     overallScore: number;
     scores: NonNullable<ChapterQualityPipelineResult["critique"]>["scores"];
@@ -602,6 +603,7 @@ function buildQualityMetadata(
 
   return {
     mode: pipelineResult.metadata.mode,
+    status: pipelineResult.status,
     critique: {
       overallScore: pipelineResult.critique.overallScore,
       scores: pipelineResult.critique.scores,

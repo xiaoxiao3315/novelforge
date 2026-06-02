@@ -64,25 +64,59 @@ const qualityScoreLabels = [
   ["pacing", "节奏"],
   ["conflict", "冲突"],
   ["emotion", "情绪"],
-  ["characterConsistency", "人物"],
-  ["worldConsistency", "设定"],
-  ["proseQuality", "语言"],
-  ["hookStrength", "钩子"],
-  ["commercialAppeal", "追更"],
+  ["characterConsistency", "人物一致性"],
+  ["worldConsistency", "设定一致性"],
+  ["proseQuality", "语言质感"],
+  ["hookStrength", "结尾钩子"],
+  ["commercialAppeal", "追更欲"],
 ] as const;
+
+type WorkbenchQualityMetadata = NonNullable<NonNullable<WorkbenchChapter["draft"]>["quality"]>;
 
 function getQualityScoreItems(chapter: WorkbenchChapter | null) {
   const scores = chapter?.draft?.quality?.critique?.scores;
 
-  if (!scores) {
-    return [];
+  return qualityScoreLabels.map(([key, label]) => {
+    const value = scores?.[key];
+
+    return {
+      key,
+      label,
+      value: typeof value === "number" ? value : null,
+    };
+  });
+}
+
+function formatQualityPipelineStatus(quality: WorkbenchQualityMetadata) {
+  if (quality.status === "success") {
+    return "流水线完成";
   }
 
-  return qualityScoreLabels.flatMap(([key, label]) => {
-    const value = scores[key];
+  if (quality.status === "failed") {
+    return "流水线失败";
+  }
 
-    return typeof value === "number" ? [{ key, label, value }] : [];
-  });
+  if (quality.steps?.rewrite === "success" || quality.steps?.rewrite === "skipped") {
+    return "流水线完成";
+  }
+
+  if (quality.steps?.critique === "success") {
+    return "审稿完成";
+  }
+
+  return "--";
+}
+
+function formatRewriteStatus(quality: WorkbenchQualityMetadata) {
+  if (quality.rewriteApplied === true) {
+    return "已执行精修";
+  }
+
+  if (quality.rewriteApplied === false) {
+    return "未执行精修：初稿评分已达标";
+  }
+
+  return "--";
 }
 
 function getProjectModeTone(projectMode: ProjectMode) {
@@ -258,13 +292,15 @@ function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) 
           </p>
         </div>
         <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
+          <p className="text-xs font-black text-[var(--gold-strong)]">流水线状态</p>
+          <p className="mt-2 text-sm font-bold leading-6 text-[var(--ink)]">
+            {formatQualityPipelineStatus(quality)}
+          </p>
+        </div>
+        <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
           <p className="text-xs font-black text-[var(--gold-strong)]">修订状态</p>
           <p className="mt-2 text-sm font-bold leading-6 text-[var(--ink)]">
-            {quality.rewriteApplied === true
-              ? "已执行修订"
-              : quality.rewriteApplied === false
-                ? "未执行修订"
-                : "--"}
+            {formatRewriteStatus(quality)}
           </p>
         </div>
         {qualityScoreItems.map((item) => (
@@ -274,7 +310,7 @@ function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) 
           >
             <p className="text-xs font-black text-[var(--gold-strong)]">{item.label}</p>
             <p className="mt-1 font-serif text-2xl font-black text-[var(--brown)]">
-              {item.value}
+              {item.value ?? "--"}
             </p>
           </div>
         ))}

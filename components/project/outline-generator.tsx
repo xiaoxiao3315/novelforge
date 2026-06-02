@@ -106,8 +106,14 @@ const qualityScoreLabels = [
   ["pacing", "节奏"],
   ["conflict", "冲突"],
   ["emotion", "情绪"],
-  ["hookStrength", "钩子"],
+  ["characterConsistency", "人物一致性"],
+  ["worldConsistency", "设定一致性"],
+  ["proseQuality", "语言质感"],
+  ["hookStrength", "结尾钩子"],
+  ["commercialAppeal", "追更欲"],
 ] as const;
+
+type ChapterQualityMetadata = NonNullable<NonNullable<ChapterDisplay["draft"]>["quality"]>;
 
 function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
@@ -189,15 +195,47 @@ function getInitialQualityModes(chapters: ChapterDisplay[]) {
 function getQualityScoreItems(chapter: ChapterDisplay) {
   const scores = chapter.draft?.quality?.critique?.scores;
 
-  if (!scores) {
-    return [];
+  return qualityScoreLabels.map(([key, label]) => {
+    const value = scores?.[key];
+
+    return {
+      key,
+      label,
+      value: typeof value === "number" ? value : null,
+    };
+  });
+}
+
+function formatQualityPipelineStatus(quality: ChapterQualityMetadata) {
+  if (quality.status === "success") {
+    return "流水线完成";
   }
 
-  return qualityScoreLabels.flatMap(([key, label]) => {
-    const value = scores[key];
+  if (quality.status === "failed") {
+    return "流水线失败";
+  }
 
-    return typeof value === "number" ? [{ key, label, value }] : [];
-  });
+  if (quality.steps?.rewrite === "success" || quality.steps?.rewrite === "skipped") {
+    return "流水线完成";
+  }
+
+  if (quality.steps?.critique === "success") {
+    return "审稿完成";
+  }
+
+  return "--";
+}
+
+function formatRewriteStatus(quality: ChapterQualityMetadata) {
+  if (quality.rewriteApplied === true) {
+    return "已执行精修";
+  }
+
+  if (quality.rewriteApplied === false) {
+    return "未执行精修：初稿评分已达标";
+  }
+
+  return "--";
 }
 
 export function OutlineGenerator({
@@ -678,30 +716,34 @@ export function OutlineGenerator({
                 </div>
 
                 {quality ? (
-                  <div className="mt-5 border-t border-[var(--line)] pt-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                        高质量生成报告
-                      </p>
-                      <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
-                        {quality.mode ?? "quality-v1"}
+                  <details className="mt-5 border-t border-[var(--line)] pt-4">
+                    <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3 rounded-md bg-[#f8fbfa] px-3 py-3">
+                      <span className="text-sm font-black text-[var(--ink)]">质量报告</span>
+                      <span className="flex flex-wrap items-center gap-2 text-xs font-bold text-[var(--muted)]">
+                        <span>整体评分 {quality.critique?.overallScore ?? "--"}</span>
+                        <span>{formatRewriteStatus(quality)}</span>
+                        <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-[var(--accent-strong)]">
+                          {quality.mode ?? "quality-v1"}
+                        </span>
                       </span>
-                    </div>
-                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                    </summary>
+                    <div className="mt-3 grid gap-2 md:grid-cols-3 xl:grid-cols-4">
                       <div className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3">
-                        <p className="text-xs font-bold text-[var(--muted)]">质量评分</p>
+                        <p className="text-xs font-bold text-[var(--muted)]">整体评分</p>
                         <p className="mt-1 text-lg font-black text-[var(--ink)]">
                           {quality.critique?.overallScore ?? "--"}
                         </p>
                       </div>
                       <div className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3">
+                        <p className="text-xs font-bold text-[var(--muted)]">流水线状态</p>
+                        <p className="mt-1 text-sm font-bold leading-6 text-[var(--ink)]">
+                          {formatQualityPipelineStatus(quality)}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3">
                         <p className="text-xs font-bold text-[var(--muted)]">修订状态</p>
-                        <p className="mt-1 text-sm font-bold text-[var(--ink)]">
-                          {quality.rewriteApplied === true
-                            ? "已执行修订"
-                            : quality.rewriteApplied === false
-                              ? "未执行修订"
-                              : "--"}
+                        <p className="mt-1 text-sm font-bold leading-6 text-[var(--ink)]">
+                          {formatRewriteStatus(quality)}
                         </p>
                       </div>
                       {qualityScoreItems.map((item) => (
@@ -709,16 +751,14 @@ export function OutlineGenerator({
                           className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3"
                           key={item.key}
                         >
-                          <p className="text-xs font-bold text-[var(--muted)]">
-                            {item.label}
-                          </p>
+                          <p className="text-xs font-bold text-[var(--muted)]">{item.label}</p>
                           <p className="mt-1 text-lg font-black text-[var(--ink)]">
-                            {item.value}
+                            {item.value ?? "--"}
                           </p>
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 ) : null}
 
                 {chapter.draft?.body ? (
