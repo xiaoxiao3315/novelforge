@@ -174,7 +174,7 @@ export function OutlineGenerator({
   const outlineCost = GENERATION_CREDIT_COSTS.generate_outline;
   const chapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
   const isInteractive = projectMode === "interactive";
-  const creditUnit = isInteractive ? "星火" : "点";
+  const creditUnit = "星火";
   const hasEnoughOutlineCredits = creditBalance === null || creditBalance >= outlineCost;
   const hasEnoughChapterCredits = creditBalance === null || creditBalance >= chapterCost;
   const outlineCreditShortfallMessage =
@@ -374,8 +374,8 @@ export function OutlineGenerator({
               ? "铺开中..."
               : "生成中..."
             : volume
-              ? `${isInteractive ? "重新铺开" : "重新生成"} · ${outlineCost} ${creditUnit}`
-              : `${isInteractive ? "铺开章节" : "生成章节大纲"} · ${outlineCost} ${creditUnit}`}
+              ? `${isInteractive ? "重启章节脉络" : "重新生成"} · ${outlineCost} ${creditUnit}`
+              : `${isInteractive ? "开启章节" : "生成章节大纲"} · ${outlineCost} ${creditUnit}`}
         </button>
       </div>
 
@@ -389,7 +389,7 @@ export function OutlineGenerator({
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
           {chapterCreditShortfallMessage || outlineCreditShortfallMessage}
           <Link className="ml-2 font-bold underline" href="/account/credits">
-            {isInteractive ? "补充星火" : "查看点数"}
+            补充星火
           </Link>
         </p>
       ) : null}
@@ -474,7 +474,7 @@ export function OutlineGenerator({
                           ? "正在进入本章..."
                           : "正文生成中..."
                         : chapter.draft?.body
-                          ? `${isInteractive ? "重新进入本章" : "重新生成正文"} · ${chapterCost} ${creditUnit}`
+                          ? `${isInteractive ? "重启本章" : "重新生成正文"} · ${chapterCost} ${creditUnit}`
                           : `${isInteractive ? "进入本章" : "生成正文"} · ${chapterCost} ${creditUnit}`}
                     </button>
                     {chapter.draft?.body ? (
@@ -601,10 +601,12 @@ export function OutlineGenerator({
         </div>
       ) : (
         <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
-          <p className="font-bold text-[var(--ink)]">还没有章节大纲</p>
+          <p className="font-bold text-[var(--ink)]">
+            {isInteractive ? "章节还没有开启" : "还没有章节大纲"}
+          </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
             {isInteractive
-              ? "铺开章节后，第一卷和 20 个命运入口会出现在这里。"
+              ? "开启章节后，第一卷和 20 个命运入口会出现在这里。"
               : "点击生成后，第一卷信息会写入 volumes，20 章大纲会写入 chapters。"}
           </p>
         </div>

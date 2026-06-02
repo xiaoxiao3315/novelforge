@@ -19,7 +19,7 @@ type MockCompleteResponse = {
 };
 
 const resultLabels: Record<MockPaymentResult, string> = {
-  success: "模拟成功入账",
+  success: "模拟星火入账",
   failed: "模拟支付失败",
   cancelled: "模拟取消支付",
 };
@@ -67,7 +67,7 @@ export function MockPaymentActions({ orderId, orderNo }: MockPaymentActionsProps
         <div>
           <BookBadge tone="warning">Mock 支付，仅测试</BookBadge>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-            真实支付尚未接入。这里仅用于验证 pending / paid / failed / cancelled 状态流转。
+            真实支付尚未接入。这里仅用于验证 pending / paid / failed / cancelled 状态流转和星火流水。
           </p>
         </div>
       </div>

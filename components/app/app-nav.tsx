@@ -21,10 +21,10 @@ export function AppNav({ isAuthed, creditBalance }: AppNavProps) {
         {isAuthed ? (
           <>
             <Link className="app-nav-link" href="/dashboard">
-              我的书架
+              我的故事
             </Link>
             <Link className="app-nav-link" href="/create">
-              新建作品
+              开启新故事
             </Link>
             <Link className="app-nav-link app-nav-credit-link" href="/account/credits">
               <CreditBadge balance={creditBalance} />

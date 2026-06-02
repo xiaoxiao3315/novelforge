@@ -44,12 +44,12 @@ type CreditOrderRow = {
 };
 
 const operationLabels: Record<GenerationCreditOperation, string> = {
-  generate_concept: "生成作品设定",
-  generate_bible: "生成故事圣经",
-  generate_outline: "生成章节大纲",
-  generate_chapter: "生成章节正文",
+  generate_concept: "点亮作品设定",
+  generate_bible: "点亮故事圣经",
+  generate_outline: "开启章节脉络",
+  generate_chapter: "进入章节正文",
   generate_chapter_summary: "章节摘要",
-  set_official: "设为正式稿",
+  set_official: "确认篇章",
 };
 
 const packageLabels = Object.fromEntries(
@@ -64,7 +64,7 @@ function formatDate(value: string) {
 }
 
 function formatTransactionAmount(amount: number) {
-  return `${amount > 0 ? "+" : ""}${amount} 点`;
+  return `${amount > 0 ? "+" : ""}${amount} 星火`;
 }
 
 function getStatusTone(status: CreditOrderStatus) {
@@ -112,30 +112,30 @@ export default async function CreditsPage() {
       <section className="grid gap-6 py-10 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div>
           <div className="flex flex-wrap items-center gap-3">
-            <StatusBookmark tone="gold">Credit Wallet</StatusBookmark>
-            <BookBadge tone="ink">创作券夹</BookBadge>
+            <StatusBookmark tone="gold">Spark Supply</StatusBookmark>
+            <BookBadge tone="ink">星火补给</BookBadge>
           </div>
           <h1 className="mt-8 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
-            点数钱包
+            星火补给
           </h1>
           <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
-            点数只用于 AI 生成能力：生成设定、故事圣经、大纲和章节正文。查看内容、
-            确认正式稿和摘要记录不会额外扣点。
+            星火用于驱动 AI 生成故事内容：点亮设定、铺开故事圣经、开启章节脉络和进入正文。
+            查看内容、确认篇章和摘要记录不会额外消耗星火。
           </p>
         </div>
 
         <PaperPanel className="p-6">
           <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-            Wallet Balance
+            Spark Balance
           </p>
           <p className="mt-4 font-serif text-6xl font-black text-[var(--brown)]">
             {balance ?? "--"}
-            <span className="ml-2 text-lg font-bold text-[var(--muted)]">点</span>
+            <span className="ml-2 text-lg font-bold text-[var(--muted)]">星火</span>
           </p>
           <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
-            余额读取自现有点数账户；生成成功后扣点，失败不扣点。
+            余额读取自现有星火账户；故事内容开启成功后消耗星火，失败不消耗。
           </p>
-          <CreditBadge balance={balance} className="mt-4" label="当前余额" />
+          <CreditBadge balance={balance} className="mt-4" label="当前星火" />
         </PaperPanel>
       </section>
 
@@ -147,8 +147,8 @@ export default async function CreditsPage() {
               真实支付尚未接入
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-7 text-[var(--muted)]">
-              当前不会接入 Stripe、微信支付、支付宝或真实 checkout。点数包只创建测试订单，
-              用于验证订单状态、入账流水和幂等逻辑。
+              当前不会触发真实扣款，也不会接入真实 checkout。补给包只创建测试订单，
+              用于验证订单状态、星火入账流水和幂等逻辑。
             </p>
           </div>
           <BookBadge tone={mockPaymentEnabled ? "gold" : "paper"}>
@@ -163,10 +163,10 @@ export default async function CreditsPage() {
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-                  Credit Vouchers
+                  Spark Supplies
                 </p>
                 <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
-                  点数券包
+                  补给包
                 </h2>
                 <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
                   这些是测试用书券视觉。点击后只会创建 pending 测试订单，不会真实扣款。
@@ -181,17 +181,17 @@ export default async function CreditsPage() {
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-                  Wallet Ledger
+                  Spark Ledger
                 </p>
                 <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
-                  账本记录
+                  星火账本
                 </h2>
               </div>
               <SectionTabs
                 activeId="orders"
                 tabs={[
                   { id: "orders", label: "最近订单" },
-                  { id: "transactions", label: "点数流水" },
+                  { id: "transactions", label: "星火流水" },
                 ]}
               />
             </div>
@@ -224,7 +224,7 @@ export default async function CreditsPage() {
                           <div className="text-right">
                             <p className="font-serif text-2xl font-black text-[var(--brown)]">
                               {order.credits_amount}
-                              <span className="ml-1 text-sm text-[var(--muted)]">点</span>
+                              <span className="ml-1 text-sm text-[var(--muted)]">星火</span>
                             </p>
                             <BookBadge tone={getStatusTone(order.status)}>
                               {CREDIT_ORDER_STATUS_LABELS[order.status] ?? order.status}
@@ -260,20 +260,20 @@ export default async function CreditsPage() {
                   <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-6 text-center">
                     <p className="font-bold text-[var(--ink)]">还没有测试订单</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                      创建点数券测试订单后，会在这里显示 pending 状态。
+                      创建补给包测试订单后，会在这里显示 pending 状态。
                     </p>
                   </div>
                 )}
               </section>
 
               <section>
-                <h3 className="font-serif text-xl font-black text-[var(--ink)]">点数流水</h3>
+                <h3 className="font-serif text-xl font-black text-[var(--ink)]">星火流水</h3>
                 <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
-                  像账本一样记录生成扣点、测试入账和余额变化。
+                  像账本一样记录故事开启、测试入账和星火变化。
                 </p>
                 {transactionsError ? (
                   <p className="mt-4 rounded-md border border-[rgba(138,58,33,0.32)] bg-[rgba(138,58,33,0.08)] px-4 py-3 text-sm font-bold text-[var(--warning)]">
-                    点数流水暂时读取失败，请刷新页面重试。
+                    星火流水暂时读取失败，请刷新页面重试。
                   </p>
                 ) : transactions && transactions.length > 0 ? (
                   <div className="mt-4 grid gap-3">
@@ -300,7 +300,7 @@ export default async function CreditsPage() {
                               {formatTransactionAmount(transaction.amount)}
                             </p>
                             <p className="text-xs text-[var(--muted)]">
-                              余额 {transaction.balance_after} 点
+                              余额 {transaction.balance_after} 星火
                             </p>
                           </div>
                         </div>
@@ -309,9 +309,9 @@ export default async function CreditsPage() {
                   </div>
                 ) : (
                   <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-6 text-center">
-                    <p className="font-bold text-[var(--ink)]">还没有点数流水</p>
+                    <p className="font-bold text-[var(--ink)]">还没有星火流水</p>
                     <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-                      生成成功或测试入账后，流水会按时间倒序显示。
+                      故事内容开启成功或测试入账后，流水会按时间倒序显示。
                     </p>
                   </div>
                 )}
@@ -323,10 +323,10 @@ export default async function CreditsPage() {
         <aside className="grid gap-6 xl:sticky xl:top-6">
           <PaperPanel className="p-6">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-              Generation Costs
+              Spark Rules
             </p>
             <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
-              生成消耗规则
+              消耗规则
             </h2>
             <div className="mt-5 grid gap-3">
               {Object.entries(GENERATION_CREDIT_COSTS).map(([operation, cost]) => (
@@ -340,7 +340,7 @@ export default async function CreditsPage() {
                         {operationLabels[operation as GenerationCreditOperation]}
                       </p>
                     </div>
-                    <BookBadge tone={cost > 0 ? "gold" : "success"}>{cost} 点</BookBadge>
+                    <BookBadge tone={cost > 0 ? "gold" : "success"}>{cost} 星火</BookBadge>
                   </div>
                 </BookCard>
               ))}

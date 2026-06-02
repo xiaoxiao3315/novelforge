@@ -56,7 +56,7 @@ export function BookBadge({
 export function CreditBadge({
   balance,
   className,
-  label = "点数",
+  label = "星火",
 }: {
   balance?: number | null;
   className?: string;

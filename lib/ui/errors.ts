@@ -4,7 +4,12 @@ export function formatUserFacingError(error: string | undefined, fallback: strin
   }
 
   if (error.includes("点数不足")) {
-    return error;
+    return error
+      .replaceAll("点数", "星火")
+      .replaceAll(" 点", " 星火")
+      .replaceAll("点，", "星火，")
+      .replaceAll("点。", "星火。")
+      .replace("购买生成星火", "补充星火");
   }
 
   if (error.includes("请先") || error.includes("缺少") || error.includes("需要先")) {

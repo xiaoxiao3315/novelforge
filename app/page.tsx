@@ -16,15 +16,15 @@ const modes = [
     title: "经典小说模式",
     spine: "CLASSIC",
     badge: "线性长篇",
-    description: "适合从灵感开始，逐步生成作品设定、故事圣经、卷纲、章节大纲和单章正文。",
+    description: "适合稳定连载，从灵感开始铺开设定、大纲和章节正文。",
     points: ["稳定推进章节", "保留版本与正式稿", "用导演指令微调单章"],
   },
   {
     title: "互动剧情模式",
     spine: "INTERACTIVE",
     badge: "实验分支",
-    description: "适合读完章节后做选择，让关系、线索和风险在下一章继续发酵。",
-    points: ["命运分歧", "状态变化", "互动结果沉淀"],
+    description: "适合进入故事、读完章节后做出选择，让故事记住你的决定。",
+    points: ["命运分歧", "状态变化", "故事会记住决定"],
   },
 ];
 
@@ -34,8 +34,8 @@ const features = [
     description: "用题材、背景、主角、冲突和连载结构先锁定作品方向。",
   },
   {
-    title: "DeepSeek 生成",
-    description: "生成设定、故事圣经、角色卡、章节大纲和单章正文。",
+    title: "故事生成",
+    description: "铺开设定、故事圣经、角色卡、章节脉络和正文。",
   },
   {
     title: "AI 导演指令",
@@ -50,8 +50,8 @@ const features = [
     description: "多次生成保留版本，满意后再确认正式稿。",
   },
   {
-    title: "点数系统",
-    description: "生成成功后扣点；当前点数包和 mock 支付仅用于测试闭环。",
+    title: "星火补给",
+    description: "星火用于驱动 AI 生成故事内容；当前补给包和 mock 支付仅用于测试闭环。",
   },
 ];
 
@@ -72,9 +72,9 @@ export default async function HomePage() {
 
   const isAuthed = Boolean(user);
   const primaryHref = isAuthed ? "/dashboard" : "/login?redirectTo=/dashboard";
-  const primaryLabel = isAuthed ? "进入我的书架" : "登录开始创作";
+  const primaryLabel = isAuthed ? "继续上次的命运" : "开始我的故事";
   const secondaryHref = isAuthed ? "/create" : "/login?redirectTo=/create";
-  const secondaryLabel = isAuthed ? "新建作品" : "创建第一本书";
+  const secondaryLabel = isAuthed ? "开启新故事" : "开启第一段命运";
 
   return (
     <main className="app-shell py-8">
@@ -84,18 +84,18 @@ export default async function HomePage() {
         <div className="max-w-3xl">
           <div className="flex flex-wrap items-center gap-3">
             <StatusBookmark tone="gold">v0.1 Beta</StatusBookmark>
-            <BookBadge tone="ink">内测中的 AI 小说书房</BookBadge>
+            <BookBadge tone="ink">内测中的互动故事书房</BookBadge>
           </div>
 
           <p className="mt-10 text-sm font-black uppercase text-[var(--gold-strong)]">
             NovelForge / 小说工坊
           </p>
           <h1 className="mt-4 font-serif text-5xl font-black leading-tight text-[var(--ink)] md:text-6xl">
-            一本可以被你导演的 AI 小说书
+            进入一段会记住你选择的故事
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-9 text-[var(--muted)]">
-            从一个灵感开始，生成设定、故事圣经、大纲和章节正文；当剧情需要转向时，
-            你可以像导演一样写下指令，让 AI 调整情绪、冲突、伏笔和结尾。
+            读完章节，做出选择，角色关系与命运会随之改变。NovelForge 不是替你一次性写完小说，
+            而是让你进入故事、推动剧情、确认自己的命运。
           </p>
 
           <div className="mt-8 flex flex-wrap gap-3">
@@ -108,7 +108,7 @@ export default async function HomePage() {
           </div>
 
           <p className="mt-5 max-w-2xl text-sm leading-7 text-[var(--muted)]">
-            当前为内测版：AI 输出仍需人工判断和调整；真实支付尚未接入，点数包与
+            当前为内测版：AI 输出仍需人工判断和调整；真实支付尚未接入，星火补给与
             mock 支付仅用于本地或测试环境验收。
           </p>
         </div>

@@ -40,7 +40,7 @@ export default async function LoginPage({
             登录 NovelForge 内测
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-8 text-[var(--muted)]">
-            登录后可以创建作品，使用 DeepSeek 生成设定、故事圣经、章节大纲和正文。点数只限制 AI 生成，查看和确认正式稿不扣点。
+            登录后可以创建作品，使用 DeepSeek 铺开设定、故事圣经、章节大纲和正文。星火只用于驱动 AI 生成，查看和确认正式稿不消耗星火。
           </p>
         </div>
         <LoginForm redirectTo={redirectTo} />

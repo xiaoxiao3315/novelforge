@@ -30,7 +30,7 @@ export function getGenerationCreditCost(operation: GenerationCreditOperation) {
 export function formatCreditShortfall(balance: number, cost: number) {
   const shortage = Math.max(0, cost - balance);
 
-  return `点数不足：当前余额 ${balance} 点，本次操作需要 ${cost} 点，还差 ${shortage} 点。后续可在 /account/credits 购买生成点数。`;
+  return `星火不足：当前 ${balance} 星火，本次操作需要 ${cost} 星火，还差 ${shortage} 星火。后续可在 /account/credits 补充星火。`;
 }
 
 export async function ensureCreditAccount(supabase: SupabaseClient) {

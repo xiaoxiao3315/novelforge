@@ -189,6 +189,7 @@ export default async function ProjectDetailPage({
         creditBalance={creditBalance}
         initialConcept={concept}
         projectId={projectId}
+        projectMode={projectMode}
       />
       <BibleGenerator
         creditBalance={creditBalance}
@@ -196,6 +197,7 @@ export default async function ProjectDetailPage({
         initialBible={bible}
         initialCharacters={characters}
         projectId={projectId}
+        projectMode={projectMode}
       />
       <OutlineGenerator
         creditBalance={creditBalance}

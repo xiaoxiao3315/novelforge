@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
+import type { ProjectMode } from "@/lib/projects/modes";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 
@@ -13,6 +14,7 @@ type BibleGeneratorProps = {
   initialCharacters: CharacterCard[];
   hasConcept: boolean;
   creditBalance: number | null;
+  projectMode: ProjectMode;
 };
 
 type BibleResponse = {
@@ -56,6 +58,7 @@ export function BibleGenerator({
   initialCharacters,
   hasConcept,
   creditBalance,
+  projectMode,
 }: BibleGeneratorProps) {
   const [bible, setBible] = useState(initialBible);
   const [characters, setCharacters] = useState(initialCharacters);
@@ -63,15 +66,18 @@ export function BibleGenerator({
   const [isGenerating, setIsGenerating] = useState(false);
   const router = useRouter();
   const generationCost = GENERATION_CREDIT_COSTS.generate_bible;
+  const isInteractive = projectMode === "interactive";
   const hasEnoughCredits = creditBalance === null || creditBalance >= generationCost;
   const creditShortfallMessage =
     creditBalance === null || hasEnoughCredits
       ? ""
-      : formatCreditShortfall(creditBalance, generationCost);
+      : isInteractive
+        ? `星火不足：当前 ${creditBalance} 星火，点亮故事规则需要 ${generationCost} 星火。`
+        : formatCreditShortfall(creditBalance, generationCost);
 
   async function generateBible() {
     if (!hasConcept) {
-      setError("请先生成作品设定。");
+      setError(isInteractive ? "请先点亮故事起点。" : "请先生成作品设定。");
       return;
     }
 
@@ -109,9 +115,13 @@ export function BibleGenerator({
     <section className="surface mt-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-[var(--ink)]">故事圣经</h2>
+          <h2 className="text-2xl font-black text-[var(--ink)]">
+            {isInteractive ? "故事规则" : "故事圣经"}
+          </h2>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-            基于剧情筛选器和作品设定生成故事圣经与主要角色卡。生成可能需要几十秒；重新生成会覆盖当前故事圣经，并替换该项目角色卡。
+            {isInteractive
+              ? "把世界规则、角色羁绊和第一卷命运底色固定下来。之后的章节会沿着这些规则继续。"
+              : "基于剧情筛选器和作品设定生成故事圣经与主要角色卡。生成可能需要几十秒；重新生成会覆盖当前故事圣经，并替换该项目角色卡。"}
           </p>
         </div>
         <button
@@ -121,10 +131,12 @@ export function BibleGenerator({
           type="button"
         >
           {isGenerating
-            ? "生成中..."
+            ? isInteractive
+              ? "点亮中..."
+              : "生成中..."
             : bible
-              ? `重新生成 · ${generationCost} 点`
-              : `生成故事圣经 · ${generationCost} 点`}
+              ? `${isInteractive ? "重启故事规则" : "重新生成"} · ${generationCost} 星火`
+              : `${isInteractive ? "点亮故事规则" : "生成故事圣经"} · ${generationCost} 星火`}
         </button>
       </div>
 
@@ -138,16 +150,20 @@ export function BibleGenerator({
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
           {creditShortfallMessage}
           <Link className="ml-2 font-bold underline" href="/account/credits">
-            查看点数
+            补充星火
           </Link>
         </p>
       ) : null}
 
       {!hasConcept ? (
         <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
-          <p className="font-bold text-[var(--ink)]">需要先生成作品设定</p>
+          <p className="font-bold text-[var(--ink)]">
+            {isInteractive ? "需要先点亮故事起点" : "需要先生成作品设定"}
+          </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            故事圣经会基于已保存的 story_config 和 story_concept 生成。
+            {isInteractive
+              ? "故事规则会基于已保存的故事起点、筛选器和角色方向点亮。"
+              : "故事圣经会基于已保存的 story_config 和 story_concept 生成。"}
           </p>
         </div>
       ) : bible ? (
@@ -207,9 +223,13 @@ export function BibleGenerator({
         </div>
       ) : (
         <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
-          <p className="font-bold text-[var(--ink)]">还没有故事圣经</p>
+          <p className="font-bold text-[var(--ink)]">
+            {isInteractive ? "故事规则还没有点亮" : "还没有故事圣经"}
+          </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            点击生成后，结果会写入 story_bibles 和 characters，刷新页面后仍会显示。
+            {isInteractive
+              ? "点亮后，世界规则和主要角色会留在这里，后续章节会沿用这些底色。"
+              : "点击生成后，结果会写入 story_bibles 和 characters，刷新页面后仍会显示。"}
           </p>
         </div>
       )}

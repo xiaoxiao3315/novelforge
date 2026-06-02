@@ -48,16 +48,16 @@ export function CreditPackagePanel({ packages, mockPaymentEnabled }: CreditPacka
       const payload = (await response.json().catch(() => null)) as CreateOrderResponse | null;
 
       if (!response.ok || !payload?.order) {
-        setMessage(formatUserFacingError(payload?.error, "点数订单创建失败，请稍后重试。"));
+        setMessage(formatUserFacingError(payload?.error, "星火补给测试订单创建失败，请稍后重试。"));
         return;
       }
 
       setMessage(
-        `${payload.order.credits_amount} 点测试订单 ${payload.order.order_no} 已创建，可在最近订单中使用 Mock 支付验证状态流转。`,
+        `${payload.order.credits_amount} 星火测试订单 ${payload.order.order_no} 已创建，可在最近订单中使用 Mock 支付验证状态流转。`,
       );
       router.refresh();
     } catch {
-      setMessage("点数订单创建失败，请检查网络后重试。");
+      setMessage("星火补给测试订单创建失败，请检查网络后重试。");
     } finally {
       setPendingPackageName("");
     }
@@ -73,11 +73,11 @@ export function CreditPackagePanel({ packages, mockPaymentEnabled }: CreditPacka
 
       <div className="mt-5 grid gap-4 md:grid-cols-3">
         {packages.map((item) => (
-          <BookCard className="min-h-full" key={item.packageId} spine="点数券">
+          <BookCard className="min-h-full" key={item.packageId} spine="补给包">
             <div className="flex min-h-[210px] flex-col">
               <div className="flex items-start justify-between gap-3">
                 <div>
-                  <BookBadge tone="gold">创作券夹</BookBadge>
+                  <BookBadge tone="gold">星火补给</BookBadge>
                   <h3 className="mt-4 font-serif text-2xl font-black text-[var(--ink)]">
                     {item.packageName}
                   </h3>
@@ -87,7 +87,7 @@ export function CreditPackagePanel({ packages, mockPaymentEnabled }: CreditPacka
 
               <p className="mt-5 font-serif text-4xl font-black text-[var(--brown)]">
                 {item.creditsAmount}
-                <span className="ml-2 text-base font-bold text-[var(--muted)]">点</span>
+                <span className="ml-2 text-base font-bold text-[var(--muted)]">星火</span>
               </p>
 
               <p className="mt-3 text-sm leading-6 text-[var(--muted)]">

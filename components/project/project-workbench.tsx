@@ -474,10 +474,10 @@ function ProjectBookHeader({
         ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
           <Link className="button-secondary" href="/dashboard">
-            返回我的书架
+            返回我的故事
           </Link>
           <Link className="button-secondary" href="/account/credits">
-            {isInteractive ? "星火补给" : "点数钱包"}
+            星火补给
           </Link>
         </div>
       </div>
@@ -503,12 +503,12 @@ function ProjectBookHeader({
           </div>
           <div>
             <p className="text-xs font-black text-[var(--muted)]">
-              {isInteractive ? "当前星火" : "当前余额"}
+              当前星火
             </p>
             <CreditBadge
               balance={creditBalance}
               className="mt-2"
-              label={isInteractive ? "星火" : "点数"}
+              label="星火"
             />
           </div>
         </div>
@@ -731,7 +731,9 @@ export function ProjectWorkbenchLayout({
               </>
             ) : (
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                未找到剧情筛选器配置，不能生成作品设定。
+                {projectMode === "interactive"
+                  ? "未找到剧情筛选器配置，暂时不能点亮故事起点。"
+                  : "未找到剧情筛选器配置，不能生成作品设定。"}
               </p>
             )}
           </PaperPanel>
@@ -763,7 +765,7 @@ export function ProjectWorkbenchLayout({
               </p>
               <CreditBadge
                 balance={creditBalance}
-                label={projectMode === "interactive" ? "当前星火" : "当前点数"}
+                label="当前星火"
               />
             </div>
             <div className="grid gap-5">{directorSlot}</div>
