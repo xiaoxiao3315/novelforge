@@ -7,6 +7,13 @@ import {
   spendGenerationCredits,
 } from "@/lib/credits";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
+import {
+  DEFAULT_REWRITE_SCORE_THRESHOLD,
+  runChapterQualityPipeline,
+  type ChapterQualityPipelineResult,
+  type QualityPipelineModel,
+} from "@/lib/quality/pipeline";
+import type { ChapterQualityPromptContext } from "@/lib/quality/types";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -40,6 +47,14 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import {
+  buildChapterCritiquePrompt,
+  CHAPTER_CRITIQUE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-critique";
+import {
+  buildChapterRewritePrompt,
+  CHAPTER_REWRITE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-rewrite";
 import { normalizeInteractiveStoryState } from "@/prompts/story-state";
 
 type GenerateChapterBody = {
@@ -47,6 +62,7 @@ type GenerateChapterBody = {
   chapterId?: unknown;
   chapterNumber?: unknown;
   intervention?: unknown;
+  qualityMode?: unknown;
   user_id?: unknown;
 };
 
@@ -117,6 +133,10 @@ const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS = 2600;
+const CHAPTER_QUALITY_CRITIQUE_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_REWRITE_MAX_TOKENS = 7000;
+const CHAPTER_QUALITY_REWRITE_TEMPERATURE = 0.68;
 const RAW_OUTPUT_PREVIEW_LENGTH = 1000;
 const CHAPTER_SYSTEM_PROMPT = [
   "你只输出中文小说正文。",
@@ -137,6 +157,21 @@ type SummaryJsonParseFailure = {
   outputLength: number;
   finishReason: string | null;
   rawPreview: string;
+};
+
+type ChapterGenerationQualityMode = "normal" | "quality";
+
+type ChapterDraftQualityMetadata = {
+  mode: "quality-v1";
+  critique: {
+    overallScore: number;
+    scores: NonNullable<ChapterQualityPipelineResult["critique"]>["scores"];
+  };
+  rewriteApplied: boolean;
+  rewritePolicy: ChapterQualityPipelineResult["metadata"]["rewritePolicy"];
+  rewriteScoreThreshold: number;
+  promptVersions: ChapterQualityPipelineResult["metadata"]["promptVersions"];
+  steps: ChapterQualityPipelineResult["steps"];
 };
 
 function validationError(message: string) {
@@ -169,6 +204,20 @@ function cleanChapterBody(text: string) {
     .replace(/^```(?:text|markdown)?/i, "")
     .replace(/```$/i, "")
     .trim();
+}
+
+function normalizeQualityMode(
+  value: unknown,
+): { ok: true; qualityMode: ChapterGenerationQualityMode } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, qualityMode: "normal" };
+  }
+
+  if (value === "normal" || value === "quality") {
+    return { ok: true, qualityMode: value };
+  }
+
+  return { ok: false, error: "qualityMode 必须是 normal 或 quality。" };
 }
 
 function parseJsonObject(text: string) {
@@ -431,6 +480,120 @@ function buildPromptInput(
   };
 }
 
+function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
+  return {
+    storyConfig: input.config,
+    storyConcept: input.concept,
+    storyBible: input.bible,
+    characters: input.characters,
+    volume: input.volume,
+    chapterOutline: input.chapter,
+    previousSummaries: input.previousChapters,
+    directorInstruction: input.intervention,
+    interactiveDecision: {
+      previousDecision: input.previousDecision ?? null,
+      currentDecision: input.currentDecision ?? null,
+    },
+    interactiveState: input.interactiveState ?? null,
+  };
+}
+
+function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
+  return {
+    async generateDraft() {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_SYSTEM_PROMPT,
+        userPrompt: buildChapterPrompt(promptInput),
+        maxTokens: CHAPTER_MAX_TOKENS,
+        temperature: CHAPTER_TEMPERATURE,
+      });
+
+      return cleanChapterBody(result.outputText);
+    },
+    async generateCritique(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_CRITIQUE_SYSTEM_PROMPT,
+        userPrompt: buildChapterCritiquePrompt(input),
+        maxTokens: CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_CRITIQUE_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek quality critique response is empty.");
+      }
+
+      return parseJsonObject(result.outputText);
+    },
+    async generateRewrite(input) {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_REWRITE_SYSTEM_PROMPT,
+        userPrompt: buildChapterRewritePrompt(input),
+        maxTokens: CHAPTER_QUALITY_REWRITE_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_REWRITE_TEMPERATURE,
+      });
+
+      return cleanChapterBody(result.outputText);
+    },
+  };
+}
+
+function buildQualityMetadata(
+  pipelineResult: ChapterQualityPipelineResult,
+): ChapterDraftQualityMetadata | null {
+  if (!pipelineResult.critique) {
+    return null;
+  }
+
+  return {
+    mode: pipelineResult.metadata.mode,
+    critique: {
+      overallScore: pipelineResult.critique.overallScore,
+      scores: pipelineResult.critique.scores,
+    },
+    rewriteApplied: pipelineResult.steps.rewrite === "success",
+    rewritePolicy: pipelineResult.metadata.rewritePolicy,
+    rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    promptVersions: pipelineResult.metadata.promptVersions,
+    steps: pipelineResult.steps,
+  };
+}
+
+function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineResult) {
+  return {
+    status: pipelineResult.status,
+    steps: pipelineResult.steps,
+    errors: pipelineResult.errors,
+    critique: pipelineResult.critique
+      ? {
+          overallScore: pipelineResult.critique.overallScore,
+          scores: pipelineResult.critique.scores,
+        }
+      : null,
+    rewriteApplied: pipelineResult.steps.rewrite === "success",
+    rewritePolicy: pipelineResult.metadata.rewritePolicy,
+    rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    promptVersions: pipelineResult.metadata.promptVersions,
+  };
+}
+
+function withQualityLogInput(
+  logInput: Record<string, unknown>,
+  qualityMode: ChapterGenerationQualityMode,
+  pipelineResult?: ChapterQualityPipelineResult | null,
+) {
+  if (qualityMode === "normal") {
+    return logInput;
+  }
+
+  return {
+    ...logInput,
+    qualityMode,
+    ...(pipelineResult
+      ? { qualityPipeline: summarizeQualityPipelineResult(pipelineResult) }
+      : {}),
+  };
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -451,6 +614,13 @@ export async function POST(request: Request) {
     return validationError("生成章节正文时不能从前端传 user_id。");
   }
 
+  const qualityModeValidation = normalizeQualityMode(body.qualityMode);
+
+  if (!qualityModeValidation.ok) {
+    return validationError(qualityModeValidation.error);
+  }
+
+  const { qualityMode } = qualityModeValidation;
   const interventionValidation = parseChapterIntervention(body.intervention);
 
   if (!interventionValidation.ok) {
@@ -534,7 +704,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const baseLogInput = { project: visibleProject, intervention };
+  const baseLogInput = withQualityLogInput({ project: visibleProject, intervention }, qualityMode);
 
   const { data: config, error: configError } = await supabase
     .from("story_configs")
@@ -745,6 +915,35 @@ export async function POST(request: Request) {
   }
 
   let outputText = "";
+  let qualityPipelineResult: ChapterQualityPipelineResult | null = null;
+  let qualityMetadata: ChapterDraftQualityMetadata | null = null;
+
+  if (qualityMode === "quality") {
+    qualityPipelineResult = await runChapterQualityPipeline(
+      {
+        storyContext: buildChapterQualityContext(promptInput),
+        draftSource: "generate",
+        rewritePolicy: "score-threshold",
+        rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
+      },
+      createQualityPipelineModel(promptInput),
+    );
+    qualityMetadata = buildQualityMetadata(qualityPipelineResult);
+
+    if (qualityPipelineResult.status !== "success" || !qualityPipelineResult.finalText) {
+      const errorMessage =
+        qualityPipelineResult.errors.at(-1)?.message ||
+        "Quality pipeline failed before producing final chapter text.";
+      await writeErrorLog(
+        `高质量章节生成失败：${errorMessage.slice(0, 800)}`,
+        withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+        chapterRow.id,
+      );
+      return serverError(`高质量章节生成失败：${errorMessage.slice(0, 800)}`);
+    }
+
+    outputText = cleanChapterBody(qualityPipelineResult.finalText);
+  } else {
 
   try {
     const result = await generateDeepSeekText({
@@ -760,14 +959,20 @@ export async function POST(request: Request) {
     await writeErrorLog(errorMessage, logInput, chapterRow.id);
     return serverError(errorMessage);
   }
+  }
 
   if (!outputText) {
     const error = "DeepSeek 响应缺少章节正文。";
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
-  const draft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
+  const baseDraft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
+  const draft = qualityMetadata ? { ...baseDraft, quality: qualityMetadata } : baseDraft;
   const summaryLogInput = {
     project: visibleProject,
     chapter,
@@ -775,6 +980,14 @@ export async function POST(request: Request) {
     intervention,
     draft,
     body: outputText,
+    ...(qualityMode === "quality"
+      ? {
+          qualityMode,
+          qualityPipeline: qualityPipelineResult
+            ? summarizeQualityPipelineResult(qualityPipelineResult)
+            : null,
+        }
+      : {}),
   };
   const summaryUserPrompt = buildChapterSummaryPrompt({
     chapter,
@@ -857,7 +1070,11 @@ export async function POST(request: Request) {
 
   if (latestVersionError) {
     const error = `章节版本号读取失败：${latestVersionError.message}`;
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
@@ -879,7 +1096,11 @@ export async function POST(request: Request) {
 
   if (versionError || !savedVersion) {
     const error = versionError?.message || "章节版本保存失败。";
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
@@ -911,10 +1132,21 @@ export async function POST(request: Request) {
       .delete()
       .eq("id", savedVersion.id)
       .eq("user_id", user.id);
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
+  const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
+  const chapterLogOutput = {
+    chapter: chapterContent,
+    ...(qualityMode === "quality" && qualityPipelineResult
+      ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
+      : {}),
+  };
   const { data: generationLog, error: chapterLogError } = await supabase
     .from("generation_logs")
     .insert({
@@ -924,10 +1156,8 @@ export async function POST(request: Request) {
       target_id: savedChapter.id,
       model,
       prompt_version: CHAPTER_PROMPT_VERSION,
-      input: logInput,
-      output: {
-        chapter: chapterContent,
-      },
+      input: chapterLogInput,
+      output: chapterLogOutput,
     })
     .select("id")
     .single<GenerationLogIdRow>();
@@ -970,6 +1200,9 @@ export async function POST(request: Request) {
   return NextResponse.json({
     chapterId: savedChapter.id,
     chapter: chapterContent,
+    ...(qualityMode === "quality" && qualityPipelineResult
+      ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
+      : {}),
     credits: {
       cost: GENERATION_CREDIT_COSTS.generate_chapter,
       balance: creditSpend.balanceAfter,
