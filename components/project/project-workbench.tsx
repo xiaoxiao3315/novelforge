@@ -357,6 +357,147 @@ function InteractiveStatePanel({
   );
 }
 
+function formatRouteChange(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function getSelectedDecisionLabel(chapter: WorkbenchChapter) {
+  const decision = chapter.decision;
+
+  if (!decision) {
+    return "";
+  }
+
+  const selectedOption = decision.selectedOptionId
+    ? decision.options.find((option) => option.id === decision.selectedOptionId)
+    : null;
+  const parts = [
+    selectedOption ? `${selectedOption.id}. ${selectedOption.label}` : "",
+    decision.customChoice ? `自定义：${decision.customChoice}` : "",
+  ].filter(Boolean);
+
+  return parts.join(" / ");
+}
+
+function getStateChangeSummary(chapter: WorkbenchChapter) {
+  const stateChanges = chapter.stateChanges;
+
+  if (!stateChanges) {
+    return [];
+  }
+
+  return [
+    ...stateChanges.relationships.map((item) => `${item.name} ${formatRouteChange(item.change)}`),
+    ...stateChanges.meters.map((item) => `${item.name} ${formatRouteChange(item.change)}`),
+    ...stateChanges.clues.map((item) => `${item.name} ${item.status}`),
+  ].slice(0, 4);
+}
+
+function InteractiveRouteMapPanel({
+  chapters,
+  projectMode,
+}: {
+  chapters: WorkbenchChapter[];
+  projectMode: ProjectMode;
+}) {
+  if (projectMode !== "interactive") {
+    return null;
+  }
+
+  return (
+    <PaperPanel className="p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">你的故事路线</h3>
+        <BookBadge tone="warning">Route Map</BookBadge>
+      </div>
+      {chapters.length > 0 ? (
+        <div className="mt-4 grid max-h-[720px] gap-4 overflow-auto border-l border-[var(--line)] pl-4 pr-1">
+          {chapters.map((chapter) => {
+            const decisionLabel = getSelectedDecisionLabel(chapter);
+            const stateSummary = getStateChangeSummary(chapter);
+            const routeChanges = chapter.stateChanges?.routeTendency ?? [];
+
+            return (
+              <article
+                className="relative rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-3"
+                key={chapter.id}
+              >
+                <span className="absolute -left-[22px] top-4 h-3 w-3 rounded-full border border-[var(--gold-strong)] bg-[var(--gold)]" />
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-[var(--gold-strong)]">
+                      第 {chapter.chapterNumber} 章
+                    </p>
+                    <h4 className="mt-1 line-clamp-2 font-serif text-base font-black leading-6 text-[var(--ink)]">
+                      {chapter.title}
+                    </h4>
+                  </div>
+                  <BookBadge tone={chapter.official ? "success" : "paper"}>
+                    {chapter.official ? "正式稿" : "未定稿"}
+                  </BookBadge>
+                </div>
+
+                <div className="mt-3 grid gap-3">
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">选择</p>
+                    <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                      {decisionLabel || "尚未做出选择"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">影响</p>
+                    {stateSummary.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {stateSummary.map((item) => (
+                          <span
+                            className="rounded-sm border border-[var(--line)] bg-[rgba(255,244,220,0.72)] px-2 py-1 text-xs font-bold text-[var(--ink)]"
+                            key={item}
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                        尚未产生状态变化
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">路线</p>
+                    {routeChanges.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {routeChanges.map((route) => (
+                          <span
+                            className="rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.9)] px-2 py-1 text-xs font-black text-[var(--ink)]"
+                            key={`${chapter.id}-${route.name}-${route.change}`}
+                          >
+                            {route.name} {formatRouteChange(route.change)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                        暂无路线变化
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          生成章节大纲后，这里会按章节记录你的选择、影响和路线变化。
+        </p>
+      )}
+    </PaperPanel>
+  );
+}
+
 function ProjectBookHeader({
   creditBalance,
   project,
@@ -566,6 +707,8 @@ export function ProjectWorkbenchLayout({
             interactiveState={interactiveState}
             projectMode={projectMode}
           />
+
+          <InteractiveRouteMapPanel chapters={chapters} projectMode={projectMode} />
 
           <PaperPanel className="p-5">
             <h3 className="font-serif text-xl font-black text-[var(--ink)]">剧情筛选器</h3>
