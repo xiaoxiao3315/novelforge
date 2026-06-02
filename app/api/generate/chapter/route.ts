@@ -37,7 +37,9 @@ import { normalizeChapterDecision } from "@/prompts/chapter-decision";
 import {
   buildChapterSummary,
   buildChapterSummaryPrompt,
+  buildChapterSummaryRetryPrompt,
   CHAPTER_SUMMARY_PROMPT_VERSION,
+  repairChapterSummaryOutput,
   validateChapterSummaryOutput,
 } from "@/prompts/chapter-summary";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
@@ -156,6 +158,25 @@ type SummaryJsonParseFailure = {
   message: string;
   outputLength: number;
   finishReason: string | null;
+  rawPreview: string;
+};
+
+type SummarySchemaValidationFailureLog = {
+  attempt: number;
+  validationError: string;
+  missingFields: string[];
+  extraFields: string[];
+  invalidFields: string[];
+  retryAttempt: number | null;
+  repairedFields: string[];
+  rawPreview: string;
+  summaryRepaired: boolean;
+};
+
+type SummaryRepairLog = {
+  summaryRepaired: true;
+  missingFields: string[];
+  repairedFields: string[];
   rawPreview: string;
 };
 
@@ -351,6 +372,41 @@ function formatSummaryJsonFailureLog(failures: SummaryJsonParseFailure[]) {
       failure.rawPreview,
     ]),
   ].join("\n");
+}
+
+function buildSummarySchemaValidationFailureLog(
+  attempt: number,
+  outputText: string,
+  validation: Extract<ReturnType<typeof validateChapterSummaryOutput>, { ok: false }>,
+  retryAttempt: number | null,
+): SummarySchemaValidationFailureLog {
+  return {
+    attempt,
+    validationError: validation.error,
+    missingFields: validation.missingFields,
+    extraFields: validation.extraFields,
+    invalidFields: validation.invalidFields,
+    retryAttempt,
+    repairedFields: [],
+    rawPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+    summaryRepaired: false,
+  };
+}
+
+function buildSummaryValidationLogOutput(
+  schemaFailures: SummarySchemaValidationFailureLog[],
+  parseFailures: SummaryJsonParseFailure[],
+  repairLog: SummaryRepairLog | null = null,
+) {
+  return {
+    summaryValidation: {
+      attempts: schemaFailures,
+      summaryRepaired: Boolean(repairLog),
+      missingFields: repairLog?.missingFields ?? [],
+      repairedFields: repairLog?.repairedFields ?? [],
+    },
+    summaryJsonParseFailures: parseFailures,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -667,6 +723,7 @@ export async function POST(request: Request) {
     error: string,
     input: Record<string, unknown>,
     targetId?: string,
+    output?: Record<string, unknown>,
   ) {
     await supabase.from("generation_logs").insert({
       project_id: visibleProject.id,
@@ -676,6 +733,7 @@ export async function POST(request: Request) {
       model,
       prompt_version: promptVersion,
       input,
+      ...(output ? { output } : {}),
       error,
     });
   }
@@ -694,6 +752,7 @@ export async function POST(request: Request) {
     error: string,
     input: Record<string, unknown>,
     targetId?: string,
+    output?: Record<string, unknown>,
   ) {
     await writeGenerationErrorLog(
       "generate_chapter_summary",
@@ -701,6 +760,7 @@ export async function POST(request: Request) {
       error,
       input,
       targetId,
+      output,
     );
   }
 
@@ -999,8 +1059,12 @@ export async function POST(request: Request) {
     })),
   });
   const summaryParseFailures: SummaryJsonParseFailure[] = [];
+  const summarySchemaFailures: SummarySchemaValidationFailureLog[] = [];
   let parsedSummary: unknown;
-  let parsedSummarySuccessfully = false;
+  let parsedSummaryOutputText = "";
+  let summaryValidation: ReturnType<typeof validateChapterSummaryOutput> | null = null;
+  let summaryRepairLog: SummaryRepairLog | null = null;
+  let summaryPrompt = summaryUserPrompt;
 
   for (let attempt = 1; attempt <= CHAPTER_SUMMARY_GENERATION_ATTEMPTS; attempt += 1) {
     let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
@@ -1008,18 +1072,23 @@ export async function POST(request: Request) {
     try {
       result = await generateDeepSeekJson({
         systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
-        userPrompt: summaryUserPrompt,
+        userPrompt: summaryPrompt,
         maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
         temperature: CHAPTER_SUMMARY_TEMPERATURE,
       });
     } catch (error) {
       const errorMessage = `DeepSeek 摘要生成失败（第 ${attempt} 次）：${getErrorMessage(error).slice(0, 800)}`;
       const logMessage =
-        summaryParseFailures.length > 0
+        summaryParseFailures.length > 0 || summarySchemaFailures.length > 0
           ? `${errorMessage}\n\n此前摘要 JSON 解析失败详情：\n${formatSummaryJsonFailureLog(summaryParseFailures)}`
           : errorMessage;
 
-      await writeSummaryErrorLog(logMessage, summaryLogInput, chapterRow.id);
+      await writeSummaryErrorLog(
+        logMessage,
+        summaryLogInput,
+        chapterRow.id,
+        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+      );
       return serverError(errorMessage);
     }
 
@@ -1028,8 +1097,33 @@ export async function POST(request: Request) {
     } else {
       try {
         parsedSummary = parseSummaryJsonObject(result.outputText);
-        parsedSummarySuccessfully = true;
-        break;
+        parsedSummaryOutputText = result.outputText;
+
+        const validation = validateChapterSummaryOutput(parsedSummary);
+
+        if (validation.ok) {
+          summaryValidation = validation;
+          break;
+        }
+
+        summarySchemaFailures.push(
+          buildSummarySchemaValidationFailureLog(
+            attempt,
+            result.outputText,
+            validation,
+            attempt < CHAPTER_SUMMARY_GENERATION_ATTEMPTS ? attempt + 1 : null,
+          ),
+        );
+
+        if (attempt < CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
+          summaryPrompt = buildChapterSummaryRetryPrompt({
+            originalPrompt: summaryUserPrompt,
+            validationError: validation.error,
+            missingFields: validation.missingFields,
+            rawPreview: result.outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+          });
+          continue;
+        }
       } catch (error) {
         summaryParseFailures.push(
           buildSummaryJsonParseFailure(attempt, result.outputText, result.finishReason, error),
@@ -1038,24 +1132,63 @@ export async function POST(request: Request) {
     }
 
     if (attempt === CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
-      const errorLog = formatSummaryJsonFailureLog(summaryParseFailures);
-      await writeSummaryErrorLog(errorLog, summaryLogInput, chapterRow.id);
-      return serverError("DeepSeek 摘要生成失败：AI 输出不是有效 JSON。");
+      break;
     }
   }
 
-  if (!parsedSummarySuccessfully) {
-    const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
-    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
-    return serverError(error);
-  }
+  if (!summaryValidation?.ok) {
+    const repair = repairChapterSummaryOutput(parsedSummary);
 
-  const summaryValidation = validateChapterSummaryOutput(parsedSummary);
+    if (repair.ok) {
+      summaryValidation = { ok: true, summary: repair.summary };
+      summaryRepairLog = {
+        summaryRepaired: true,
+        missingFields: repair.missingFields,
+        repairedFields: repair.repairedFields,
+        rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      };
 
-  if (!summaryValidation.ok) {
-    const error = `章节摘要 JSON 未通过 schema 校验：${summaryValidation.error}`;
-    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
-    return serverError(error);
+      if (summarySchemaFailures.length > 0) {
+        const lastFailure = summarySchemaFailures[summarySchemaFailures.length - 1];
+        summarySchemaFailures[summarySchemaFailures.length - 1] = {
+          ...lastFailure,
+          repairedFields: repair.repairedFields,
+          summaryRepaired: true,
+        };
+      }
+    } else if (summarySchemaFailures.length > 0) {
+      const lastFailure = summarySchemaFailures[summarySchemaFailures.length - 1];
+      const error = `章节摘要 JSON 未通过 schema 校验：${lastFailure.validationError}`;
+      await writeSummaryErrorLog(
+        error,
+        summaryLogInput,
+        chapterRow.id,
+        {
+          ...buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+          summaryRepairAttempt: {
+            ok: false,
+            error: repair.error,
+            missingFields: repair.missingFields,
+            repairedFields: repair.repairedFields,
+            rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+          },
+        },
+      );
+      return serverError(error);
+    } else {
+      const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
+      const errorLog =
+        summaryParseFailures.length > 0
+          ? formatSummaryJsonFailureLog(summaryParseFailures)
+          : error;
+      await writeSummaryErrorLog(
+        errorLog,
+        summaryLogInput,
+        chapterRow.id,
+        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+      );
+      return serverError(error);
+    }
   }
 
   const summary = buildChapterSummary(summaryValidation.summary, model);
@@ -1179,6 +1312,11 @@ export async function POST(request: Request) {
     input: summaryLogInput,
     output: {
       summary,
+      ...buildSummaryValidationLogOutput(
+        summarySchemaFailures,
+        summaryParseFailures,
+        summaryRepairLog,
+      ),
     },
   });
 
