@@ -39,6 +39,8 @@ type ChapterResponse = {
   error?: string;
 };
 
+type ChapterQualityMode = "normal" | "quality";
+
 type SetOfficialResponse = {
   chapterId?: string;
   versionId?: string;
@@ -80,8 +82,41 @@ const summarySections: Array<{
   { key: "continuityNotes", label: "下一章上下文" },
 ];
 
+const chapterQualityOptions: Array<{
+  mode: ChapterQualityMode;
+  label: string;
+  buttonLabel: string;
+  description: string;
+}> = [
+  {
+    mode: "normal",
+    label: "普通生成",
+    buttonLabel: "快速生成",
+    description: "快速生成章节正文，适合草稿推进。",
+  },
+  {
+    mode: "quality",
+    label: "高质量生成",
+    buttonLabel: "精修生成",
+    description: "先产出初稿，再进行 AI 审稿与按需修订，耗时更久，适合正式章节。",
+  },
+];
+
+const qualityScoreLabels = [
+  ["pacing", "节奏"],
+  ["conflict", "冲突"],
+  ["emotion", "情绪"],
+  ["hookStrength", "钩子"],
+] as const;
+
 function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
+}
+
+function getChapterGenerationCost(mode: ChapterQualityMode) {
+  return mode === "quality"
+    ? GENERATION_CREDIT_COSTS.generate_chapter_quality
+    : GENERATION_CREDIT_COSTS.generate_chapter;
 }
 
 function formatModeCreditShortfall(balance: number, cost: number, isInteractive: boolean) {
@@ -145,6 +180,26 @@ function getInitialInterventions(chapters: ChapterDisplay[]) {
   ) as Record<string, ChapterIntervention>;
 }
 
+function getInitialQualityModes(chapters: ChapterDisplay[]) {
+  return Object.fromEntries(
+    chapters.map((chapter) => [chapterKey(chapter), "normal"]),
+  ) as Record<string, ChapterQualityMode>;
+}
+
+function getQualityScoreItems(chapter: ChapterDisplay) {
+  const scores = chapter.draft?.quality?.critique?.scores;
+
+  if (!scores) {
+    return [];
+  }
+
+  return qualityScoreLabels.flatMap(([key, label]) => {
+    const value = scores[key];
+
+    return typeof value === "number" ? [{ key, label, value }] : [];
+  });
+}
+
 export function OutlineGenerator({
   projectId,
   initialVolume,
@@ -157,6 +212,9 @@ export function OutlineGenerator({
   const [chapters, setChapters] = useState(initialChapters);
   const [interventions, setInterventions] = useState(() =>
     getInitialInterventions(initialChapters),
+  );
+  const [qualityModes, setQualityModes] = useState(() =>
+    getInitialQualityModes(initialChapters),
   );
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
@@ -214,12 +272,22 @@ export function OutlineGenerator({
     setVolume(payload.volume);
     setChapters(payload.chapters);
     setInterventions(getInitialInterventions(payload.chapters));
+    setQualityModes(getInitialQualityModes(payload.chapters));
     router.refresh();
   }
 
   async function generateChapter(chapter: ChapterDisplay) {
-    if (!hasEnoughChapterCredits) {
-      setError(chapterCreditShortfallMessage);
+    const selectedQualityMode = qualityModes[chapterKey(chapter)] ?? "normal";
+    const selectedChapterCost = getChapterGenerationCost(selectedQualityMode);
+    const hasEnoughSelectedChapterCredits =
+      creditBalance === null || creditBalance >= selectedChapterCost;
+    const selectedChapterCreditShortfallMessage =
+      creditBalance === null || hasEnoughSelectedChapterCredits
+        ? ""
+        : formatModeCreditShortfall(creditBalance, selectedChapterCost, isInteractive);
+
+    if (!hasEnoughSelectedChapterCredits) {
+      setError(selectedChapterCreditShortfallMessage);
       return;
     }
 
@@ -238,6 +306,7 @@ export function OutlineGenerator({
         chapterId: chapter.id,
         chapterNumber: chapter.chapterNumber,
         intervention: currentIntervention,
+        qualityMode: selectedQualityMode,
       }),
     });
 
@@ -273,6 +342,13 @@ export function OutlineGenerator({
       ),
     );
     router.refresh();
+  }
+
+  function updateQualityMode(chapter: ChapterDisplay, mode: ChapterQualityMode) {
+    setQualityModes((currentModes) => ({
+      ...currentModes,
+      [chapterKey(chapter)]: mode,
+    }));
   }
 
   async function setOfficialChapter(chapter: ChapterDisplay) {
@@ -418,7 +494,22 @@ export function OutlineGenerator({
           </article>
 
           <div className="grid gap-3">
-            {chapters.map((chapter) => (
+            {chapters.map((chapter) => {
+              const selectedQualityMode = qualityModes[chapterKey(chapter)] ?? "normal";
+              const selectedQualityOption =
+                chapterQualityOptions.find((option) => option.mode === selectedQualityMode) ??
+                chapterQualityOptions[0];
+              const selectedChapterCost = getChapterGenerationCost(selectedQualityMode);
+              const hasEnoughSelectedChapterCredits =
+                creditBalance === null || creditBalance >= selectedChapterCost;
+              const selectedChapterCreditShortfallMessage =
+                creditBalance === null || hasEnoughSelectedChapterCredits
+                  ? ""
+                  : formatModeCreditShortfall(creditBalance, selectedChapterCost, isInteractive);
+              const quality = chapter.draft?.quality;
+              const qualityScoreItems = getQualityScoreItems(chapter);
+
+              return (
               <article
                 className="rounded-md border border-[var(--line)] bg-white px-4 py-4"
                 key={chapter.chapterNumber}
@@ -449,18 +540,20 @@ export function OutlineGenerator({
                       disabled={
                         generatingChapterNumber !== null ||
                         settingOfficialChapterNumber !== null ||
-                        !hasEnoughChapterCredits
+                        !hasEnoughSelectedChapterCredits
                       }
                       onClick={() => generateChapter(chapter)}
                       type="button"
                     >
                       {generatingChapterNumber === chapter.chapterNumber
-                        ? isInteractive
-                          ? "正在进入本章..."
-                          : "正文生成中..."
+                        ? selectedQualityMode === "quality"
+                          ? "精修生成中..."
+                          : isInteractive
+                            ? "正在进入本章..."
+                            : "正文生成中..."
                         : chapter.draft?.body
-                          ? `${isInteractive ? "重新进入本章" : "重新生成正文"} · ${chapterCost} ${creditUnit}`
-                          : `${isInteractive ? "进入本章" : "生成正文"} · ${chapterCost} ${creditUnit}`}
+                          ? `重新${selectedQualityOption.buttonLabel} · ${selectedChapterCost} ${creditUnit}`
+                          : `${selectedQualityOption.buttonLabel} · ${selectedChapterCost} ${creditUnit}`}
                     </button>
                     {chapter.draft?.body ? (
                       <button
@@ -493,6 +586,54 @@ export function OutlineGenerator({
                     进入这一章时，会读取上一章选择、当前故事状态和本章导演指令。
                   </p>
                 ) : null}
+
+                <div className="mt-4 rounded-md border border-[var(--line)] bg-[#fffaf0] px-3 py-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                      生成模式
+                    </p>
+                    <div
+                      aria-label="章节生成质量模式"
+                      className="flex flex-wrap gap-2"
+                      role="radiogroup"
+                    >
+                      {chapterQualityOptions.map((option) => {
+                        const optionCost = getChapterGenerationCost(option.mode);
+                        const isSelected = selectedQualityMode === option.mode;
+
+                        return (
+                          <button
+                            aria-checked={isSelected}
+                            className={[
+                              "rounded-md border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60",
+                              isSelected
+                                ? "border-[var(--accent)] bg-[#eef4f2] text-[var(--accent-strong)]"
+                                : "border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--accent)]",
+                            ].join(" ")}
+                            disabled={generatingChapterNumber !== null}
+                            key={option.mode}
+                            onClick={() => updateQualityMode(chapter, option.mode)}
+                            role="radio"
+                            type="button"
+                          >
+                            {option.label} · {optionCost} {creditUnit}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                    {selectedQualityOption.description}
+                  </p>
+                  {selectedChapterCreditShortfallMessage ? (
+                    <p className="mt-2 text-sm font-bold text-[#7f2f1d]">
+                      {selectedChapterCreditShortfallMessage}
+                      <Link className="ml-2 underline" href="/account/credits">
+                        {isInteractive ? "补充星火" : "查看点数"}
+                      </Link>
+                    </p>
+                  ) : null}
+                </div>
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   {chapterSections.map((section) => (
@@ -535,6 +676,50 @@ export function OutlineGenerator({
                     ))}
                   </div>
                 </div>
+
+                {quality ? (
+                  <div className="mt-5 border-t border-[var(--line)] pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
+                        高质量生成报告
+                      </p>
+                      <span className="rounded-full bg-[#eef4f2] px-3 py-1 text-xs font-bold text-[var(--accent-strong)]">
+                        {quality.mode ?? "quality-v1"}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <div className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3">
+                        <p className="text-xs font-bold text-[var(--muted)]">质量评分</p>
+                        <p className="mt-1 text-lg font-black text-[var(--ink)]">
+                          {quality.critique?.overallScore ?? "--"}
+                        </p>
+                      </div>
+                      <div className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3">
+                        <p className="text-xs font-bold text-[var(--muted)]">修订状态</p>
+                        <p className="mt-1 text-sm font-bold text-[var(--ink)]">
+                          {quality.rewriteApplied === true
+                            ? "已执行修订"
+                            : quality.rewriteApplied === false
+                              ? "未执行修订"
+                              : "--"}
+                        </p>
+                      </div>
+                      {qualityScoreItems.map((item) => (
+                        <div
+                          className="rounded-md border border-[var(--line)] bg-[#f8fbfa] px-3 py-3"
+                          key={item.key}
+                        >
+                          <p className="text-xs font-bold text-[var(--muted)]">
+                            {item.label}
+                          </p>
+                          <p className="mt-1 text-lg font-black text-[var(--ink)]">
+                            {item.value}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {chapter.draft?.body ? (
                   <div className="mt-5 border-t border-[var(--line)] pt-4">
@@ -581,7 +766,8 @@ export function OutlineGenerator({
                   </div>
                 ) : null}
               </article>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : (

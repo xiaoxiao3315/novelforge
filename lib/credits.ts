@@ -12,6 +12,7 @@ export const GENERATION_CREDIT_COSTS = {
   generate_bible: 3,
   generate_outline: 5,
   generate_chapter: 8,
+  generate_chapter_quality: 20,
   generate_chapter_summary: 0,
   set_official: 0,
 } as const;

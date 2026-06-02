@@ -60,6 +60,31 @@ function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
 }
 
+const qualityScoreLabels = [
+  ["pacing", "节奏"],
+  ["conflict", "冲突"],
+  ["emotion", "情绪"],
+  ["characterConsistency", "人物"],
+  ["worldConsistency", "设定"],
+  ["proseQuality", "语言"],
+  ["hookStrength", "钩子"],
+  ["commercialAppeal", "追更"],
+] as const;
+
+function getQualityScoreItems(chapter: WorkbenchChapter | null) {
+  const scores = chapter?.draft?.quality?.critique?.scores;
+
+  if (!scores) {
+    return [];
+  }
+
+  return qualityScoreLabels.flatMap(([key, label]) => {
+    const value = scores[key];
+
+    return typeof value === "number" ? [{ key, label, value }] : [];
+  });
+}
+
 function getProjectModeTone(projectMode: ProjectMode) {
   return projectMode === "interactive" ? "warning" : "gold";
 }
@@ -202,6 +227,54 @@ function ChapterSummaryPanel({ summary }: { summary: ChapterSummary | null }) {
             <p className="text-xs font-black text-[var(--gold-strong)]">{item.label}</p>
             <p className="mt-1 line-clamp-3 text-sm leading-6 text-[var(--muted)]">
               {formatSummaryValue(item.value)}
+            </p>
+          </div>
+        ))}
+      </div>
+    </PaperPanel>
+  );
+}
+
+function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) {
+  const quality = chapter?.draft?.quality;
+
+  if (!quality) {
+    return null;
+  }
+
+  const qualityScoreItems = getQualityScoreItems(chapter);
+
+  return (
+    <PaperPanel className="p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">质量报告</h3>
+        <BookBadge tone="gold">{quality.mode ?? "quality-v1"}</BookBadge>
+      </div>
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
+          <p className="text-xs font-black text-[var(--gold-strong)]">整体评分</p>
+          <p className="mt-1 font-serif text-3xl font-black text-[var(--brown)]">
+            {quality.critique?.overallScore ?? "--"}
+          </p>
+        </div>
+        <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
+          <p className="text-xs font-black text-[var(--gold-strong)]">修订状态</p>
+          <p className="mt-2 text-sm font-bold leading-6 text-[var(--ink)]">
+            {quality.rewriteApplied === true
+              ? "已执行修订"
+              : quality.rewriteApplied === false
+                ? "未执行修订"
+                : "--"}
+          </p>
+        </div>
+        {qualityScoreItems.map((item) => (
+          <div
+            className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3"
+            key={item.key}
+          >
+            <p className="text-xs font-black text-[var(--gold-strong)]">{item.label}</p>
+            <p className="mt-1 font-serif text-2xl font-black text-[var(--brown)]">
+              {item.value}
             </p>
           </div>
         ))}
@@ -464,6 +537,7 @@ function ChapterReaderPreview({
       ) : null}
 
       <ChapterSummaryPanel summary={summary} />
+      <ChapterQualityPanel chapter={chapter} />
     </div>
   );
 }

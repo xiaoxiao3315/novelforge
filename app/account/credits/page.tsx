@@ -48,6 +48,7 @@ const operationLabels: Record<GenerationCreditOperation, string> = {
   generate_bible: "生成故事圣经",
   generate_outline: "生成章节大纲",
   generate_chapter: "生成章节正文",
+  generate_chapter_quality: "精修生成章节正文",
   generate_chapter_summary: "章节摘要",
   set_official: "设为正式稿",
 };

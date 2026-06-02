@@ -908,7 +908,9 @@ export async function POST(request: Request) {
     currentDecision,
     interactiveState,
   };
-  const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
+  const creditOperation =
+    qualityMode === "quality" ? "generate_chapter_quality" : "generate_chapter";
+  const creditCheck = await requireGenerationCredits(supabase, creditOperation);
 
   if (!creditCheck.ok) {
     return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
@@ -944,21 +946,20 @@ export async function POST(request: Request) {
 
     outputText = cleanChapterBody(qualityPipelineResult.finalText);
   } else {
+    try {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_SYSTEM_PROMPT,
+        userPrompt: buildChapterPrompt(promptInput),
+        maxTokens: CHAPTER_MAX_TOKENS,
+        temperature: CHAPTER_TEMPERATURE,
+      });
 
-  try {
-    const result = await generateDeepSeekText({
-      systemPrompt: CHAPTER_SYSTEM_PROMPT,
-      userPrompt: buildChapterPrompt(promptInput),
-      maxTokens: CHAPTER_MAX_TOKENS,
-      temperature: CHAPTER_TEMPERATURE,
-    });
-
-    outputText = cleanChapterBody(result.outputText);
-  } catch (error) {
-    const errorMessage = `DeepSeek 生成失败：${getErrorMessage(error).slice(0, 800)}`;
-    await writeErrorLog(errorMessage, logInput, chapterRow.id);
-    return serverError(errorMessage);
-  }
+      outputText = cleanChapterBody(result.outputText);
+    } catch (error) {
+      const errorMessage = `DeepSeek 生成失败：${getErrorMessage(error).slice(0, 800)}`;
+      await writeErrorLog(errorMessage, logInput, chapterRow.id);
+      return serverError(errorMessage);
+    }
   }
 
   if (!outputText) {
@@ -1189,8 +1190,11 @@ export async function POST(request: Request) {
     supabase,
     projectId: visibleProject.id,
     generationLogId: generationLog.id,
-    operation: "generate_chapter",
-    reason: "生成章节正文和摘要",
+    operation: creditOperation,
+    reason:
+      qualityMode === "quality"
+        ? "精修生成章节正文和摘要"
+        : "生成章节正文和摘要",
   });
 
   if (!creditSpend.ok) {
@@ -1204,7 +1208,7 @@ export async function POST(request: Request) {
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),
     credits: {
-      cost: GENERATION_CREDIT_COSTS.generate_chapter,
+      cost: GENERATION_CREDIT_COSTS[creditOperation],
       balance: creditSpend.balanceAfter,
     },
   });

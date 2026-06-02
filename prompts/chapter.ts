@@ -26,6 +26,22 @@ import {
 export const CHAPTER_PROMPT_VERSION = "chapter-v1";
 export const DEFAULT_CHAPTER_WORD_TARGET = 2500;
 
+export type ChapterDraftQuality = {
+  mode?: string;
+  critique?: {
+    overallScore?: number;
+    scores?: Record<string, number>;
+  };
+  rewriteApplied?: boolean;
+  rewritePolicy?: string;
+  rewriteScoreThreshold?: number;
+  promptVersions?: {
+    critique?: string;
+    rewrite?: string;
+  };
+  steps?: Record<string, string>;
+};
+
 export type ChapterDraft = {
   versionId?: string;
   body: string;
@@ -34,6 +50,7 @@ export type ChapterDraft = {
   promptVersion: string;
   wordTarget: number;
   intervention?: ChapterIntervention;
+  quality?: ChapterDraftQuality;
 };
 
 export type ChapterIntervention = {
@@ -115,6 +132,73 @@ function cleanText(value: unknown, maxLength = 200000) {
   return value.trim().slice(0, maxLength);
 }
 
+function normalizeScore(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function normalizeNumberRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value)
+    .map(([key, score]) => [cleanText(key, 80), normalizeScore(score)] as const)
+    .filter((entry): entry is readonly [string, number] => Boolean(entry[0]) && entry[1] !== null);
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function normalizeStringRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value)
+    .map(([key, text]) => [cleanText(key, 80), cleanText(text, 80)] as const)
+    .filter(([key, text]) => Boolean(key && text));
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQuality | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const mode = cleanText(value.mode, 80);
+  const critiqueValue = isRecord(value.critique) ? value.critique : null;
+  const overallScore = normalizeScore(critiqueValue?.overallScore);
+  const scores = normalizeNumberRecord(critiqueValue?.scores);
+  const rewritePolicy = cleanText(value.rewritePolicy, 80);
+  const rewriteScoreThreshold = normalizeScore(value.rewriteScoreThreshold);
+  const promptVersions = normalizeStringRecord(value.promptVersions);
+  const steps = normalizeStringRecord(value.steps);
+  const quality: ChapterDraftQuality = {
+    ...(mode ? { mode } : {}),
+    ...(overallScore !== null || scores
+      ? {
+          critique: {
+            ...(overallScore !== null ? { overallScore } : {}),
+            ...(scores ? { scores } : {}),
+          },
+        }
+      : {}),
+    ...(typeof value.rewriteApplied === "boolean"
+      ? { rewriteApplied: value.rewriteApplied }
+      : {}),
+    ...(rewritePolicy ? { rewritePolicy } : {}),
+    ...(rewriteScoreThreshold !== null ? { rewriteScoreThreshold } : {}),
+    ...(promptVersions ? { promptVersions } : {}),
+    ...(steps ? { steps } : {}),
+  };
+
+  return Object.keys(quality).length > 0 ? quality : null;
+}
+
 export function normalizeChapterIntervention(value: unknown): ChapterIntervention | null {
   if (!isRecord(value)) {
     return null;
@@ -159,6 +243,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   const model = cleanText(value.model, 120);
   const promptVersion = cleanText(value.promptVersion, 80);
   const intervention = normalizeChapterIntervention(value.intervention);
+  const quality = normalizeChapterDraftQuality(value.quality);
   const wordTarget = value.wordTarget;
 
   if (
@@ -181,6 +266,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
     promptVersion,
     wordTarget,
     ...(intervention ? { intervention } : {}),
+    ...(quality ? { quality } : {}),
   };
 }
 
