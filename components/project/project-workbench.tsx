@@ -218,7 +218,7 @@ function ProjectBookHeader({
   const modeTone = getProjectModeTone(projectMode);
 
   return (
-    <section className="grid gap-6 py-8 lg:grid-cols-[minmax(0,1fr)_280px]">
+    <section className="project-workbench-shell grid gap-6 py-8 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div>
         <div className="flex flex-wrap items-center gap-3">
           <StatusBookmark tone="gold">Book Workbench</StatusBookmark>
@@ -365,8 +365,8 @@ export function ProjectWorkbenchLayout({
         projectMode={projectMode}
       />
 
-      <section className="grid items-start gap-5 pb-10 xl:grid-cols-[280px_minmax(0,1fr)_max-content]">
-        <aside className="grid gap-5 xl:sticky xl:top-6">
+      <section className="project-workbench-shell project-workbench-grid">
+        <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">Book Index</p>
             <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">作品目录</h2>
@@ -423,11 +423,11 @@ export function ProjectWorkbenchLayout({
           </PaperPanel>
         </aside>
 
-        <main className="min-w-0">
+        <main className="project-reader-column min-w-0">
           <ChapterReaderPreview chapter={currentChapter} volume={volume} />
         </main>
 
-        <aside className="xl:sticky xl:top-6">
+        <aside className="project-director-column xl:sticky xl:top-6">
           <DirectorConsole
             collapsedLabel="展开导演台"
             defaultOpen
