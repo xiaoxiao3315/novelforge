@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
+import type { ProjectMode } from "@/lib/projects/modes";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import {
   CHAPTER_INTERVENTION_LIMITS,
@@ -23,6 +24,7 @@ type OutlineGeneratorProps = {
   initialChapters: ChapterDisplay[];
   hasPrerequisites: boolean;
   creditBalance: number | null;
+  projectMode: ProjectMode;
 };
 
 type OutlineResponse = {
@@ -82,6 +84,16 @@ function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
 }
 
+function formatModeCreditShortfall(balance: number, cost: number, isInteractive: boolean) {
+  if (!isInteractive) {
+    return formatCreditShortfall(balance, cost);
+  }
+
+  const shortage = Math.max(cost - balance, 0);
+
+  return `星火不足：当前 ${balance} 星火，本次操作需要 ${cost} 星火，还差 ${shortage} 星火。`;
+}
+
 const interventionFields: Array<{
   key: keyof ChapterIntervention;
   label: string;
@@ -139,6 +151,7 @@ export function OutlineGenerator({
   initialChapters,
   hasPrerequisites,
   creditBalance,
+  projectMode,
 }: OutlineGeneratorProps) {
   const [volume, setVolume] = useState(initialVolume);
   const [chapters, setChapters] = useState(initialChapters);
@@ -154,16 +167,18 @@ export function OutlineGenerator({
   const router = useRouter();
   const outlineCost = GENERATION_CREDIT_COSTS.generate_outline;
   const chapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
+  const isInteractive = projectMode === "interactive";
+  const creditUnit = isInteractive ? "星火" : "点";
   const hasEnoughOutlineCredits = creditBalance === null || creditBalance >= outlineCost;
   const hasEnoughChapterCredits = creditBalance === null || creditBalance >= chapterCost;
   const outlineCreditShortfallMessage =
     creditBalance === null || hasEnoughOutlineCredits
       ? ""
-      : formatCreditShortfall(creditBalance, outlineCost);
+      : formatModeCreditShortfall(creditBalance, outlineCost, isInteractive);
   const chapterCreditShortfallMessage =
     creditBalance === null || hasEnoughChapterCredits
       ? ""
-      : formatCreditShortfall(creditBalance, chapterCost);
+      : formatModeCreditShortfall(creditBalance, chapterCost, isInteractive);
 
   async function generateOutline() {
     if (!hasPrerequisites) {
@@ -231,7 +246,12 @@ export function OutlineGenerator({
     setGeneratingChapterNumber(null);
 
     if (!response.ok || !payload?.chapter) {
-      setError(formatUserFacingError(payload?.error, "章节正文生成失败，请稍后重试。"));
+      setError(
+        formatUserFacingError(
+          payload?.error,
+          isInteractive ? "进入本章失败，请稍后重试。" : "章节正文生成失败，请稍后重试。",
+        ),
+      );
       return;
     }
 
@@ -323,9 +343,13 @@ export function OutlineGenerator({
     <section className="surface mt-6 p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 className="text-2xl font-black text-[var(--ink)]">章节大纲</h2>
+          <h2 className="text-2xl font-black text-[var(--ink)]">
+            {isInteractive ? "故事章节" : "章节大纲"}
+          </h2>
           <p className="mt-2 max-w-2xl leading-7 text-[var(--muted)]">
-            基于已保存的设定、故事圣经和角色卡生成第一卷 20 章大纲。生成可能需要几十秒；重新生成会覆盖当前卷信息和章节大纲，并记录生成日志。
+            {isInteractive
+              ? "先铺开第一卷章节。进入下一章前，会沿用上一章已做出的选择和当前故事状态。"
+              : "基于已保存的设定、故事圣经和角色卡生成第一卷 20 章大纲。生成可能需要几十秒；重新生成会覆盖当前卷信息和章节大纲，并记录生成日志。"}
           </p>
         </div>
         <button
@@ -337,8 +361,8 @@ export function OutlineGenerator({
           {isGenerating
             ? "生成中..."
             : volume
-              ? `重新生成 · ${outlineCost} 点`
-              : `生成章节大纲 · ${outlineCost} 点`}
+              ? `${isInteractive ? "重新铺开" : "重新生成"} · ${outlineCost} ${creditUnit}`
+              : `${isInteractive ? "铺开章节" : "生成章节大纲"} · ${outlineCost} ${creditUnit}`}
         </button>
       </div>
 
@@ -352,7 +376,7 @@ export function OutlineGenerator({
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
           {chapterCreditShortfallMessage || outlineCreditShortfallMessage}
           <Link className="ml-2 font-bold underline" href="/account/credits">
-            查看点数
+            {isInteractive ? "补充星火" : "查看点数"}
           </Link>
         </p>
       ) : null}
@@ -431,10 +455,12 @@ export function OutlineGenerator({
                       type="button"
                     >
                       {generatingChapterNumber === chapter.chapterNumber
-                        ? "正文生成中..."
+                        ? isInteractive
+                          ? "正在进入本章..."
+                          : "正文生成中..."
                         : chapter.draft?.body
-                          ? `重新生成正文 · ${chapterCost} 点`
-                          : `生成正文 · ${chapterCost} 点`}
+                          ? `${isInteractive ? "重新进入本章" : "重新生成正文"} · ${chapterCost} ${creditUnit}`
+                          : `${isInteractive ? "进入本章" : "生成正文"} · ${chapterCost} ${creditUnit}`}
                     </button>
                     {chapter.draft?.body ? (
                       <button
@@ -451,12 +477,22 @@ export function OutlineGenerator({
                         {settingOfficialChapterNumber === chapter.chapterNumber
                           ? "确认中..."
                           : chapter.official?.versionId === chapter.draft.versionId
-                            ? "当前为正式稿"
-                            : "设为正式稿"}
+                            ? isInteractive
+                              ? "这条命运已确认"
+                              : "当前为正式稿"
+                            : isInteractive
+                              ? "确认这条命运"
+                              : "设为正式稿"}
                       </button>
                     ) : null}
                   </div>
                 </div>
+
+                {isInteractive ? (
+                  <p className="mt-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-3 py-2 text-xs leading-5 text-[var(--muted)]">
+                    进入这一章时，会读取上一章选择、当前故事状态和本章导演指令。
+                  </p>
+                ) : null}
 
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
                   {chapterSections.map((section) => (

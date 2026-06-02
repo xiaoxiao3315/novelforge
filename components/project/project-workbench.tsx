@@ -232,7 +232,7 @@ function StateValueGrid({
   valueSuffix?: string;
 }) {
   if (items.length === 0) {
-    return <p className="text-sm leading-6 text-[var(--muted)]">暂无记录。</p>;
+    return <p className="text-sm leading-6 text-[var(--muted)]">还没有记录。</p>;
   }
 
   return (
@@ -266,21 +266,24 @@ function InteractiveStatePanel({
   return (
     <PaperPanel className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-serif text-xl font-black text-[var(--ink)]">互动状态</h3>
-        <BookBadge tone="warning">MVP</BookBadge>
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">故事状态</h3>
+        <BookBadge tone="warning">随章节生长</BookBadge>
       </div>
       {hasInteractiveState(interactiveState) && interactiveState ? (
         <div className="mt-4 grid gap-4">
+          <p className="text-sm leading-6 text-[var(--muted)]">
+            下一章生成会读取这些状态，让选择留下痕迹。
+          </p>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">角色关系</p>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">人物羁绊</p>
             <StateValueGrid items={Object.entries(interactiveState.relationships)} />
           </div>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">风险计量</p>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">压力与风险</p>
             <StateValueGrid items={Object.entries(interactiveState.meters)} />
           </div>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与路线</p>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与倾向</p>
             <StateValueGrid
               items={[
                 ...Object.entries(interactiveState.clues),
@@ -291,7 +294,7 @@ function InteractiveStatePanel({
         </div>
       ) : (
         <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-          保存章末抉择后，这里会记录关系、风险、线索和路线倾向。
+          做出命运分歧后，这里会沉淀关系、压力、线索和故事倾向。
         </p>
       )}
     </PaperPanel>
@@ -308,12 +311,15 @@ function ProjectBookHeader({
   projectMode: ProjectMode;
 }) {
   const modeTone = getProjectModeTone(projectMode);
+  const isInteractive = projectMode === "interactive";
 
   return (
     <section className="project-workbench-shell grid gap-6 py-8 lg:grid-cols-[minmax(0,1fr)_280px]">
       <div>
         <div className="flex flex-wrap items-center gap-3">
-          <StatusBookmark tone="gold">Book Workbench</StatusBookmark>
+          <StatusBookmark tone="gold">
+            {isInteractive ? "Story Theater" : "Book Workbench"}
+          </StatusBookmark>
           <BookBadge tone={modeTone}>{PROJECT_MODE_LABELS[projectMode]}</BookBadge>
         </div>
         <h1 className="mt-8 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
@@ -322,18 +328,25 @@ function ProjectBookHeader({
         <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
           {project.description || "这本书暂未填写简介。"}
         </p>
+        {isInteractive ? (
+          <p className="mt-3 max-w-3xl rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.7)] px-3 py-2 text-sm leading-7 text-[var(--muted)]">
+            阅读章节后做出选择；下一章会沿用上一章选择和当前故事状态。
+          </p>
+        ) : null}
         <div className="mt-6 flex flex-wrap gap-3">
           <Link className="button-secondary" href="/dashboard">
             返回我的书架
           </Link>
           <Link className="button-secondary" href="/account/credits">
-            点数钱包
+            {isInteractive ? "星火补给" : "点数钱包"}
           </Link>
         </div>
       </div>
 
       <PaperPanel className="p-5">
-        <p className="text-sm font-black uppercase text-[var(--gold-strong)]">Project Desk</p>
+        <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+          {isInteractive ? "Theater Desk" : "Project Desk"}
+        </p>
         <div className="mt-4 grid gap-4">
           <div>
             <p className="text-xs font-black text-[var(--muted)]">作品状态</p>
@@ -349,7 +362,11 @@ function ProjectBookHeader({
           </div>
           <div>
             <p className="text-xs font-black text-[var(--muted)]">当前余额</p>
-            <CreditBadge balance={creditBalance} className="mt-2" label="点数" />
+            <CreditBadge
+              balance={creditBalance}
+              className="mt-2"
+              label={isInteractive ? "星火" : "点数"}
+            />
           </div>
         </div>
       </PaperPanel>
@@ -477,7 +494,9 @@ export function ProjectWorkbenchLayout({
       <section className="project-workbench-shell project-workbench-grid">
         <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
-            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">Book Index</p>
+            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+              {projectMode === "interactive" ? "Story Index" : "Book Index"}
+            </p>
             <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">作品目录</h2>
             <div className="mt-4 grid gap-3">
               <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
@@ -551,15 +570,19 @@ export function ProjectWorkbenchLayout({
           <DirectorConsole
             collapsedLabel="展开导演台"
             defaultOpen
-            eyebrow="AI Director"
-            title="AI 导演台"
+            eyebrow={projectMode === "interactive" ? "Story Director" : "AI Director"}
+            title={projectMode === "interactive" ? "故事导演台" : "AI 导演台"}
           >
             <div className="mb-4 grid gap-3">
               <p className="text-sm leading-7 text-[var(--muted)]">
-                生成设定、故事圣经、大纲、章节正文和正式稿确认仍使用原有入口；收起导演台后，
-                中央书页会保持完整阅读宽度。
+                {projectMode === "interactive"
+                  ? "设定、故事圣经、大纲与章节入口仍在这里；进入下一章前，会沿用上一章选择和当前故事状态。"
+                  : "生成设定、故事圣经、大纲、章节正文和正式稿确认仍使用原有入口；收起导演台后，中央书页会保持完整阅读宽度。"}
               </p>
-              <CreditBadge balance={creditBalance} label="当前点数" />
+              <CreditBadge
+                balance={creditBalance}
+                label={projectMode === "interactive" ? "当前星火" : "当前点数"}
+              />
             </div>
             <div className="grid gap-5">{directorSlot}</div>
           </DirectorConsole>

@@ -15,7 +15,7 @@ export const PROJECT_MODE_OPTIONS: Array<{
   {
     value: "interactive",
     label: "互动剧情模式",
-    description: "作为独立产品分支预留，后续支持章节选择、状态变化和路线图。",
+    description: "读完章节后做出选择，沉淀状态变化，并让下一章沿用这些互动结果。",
   },
 ];
 
