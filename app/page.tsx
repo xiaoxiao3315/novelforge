@@ -23,8 +23,8 @@ const modes = [
     title: "互动剧情模式",
     spine: "INTERACTIVE",
     badge: "实验分支",
-    description: "适合章末选择、剧情分支和读者干预，让小说像一条可以被导演的路线图。",
-    points: ["章末选择", "剧情路线", "互动结果沉淀"],
+    description: "适合读完章节后做选择，让关系、线索和风险在下一章继续发酵。",
+    points: ["命运分歧", "状态变化", "互动结果沉淀"],
   },
 ];
 
@@ -47,7 +47,7 @@ const features = [
   },
   {
     title: "版本与正式稿",
-    description: "多次生成保留版本，满意后再设为正式稿。",
+    description: "多次生成保留版本，满意后再确认正式稿。",
   },
   {
     title: "点数系统",
@@ -61,7 +61,7 @@ const creationSteps = [
   "搭建圣经",
   "展开大纲",
   "导演章节",
-  "确认正式稿",
+  "确认文本",
 ];
 
 export default async function HomePage() {
@@ -118,7 +118,7 @@ export default async function HomePage() {
           <div className="grid gap-4 rounded-lg border border-[var(--line-strong)] bg-[var(--paper-deep)] p-4 shadow-[var(--shadow-book)] md:grid-cols-[1fr_230px]">
             <ReaderPage
               className="max-w-none"
-              footer={<span>Draft v3 / 可设为正式稿</span>}
+              footer={<span>Draft v3 / 可确认正式稿</span>}
               title={
                 <div className="flex items-center justify-between gap-3">
                   <span>第一章 雾城来信</span>
@@ -152,7 +152,7 @@ export default async function HomePage() {
                   <p className="font-black text-[var(--ink)]">必须出现</p>
                   <p className="mt-1 text-[var(--muted)]">旧书店、金色小字、失控的街灯。</p>
                 </div>
-                <BookBadge tone="warning">生成正文 · 消耗点数</BookBadge>
+                <BookBadge tone="warning">进入本章 · 消耗星火</BookBadge>
               </div>
             </DirectorConsole>
           </div>
