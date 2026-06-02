@@ -2,6 +2,8 @@ import {
   buildStoryConfigPromptLines,
   type StoryConfigPromptData,
 } from "@/data/plot-filters";
+import type { ChapterWritingPlan } from "@/lib/quality/types";
+import { normalizeChapterWritingPlan } from "@/lib/quality/validators";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 import {
   formatSelectedChapterDecision,
@@ -37,10 +39,12 @@ export type ChapterDraftQuality = {
   rewritePolicy?: string;
   rewriteScoreThreshold?: number;
   promptVersions?: {
+    plan?: string;
     critique?: string;
     rewrite?: string;
   };
   steps?: Record<string, string>;
+  plan?: ChapterWritingPlan;
 };
 
 export type ChapterDraft = {
@@ -102,6 +106,7 @@ export type ChapterPromptInput = {
   previousDecision?: ChapterDecision | null;
   currentDecision?: ChapterDecision | null;
   interactiveState?: InteractiveStoryState | null;
+  chapterPlan?: ChapterWritingPlan | null;
   wordTarget: number;
 };
 
@@ -179,6 +184,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
   const rewriteScoreThreshold = normalizeScore(value.rewriteScoreThreshold);
   const promptVersions = normalizeStringRecord(value.promptVersions);
   const steps = normalizeStringRecord(value.steps);
+  const plan = normalizeChapterWritingPlan(value.plan);
   const quality: ChapterDraftQuality = {
     ...(mode ? { mode } : {}),
     ...(status ? { status } : {}),
@@ -197,6 +203,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
     ...(rewriteScoreThreshold !== null ? { rewriteScoreThreshold } : {}),
     ...(promptVersions ? { promptVersions } : {}),
     ...(steps ? { steps } : {}),
+    ...(plan ? { plan } : {}),
   };
 
   return Object.keys(quality).length > 0 ? quality : null;
@@ -479,6 +486,31 @@ function formatChapterIntervention(intervention: ChapterIntervention) {
   ].join("\n");
 }
 
+function formatChapterWritingPlan(plan: ChapterWritingPlan) {
+  return [
+    `- chapterGoal: ${plan.chapterGoal}`,
+    `- coreConflict: ${plan.coreConflict}`,
+    `- emotionalArc: ${plan.emotionalArc}`,
+    `- keyScenes: ${plan.keyScenes.join("；") || "未填写"}`,
+    `- characterBeats: ${
+      plan.characterBeats.length > 0
+        ? plan.characterBeats
+            .map(
+              (beat) =>
+                `${beat.character}（目标：${beat.goal}；变化：${beat.emotionalChange}；声线：${beat.dialogueTone}）`,
+            )
+            .join("；")
+        : "未填写"
+    }`,
+    `- suspenseAndHooks: ${plan.suspenseAndHooks.join("；") || "未填写"}`,
+    `- mustInclude: ${plan.mustInclude.join("；") || "未填写"}`,
+    `- mustAvoid: ${plan.mustAvoid.join("；") || "未填写"}`,
+    `- pacingPlan: ${plan.pacingPlan.join(" -> ") || "未填写"}`,
+    `- endingHook: ${plan.endingHook}`,
+    `- continuityNotes: ${plan.continuityNotes.join("；") || "未填写"}`,
+  ].join("\n");
+}
+
 export function buildChapterPrompt(input: ChapterPromptInput) {
   return [
     "你是严谨的中文长篇网文单章正文作者。请基于已保存的项目设定、故事圣经、角色卡、第一卷信息、当前章节大纲和前文信息，只生成当前一章正文。",
@@ -555,6 +587,14 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "",
     "本章导演指令 / 互动干预：",
     formatChapterIntervention(input.intervention),
+    ...(input.chapterPlan
+      ? [
+          "",
+          "高质量章节写作计划（仅 quality 模式存在）：",
+          "正文必须明显执行以下章节目标、核心冲突、情绪弧、关键场景、角色节拍和结尾钩子；但计划不得覆盖 story_bible、characters、前文摘要、互动状态和当前章节大纲。",
+          formatChapterWritingPlan(input.chapterPlan),
+        ]
+      : []),
     "",
     "当前互动状态（仅 interactive 模式存在）：",
     formatInteractiveStoryState(input.interactiveState),

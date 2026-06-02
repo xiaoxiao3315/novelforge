@@ -3,6 +3,7 @@ import {
   type ChapterQualityCritique,
   type ChapterQualityScoreKey,
   type ChapterQualityScores,
+  type ChapterWritingPlan,
 } from "@/lib/quality/types";
 
 export const CHAPTER_QUALITY_SCORE_MIN = 0;
@@ -19,8 +20,39 @@ const critiqueArrayFields = [
 
 type CritiqueArrayField = (typeof critiqueArrayFields)[number];
 
+const chapterPlanStringFields = [
+  "chapterGoal",
+  "coreConflict",
+  "emotionalArc",
+  "endingHook",
+] as const;
+
+const chapterPlanArrayFields = [
+  "keyScenes",
+  "suspenseAndHooks",
+  "mustInclude",
+  "mustAvoid",
+  "pacingPlan",
+  "continuityNotes",
+] as const;
+
+const chapterPlanBeatFields = [
+  "character",
+  "goal",
+  "emotionalChange",
+  "dialogueTone",
+] as const;
+
+type ChapterPlanStringField = (typeof chapterPlanStringFields)[number];
+type ChapterPlanArrayField = (typeof chapterPlanArrayFields)[number];
+type ChapterPlanBeatField = (typeof chapterPlanBeatFields)[number];
+
 type ValidationResult =
   | { ok: true; critique: ChapterQualityCritique }
+  | { ok: false; error: string };
+
+type ChapterPlanValidationResult =
+  | { ok: true; plan: ChapterWritingPlan }
   | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -76,7 +108,7 @@ function readScores(value: unknown) {
   return { ok: true as const, scores };
 }
 
-function readStringArray(source: Record<string, unknown>, key: CritiqueArrayField) {
+function readStringArray(source: Record<string, unknown>, key: string, maxItems = 12) {
   const value = source[key];
 
   if (!Array.isArray(value)) {
@@ -97,7 +129,7 @@ function readStringArray(source: Record<string, unknown>, key: CritiqueArrayFiel
     }
   }
 
-  return { ok: true as const, items: items.slice(0, 12) };
+  return { ok: true as const, items: items.slice(0, maxItems) };
 }
 
 export function validateChapterQualityCritique(value: unknown): ValidationResult {
@@ -161,4 +193,133 @@ export function normalizeChapterQualityCritique(value: unknown) {
 
 export function isChapterQualityCritique(value: unknown): value is ChapterQualityCritique {
   return validateChapterQualityCritique(value).ok;
+}
+
+function readRequiredPlanString(source: Record<string, unknown>, key: ChapterPlanStringField) {
+  const value = source[key];
+
+  if (typeof value !== "string") {
+    return { ok: false as const, error: `${key} must be a string.` };
+  }
+
+  const text = cleanText(value, 800);
+
+  if (!text) {
+    return { ok: false as const, error: `${key} cannot be empty.` };
+  }
+
+  return { ok: true as const, text };
+}
+
+function readCharacterBeats(source: Record<string, unknown>) {
+  const value = source.characterBeats;
+
+  if (!Array.isArray(value)) {
+    return { ok: false as const, error: "characterBeats must be an object array." };
+  }
+
+  const beats: ChapterWritingPlan["characterBeats"] = [];
+
+  for (const item of value) {
+    if (!isRecord(item)) {
+      return { ok: false as const, error: "characterBeats can only contain objects." };
+    }
+
+    const beat = {} as Record<ChapterPlanBeatField, string>;
+
+    for (const key of chapterPlanBeatFields) {
+      const fieldValue = item[key];
+
+      if (typeof fieldValue !== "string") {
+        return { ok: false as const, error: `characterBeats.${key} must be a string.` };
+      }
+
+      beat[key] = cleanText(fieldValue, 500);
+    }
+
+    if (Object.values(beat).some(Boolean)) {
+      beats.push({
+        character: beat.character,
+        goal: beat.goal,
+        emotionalChange: beat.emotionalChange,
+        dialogueTone: beat.dialogueTone,
+      });
+    }
+  }
+
+  return { ok: true as const, beats: beats.slice(0, 12) };
+}
+
+export function validateChapterWritingPlan(value: unknown): ChapterPlanValidationResult {
+  if (!isRecord(value)) {
+    return { ok: false, error: "chapter plan must be a JSON object." };
+  }
+
+  const strings = {} as Record<ChapterPlanStringField, string>;
+
+  for (const key of chapterPlanStringFields) {
+    if (!(key in value)) {
+      return { ok: false, error: `chapter plan missing field: ${key}.` };
+    }
+
+    const result = readRequiredPlanString(value, key);
+
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    strings[key] = result.text;
+  }
+
+  const arrays = {} as Record<ChapterPlanArrayField, string[]>;
+
+  for (const key of chapterPlanArrayFields) {
+    if (!(key in value)) {
+      return { ok: false, error: `chapter plan missing field: ${key}.` };
+    }
+
+    const result = readStringArray(value, key, 16);
+
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    arrays[key] = result.items;
+  }
+
+  if (!("characterBeats" in value)) {
+    return { ok: false, error: "chapter plan missing field: characterBeats." };
+  }
+
+  const beats = readCharacterBeats(value);
+
+  if (!beats.ok) {
+    return { ok: false, error: beats.error };
+  }
+
+  return {
+    ok: true,
+    plan: {
+      chapterGoal: strings.chapterGoal,
+      coreConflict: strings.coreConflict,
+      emotionalArc: strings.emotionalArc,
+      keyScenes: arrays.keyScenes,
+      characterBeats: beats.beats,
+      suspenseAndHooks: arrays.suspenseAndHooks,
+      mustInclude: arrays.mustInclude,
+      mustAvoid: arrays.mustAvoid,
+      pacingPlan: arrays.pacingPlan,
+      endingHook: strings.endingHook,
+      continuityNotes: arrays.continuityNotes,
+    },
+  };
+}
+
+export function normalizeChapterWritingPlan(value: unknown) {
+  const result = validateChapterWritingPlan(value);
+  return result.ok ? result.plan : null;
+}
+
+export function isChapterWritingPlan(value: unknown): value is ChapterWritingPlan {
+  return validateChapterWritingPlan(value).ok;
 }

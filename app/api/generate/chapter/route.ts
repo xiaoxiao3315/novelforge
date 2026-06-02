@@ -13,7 +13,7 @@ import {
   type ChapterQualityPipelineResult,
   type QualityPipelineModel,
 } from "@/lib/quality/pipeline";
-import type { ChapterQualityPromptContext } from "@/lib/quality/types";
+import type { ChapterQualityPromptContext, ChapterWritingPlan } from "@/lib/quality/types";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -53,6 +53,7 @@ import {
   buildChapterCritiquePrompt,
   CHAPTER_CRITIQUE_SYSTEM_PROMPT,
 } from "@/prompts/chapter-critique";
+import { buildChapterPlanPrompt, CHAPTER_PLAN_SYSTEM_PROMPT } from "@/prompts/chapter-plan";
 import {
   buildChapterRewritePrompt,
   CHAPTER_REWRITE_SYSTEM_PROMPT,
@@ -135,6 +136,8 @@ const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_PLAN_MAX_TOKENS = 2600;
+const CHAPTER_QUALITY_PLAN_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS = 2600;
 const CHAPTER_QUALITY_CRITIQUE_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_REWRITE_MAX_TOKENS = 7000;
@@ -185,6 +188,7 @@ type ChapterGenerationQualityMode = "normal" | "quality";
 type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
   status: ChapterQualityPipelineResult["status"];
+  plan?: ChapterWritingPlan;
   critique: {
     overallScore: number;
     scores: NonNullable<ChapterQualityPipelineResult["critique"]>["scores"];
@@ -557,10 +561,27 @@ function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPr
 
 function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
   return {
-    async generateDraft() {
+    async generatePlan(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_PLAN_SYSTEM_PROMPT,
+        userPrompt: buildChapterPlanPrompt(input),
+        maxTokens: CHAPTER_QUALITY_PLAN_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_PLAN_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek chapter plan response is empty.");
+      }
+
+      return parseJsonObject(result.outputText);
+    },
+    async generateDraft(input) {
       const result = await generateDeepSeekText({
         systemPrompt: CHAPTER_SYSTEM_PROMPT,
-        userPrompt: buildChapterPrompt(promptInput),
+        userPrompt: buildChapterPrompt({
+          ...promptInput,
+          chapterPlan: input.chapterPlan ?? null,
+        }),
         maxTokens: CHAPTER_MAX_TOKENS,
         temperature: CHAPTER_TEMPERATURE,
       });
@@ -604,6 +625,7 @@ function buildQualityMetadata(
   return {
     mode: pipelineResult.metadata.mode,
     status: pipelineResult.status,
+    ...(pipelineResult.plan ? { plan: pipelineResult.plan } : {}),
     critique: {
       overallScore: pipelineResult.critique.overallScore,
       scores: pipelineResult.critique.scores,
@@ -616,11 +638,30 @@ function buildQualityMetadata(
   };
 }
 
+function summarizeChapterPlan(plan: ChapterWritingPlan | undefined) {
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    chapterGoal: plan.chapterGoal,
+    coreConflict: plan.coreConflict,
+    emotionalArc: plan.emotionalArc,
+    endingHook: plan.endingHook,
+    keySceneCount: plan.keyScenes.length,
+    characterBeatCount: plan.characterBeats.length,
+    suspenseAndHooks: plan.suspenseAndHooks.slice(0, 3),
+    mustAvoid: plan.mustAvoid.slice(0, 3),
+    continuityNotes: plan.continuityNotes.slice(0, 3),
+  };
+}
+
 function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineResult) {
   return {
     status: pipelineResult.status,
     steps: pipelineResult.steps,
     errors: pipelineResult.errors,
+    plan: summarizeChapterPlan(pipelineResult.plan),
     critique: pipelineResult.critique
       ? {
           overallScore: pipelineResult.critique.overallScore,
@@ -989,6 +1030,7 @@ export async function POST(request: Request) {
         draftSource: "generate",
         rewritePolicy: "score-threshold",
         rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
+        enablePlanning: true,
       },
       createQualityPipelineModel(promptInput),
     );

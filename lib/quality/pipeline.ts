@@ -1,10 +1,16 @@
 import type {
+  ChapterPlanInput,
   ChapterCritiqueInput,
   ChapterQualityCritique,
   ChapterQualityPromptContext,
   ChapterRewriteInput,
+  ChapterWritingPlan,
 } from "@/lib/quality/types";
-import { normalizeChapterQualityCritique } from "@/lib/quality/validators";
+import {
+  normalizeChapterQualityCritique,
+  normalizeChapterWritingPlan,
+} from "@/lib/quality/validators";
+import { CHAPTER_PLAN_PROMPT_VERSION } from "@/prompts/chapter-plan";
 import { CHAPTER_CRITIQUE_PROMPT_VERSION } from "@/prompts/chapter-critique";
 import { CHAPTER_REWRITE_PROMPT_VERSION } from "@/prompts/chapter-rewrite";
 
@@ -13,15 +19,17 @@ export const DEFAULT_REWRITE_SCORE_THRESHOLD = 82;
 
 export type ChapterQualityDraftSource = "generate" | "existing";
 export type ChapterQualityRewritePolicy = "always" | "score-threshold" | "never";
-export type ChapterQualityPipelineStep = "draft" | "critique" | "rewrite";
+export type ChapterQualityPipelineStep = "plan" | "draft" | "critique" | "rewrite";
 export type ChapterQualityPipelineStepStatus = "skipped" | "success" | "failed";
 export type ChapterQualityPipelineStatus = "success" | "failed";
 
 export type ChapterQualityDraftInput = {
   storyContext: ChapterQualityPromptContext;
+  chapterPlan?: ChapterWritingPlan | null;
 };
 
 export type QualityPipelineModel = {
+  generatePlan?(input: ChapterPlanInput): Promise<unknown>;
   generateDraft(input: ChapterQualityDraftInput): Promise<string>;
   generateCritique(input: ChapterCritiqueInput): Promise<unknown>;
   generateRewrite(input: ChapterRewriteInput): Promise<string>;
@@ -33,10 +41,12 @@ export type ChapterQualityPipelineInput = {
   existingDraft?: string;
   rewritePolicy?: ChapterQualityRewritePolicy;
   rewriteScoreThreshold?: number;
+  enablePlanning?: boolean;
 };
 
 export type ChapterQualityPipelineResult = {
   status: ChapterQualityPipelineStatus;
+  plan?: ChapterWritingPlan;
   draft?: string;
   critique?: ChapterQualityCritique;
   rewrittenDraft?: string;
@@ -48,6 +58,7 @@ export type ChapterQualityPipelineResult = {
   }>;
   metadata: {
     promptVersions: {
+      plan?: string;
       critique: string;
       rewrite: string;
     };
@@ -75,14 +86,17 @@ function createInitialResult({
   draftSource,
   rewritePolicy,
   rewriteScoreThreshold,
+  enablePlanning,
 }: {
   draftSource: ChapterQualityDraftSource;
   rewritePolicy: ChapterQualityRewritePolicy;
   rewriteScoreThreshold: number;
+  enablePlanning: boolean;
 }): ChapterQualityPipelineResult {
   return {
     status: "failed",
     steps: {
+      plan: "skipped",
       draft: "skipped",
       critique: "skipped",
       rewrite: "skipped",
@@ -90,6 +104,7 @@ function createInitialResult({
     errors: [],
     metadata: {
       promptVersions: {
+        ...(enablePlanning ? { plan: CHAPTER_PLAN_PROMPT_VERSION } : {}),
         critique: CHAPTER_CRITIQUE_PROMPT_VERSION,
         rewrite: CHAPTER_REWRITE_PROMPT_VERSION,
       },
@@ -132,11 +147,55 @@ export async function runChapterQualityPipeline(
     typeof input.rewriteScoreThreshold === "number"
       ? input.rewriteScoreThreshold
       : DEFAULT_REWRITE_SCORE_THRESHOLD;
+  const enablePlanning = input.enablePlanning ?? false;
   const result = createInitialResult({
     draftSource,
     rewritePolicy,
     rewriteScoreThreshold,
+    enablePlanning,
   });
+
+  let chapterPlan: ChapterWritingPlan | null = null;
+
+  if (enablePlanning) {
+    if (!model.generatePlan) {
+      result.steps.plan = "failed";
+      result.errors.push({
+        step: "plan",
+        message: "generatePlan callback is required when planning is enabled.",
+      });
+      return result;
+    }
+
+    try {
+      const planOutput = await model.generatePlan({ storyContext: input.storyContext });
+      const normalizedPlan = normalizeChapterWritingPlan(planOutput);
+
+      if (!normalizedPlan) {
+        result.steps.plan = "failed";
+        result.errors.push({
+          step: "plan",
+          message: "chapter plan output failed validation.",
+        });
+        return result;
+      }
+
+      chapterPlan = normalizedPlan;
+      result.plan = normalizedPlan;
+      result.steps.plan = "success";
+    } catch (error) {
+      result.steps.plan = "failed";
+      result.errors.push({ step: "plan", message: getErrorMessage(error) });
+      return result;
+    }
+  }
+
+  const storyContext = chapterPlan
+    ? {
+        ...input.storyContext,
+        chapterPlan,
+      }
+    : input.storyContext;
 
   let draft = "";
 
@@ -158,7 +217,8 @@ export async function runChapterQualityPipeline(
     try {
       draft = cleanDraft(
         await model.generateDraft({
-          storyContext: input.storyContext,
+          storyContext,
+          chapterPlan,
         }),
       );
     } catch (error) {
@@ -182,7 +242,7 @@ export async function runChapterQualityPipeline(
   try {
     const critiqueOutput = await model.generateCritique({
       draft,
-      storyContext: input.storyContext,
+      storyContext,
     });
     const normalizedCritique = normalizeChapterQualityCritique(critiqueOutput);
 
@@ -217,7 +277,7 @@ export async function runChapterQualityPipeline(
       await model.generateRewrite({
         originalDraft: draft,
         critique,
-        storyContext: input.storyContext,
+        storyContext,
       }),
     );
 

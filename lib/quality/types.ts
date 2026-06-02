@@ -26,6 +26,25 @@ export type ChapterQualityCritique = {
 
 export type ChapterQualityMode = "standard" | "quality";
 
+export type ChapterWritingPlan = {
+  chapterGoal: string;
+  coreConflict: string;
+  emotionalArc: string;
+  keyScenes: string[];
+  characterBeats: Array<{
+    character: string;
+    goal: string;
+    emotionalChange: string;
+    dialogueTone: string;
+  }>;
+  suspenseAndHooks: string[];
+  mustInclude: string[];
+  mustAvoid: string[];
+  pacingPlan: string[];
+  endingHook: string;
+  continuityNotes: string[];
+};
+
 export type ChapterQualityPromptContext = {
   storyConfig: unknown;
   storyConcept: unknown;
@@ -37,6 +56,11 @@ export type ChapterQualityPromptContext = {
   directorInstruction?: unknown;
   interactiveDecision?: unknown;
   interactiveState?: unknown;
+  chapterPlan?: ChapterWritingPlan | null;
+};
+
+export type ChapterPlanInput = {
+  storyContext: ChapterQualityPromptContext;
 };
 
 export type ChapterCritiqueInput = {
