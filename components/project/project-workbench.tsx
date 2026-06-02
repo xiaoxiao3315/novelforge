@@ -225,14 +225,20 @@ function hasInteractiveState(interactiveState: InteractiveStoryState | null) {
 }
 
 function StateValueGrid({
+  emptyText = "还没有记录。",
   items,
   valueSuffix = "",
 }: {
+  emptyText?: string;
   items: Array<[string, boolean | number | string]>;
   valueSuffix?: string;
 }) {
   if (items.length === 0) {
-    return <p className="text-sm leading-6 text-[var(--muted)]">还没有记录。</p>;
+    return (
+      <p className="rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.58)] px-3 py-2 text-sm leading-6 text-[var(--muted)]">
+        {emptyText}
+      </p>
+    );
   }
 
   return (
@@ -275,28 +281,102 @@ function InteractiveStatePanel({
             下一章生成会读取这些状态，让选择留下痕迹。
           </p>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">人物羁绊</p>
-            <StateValueGrid items={Object.entries(interactiveState.relationships)} />
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">羁绊变化</p>
+            <StateValueGrid
+              emptyText="还没有角色羁绊被命运改写。"
+              items={Object.entries(interactiveState.relationships)}
+            />
           </div>
           <div>
             <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">压力与风险</p>
-            <StateValueGrid items={Object.entries(interactiveState.meters)} />
+            <StateValueGrid
+              emptyText="压力和风险暂时平稳。"
+              items={Object.entries(interactiveState.meters)}
+            />
           </div>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与倾向</p>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">故事标记</p>
             <StateValueGrid
-              items={[
-                ...Object.entries(interactiveState.clues),
-                ...Object.entries(interactiveState.routeTendency),
-              ]}
+              emptyText="还没有故事标记被点亮。"
+              items={Object.entries(interactiveState.flags)}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">被点亮的线索</p>
+            <StateValueGrid
+              emptyText="还没有线索被点亮。"
+              items={Object.entries(interactiveState.clues)}
+            />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">命运倾向</p>
+            <StateValueGrid
+              emptyText="命运倾向还没有成形。"
+              items={Object.entries(interactiveState.routeTendency)}
             />
           </div>
         </div>
       ) : (
         <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-          做出命运分歧后，这里会沉淀关系、压力、线索和故事倾向。
+          你的故事状态还没有被命运改变。做出选择后，这里会沉淀关系、压力、线索和命运倾向。
         </p>
       )}
+    </PaperPanel>
+  );
+}
+
+function InteractiveFlowHint({ chapter }: { chapter: WorkbenchChapter | null }) {
+  const steps = [
+    {
+      active: Boolean(chapter),
+      label: "阅读本章",
+      note: chapter ? `当前正在读第 ${chapter.chapterNumber} 章。` : "先生成章节大纲。",
+    },
+    {
+      active: Boolean(chapter?.draft?.body || chapter?.official?.body),
+      label: "做出选择",
+      note: "读完后会出现命运分歧。",
+    },
+    {
+      active: Boolean(chapter?.decision?.selectedOptionId || chapter?.decision?.customChoice),
+      label: "命运改变",
+      note: "选择会改写关系、风险和线索。",
+    },
+    {
+      active: Boolean(chapter?.decision?.selectedOptionId || chapter?.decision?.customChoice),
+      label: "继续下一章",
+      note: "下一章会沿用这条命运。",
+    },
+  ];
+
+  return (
+    <PaperPanel className="p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-black uppercase text-[var(--gold-strong)]">Story Flow</p>
+          <h3 className="mt-1 font-serif text-xl font-black text-[var(--ink)]">
+            读 → 选 → 影响 → 继续
+          </h3>
+        </div>
+        {chapter ? <BookBadge tone="warning">当前正在阅读</BookBadge> : null}
+      </div>
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        {steps.map((step, index) => (
+          <div
+            className={`rounded-md border px-3 py-3 ${
+              step.active
+                ? "border-[var(--gold)] bg-[rgba(255,244,220,0.9)]"
+                : "border-[var(--line)] bg-[rgba(255,248,234,0.58)]"
+            }`}
+            key={step.label}
+          >
+            <p className="text-xs font-black text-[var(--gold-strong)]">
+              {index + 1}. {step.label}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{step.note}</p>
+          </div>
+        ))}
+      </div>
     </PaperPanel>
   );
 }
@@ -392,6 +472,7 @@ function ChapterReaderPreview({
 
   return (
     <div className="grid gap-5" id="chapter-reader">
+      {projectMode === "interactive" ? <InteractiveFlowHint chapter={chapter} /> : null}
       <ReaderPage
         className="max-w-none"
         footer={
@@ -410,9 +491,14 @@ function ChapterReaderPreview({
                 {chapter ? `第 ${chapter.chapterNumber} 章 ${chapter.title}` : "等待章节大纲"}
               </h2>
             </div>
-            <BookBadge tone={chapter?.official ? "success" : chapter?.draft ? "gold" : "paper"}>
-              {chapter ? getChapterStatus(chapter) : "未生成"}
-            </BookBadge>
+            <div className="flex flex-wrap items-center gap-2">
+              {projectMode === "interactive" && chapter ? (
+                <BookBadge tone="warning">当前正在阅读</BookBadge>
+              ) : null}
+              <BookBadge tone={chapter?.official ? "success" : chapter?.draft ? "gold" : "paper"}>
+                {chapter ? getChapterStatus(chapter) : "未生成"}
+              </BookBadge>
+            </div>
           </div>
         }
       >
@@ -566,7 +652,7 @@ export function ProjectWorkbenchLayout({
           />
         </main>
 
-        <aside className="project-director-column xl:sticky xl:top-6">
+        <aside className="project-director-column xl:sticky xl:top-6" id="story-director">
           <DirectorConsole
             collapsedLabel="展开导演台"
             defaultOpen
