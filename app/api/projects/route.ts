@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
-import { isValidPlotFilterValue } from "@/data/plot-filters";
+import {
+  MARKET_FILTER_VERSION,
+  isValidMarketFilterValue,
+  isValidMarketGenreForChannel,
+  isValidSubGenreForMarketGenre,
+} from "@/data/plot-filters";
 import { isProjectMode, normalizeProjectMode } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 
 type ProjectRequestBody = {
   title?: unknown;
   description?: unknown;
+  channel?: unknown;
+  marketGenre?: unknown;
+  subGenre?: unknown;
+  tropes?: unknown;
+  protagonistArchetype?: unknown;
+  cheatPower?: unknown;
+  romanceLine?: unknown;
   theme?: unknown;
   genre?: unknown;
   background?: unknown;
@@ -25,6 +37,16 @@ function cleanText(value: unknown, maxLength: number) {
   }
 
   return value.trim().slice(0, maxLength);
+}
+
+function cleanStringArray(value: unknown, maxLength: number) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => (typeof item === "string" ? item.trim().slice(0, maxLength) : ""))
+    .filter(Boolean);
 }
 
 function validationError(message: string) {
@@ -55,6 +77,7 @@ export async function POST(request: Request) {
   const description = cleanText(body.description, 200);
   const extraIdeas = cleanText(body.extraIdeas, 1200);
   const mode = normalizeProjectMode(body.mode);
+  const tropes = cleanStringArray(body.tropes, 80);
 
   if (!title) {
     return validationError("请填写作品名。");
@@ -64,23 +87,21 @@ export async function POST(request: Request) {
     return validationError("项目模式不合法。");
   }
 
-  const requiredFilters = [
-    ["themes", body.theme],
-    ["genres", body.genre],
-    ["backgrounds", body.background],
-    ["worldSettings", body.worldSetting],
-    ["protagonists", body.protagonist],
-    ["coreConflicts", body.coreConflict],
-    ["tones", body.tone],
-    ["serialStructures", body.serialStructure],
-  ] as const;
-
-  const hasInvalidFilter = requiredFilters.some(
-    ([key, value]) => !isValidPlotFilterValue(key, value),
-  );
-
-  if (hasInvalidFilter) {
+  if (
+    !isValidMarketFilterValue("channels", body.channel) ||
+    !isValidMarketFilterValue("marketGenres", body.marketGenre) ||
+    !isValidMarketGenreForChannel(body.channel, body.marketGenre) ||
+    !isValidSubGenreForMarketGenre(body.marketGenre, body.subGenre) ||
+    !isValidMarketFilterValue("protagonistArchetypes", body.protagonistArchetype) ||
+    !isValidMarketFilterValue("cheatPowers", body.cheatPower) ||
+    !isValidMarketFilterValue("romanceLines", body.romanceLine) ||
+    !isValidMarketFilterValue("tones", body.tone)
+  ) {
     return validationError("剧情筛选器选项不合法。");
+  }
+
+  if (tropes.length > 3 || tropes.some((trope) => !isValidMarketFilterValue("tropes", trope))) {
+    return validationError("热门元素最多选择 3 个，且选项必须合法。");
   }
 
   const { data: project, error: projectError } = await supabase
@@ -102,24 +123,25 @@ export async function POST(request: Request) {
 
   const { error: configError } = await supabase.from("story_configs").insert({
     project_id: project.id,
-    theme: body.theme,
-    genre: body.genre,
-    background: body.background,
-    world_setting: body.worldSetting,
-    protagonist: body.protagonist,
-    core_conflict: body.coreConflict,
+    theme: body.channel,
+    genre: body.marketGenre,
+    background: body.subGenre,
+    world_setting: body.cheatPower,
+    protagonist: body.protagonistArchetype,
+    core_conflict: tropes.join(","),
     tone: body.tone,
-    serial_structure: body.serialStructure,
+    serial_structure: body.romanceLine,
     extra_ideas: extraIdeas || null,
     config_json: {
-      theme: body.theme,
-      genre: body.genre,
-      background: body.background,
-      worldSetting: body.worldSetting,
-      protagonist: body.protagonist,
-      coreConflict: body.coreConflict,
+      filterVersion: MARKET_FILTER_VERSION,
+      channel: body.channel,
+      marketGenre: body.marketGenre,
+      subGenre: body.subGenre,
+      tropes,
+      protagonistArchetype: body.protagonistArchetype,
+      cheatPower: body.cheatPower,
+      romanceLine: body.romanceLine,
       tone: body.tone,
-      serialStructure: body.serialStructure,
       extraIdeas,
       mode,
     },

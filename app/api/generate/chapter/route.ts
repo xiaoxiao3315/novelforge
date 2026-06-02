@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { findPlotFilterLabel } from "@/data/plot-filters";
+import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
 import {
   GENERATION_CREDIT_COSTS,
@@ -413,15 +413,7 @@ function buildPromptInput(
       description: project.description,
     },
     config: {
-      theme: findPlotFilterLabel("themes", config.theme),
-      genre: findPlotFilterLabel("genres", config.genre),
-      background: findPlotFilterLabel("backgrounds", config.background),
-      worldSetting: findPlotFilterLabel("worldSettings", config.world_setting),
-      protagonist: findPlotFilterLabel("protagonists", config.protagonist),
-      coreConflict: findPlotFilterLabel("coreConflicts", config.core_conflict),
-      tone: findPlotFilterLabel("tones", config.tone),
-      serialStructure: findPlotFilterLabel("serialStructures", config.serial_structure),
-      extraIdeas: config.extra_ideas,
+      ...buildStoryConfigPromptData(config),
     },
     concept,
     bible,

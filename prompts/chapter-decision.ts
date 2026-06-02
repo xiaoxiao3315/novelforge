@@ -1,3 +1,7 @@
+import {
+  buildStoryConfigPromptLines,
+  type StoryConfigPromptData,
+} from "@/data/plot-filters";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 import type { StoryConcept } from "@/prompts/concept";
 import type { ChapterOutline, VolumeOutline } from "@/prompts/outline";
@@ -32,17 +36,7 @@ export type ChapterDecisionPromptInput = {
     title: string;
     description: string | null;
   };
-  config: {
-    theme: string;
-    genre: string;
-    background: string;
-    worldSetting: string;
-    protagonist: string;
-    coreConflict: string;
-    tone: string;
-    serialStructure: string;
-    extraIdeas: string | null;
-  };
+  config: StoryConfigPromptData;
   concept: StoryConcept;
   bible: StoryBible;
   characters: CharacterCard[];
@@ -273,15 +267,7 @@ export function buildChapterDecisionPrompt(input: ChapterDecisionPromptInput) {
     "项目：",
     `- 标题：${input.project.title}`,
     `- 简介：${input.project.description || "未填写"}`,
-    `- 主题：${input.config.theme}`,
-    `- 类型：${input.config.genre}`,
-    `- 背景：${input.config.background}`,
-    `- 世界设定：${input.config.worldSetting}`,
-    `- 主角方向：${input.config.protagonist}`,
-    `- 核心冲突：${input.config.coreConflict}`,
-    `- 基调：${input.config.tone}`,
-    `- 连载结构：${input.config.serialStructure}`,
-    `- 补充想法：${input.config.extraIdeas || "未填写"}`,
+    ...buildStoryConfigPromptLines(input.config),
     "",
     "作品设定：",
     `- ${input.concept.logline}`,

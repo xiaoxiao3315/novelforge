@@ -8,7 +8,7 @@ import {
   type ConfigDisplayItem,
 } from "@/components/project/project-workbench";
 import { PaperPanel } from "@/components/ui/book";
-import { findPlotFilterLabel, type PlotFilterKey } from "@/data/plot-filters";
+import { buildStoryConfigDisplayItems } from "@/data/plot-filters";
 import { ensureCreditAccount } from "@/lib/credits";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
@@ -65,34 +65,8 @@ type ChapterVersionRow = {
   chapter_id: string;
 };
 
-type StoryConfigDisplayKey = Exclude<keyof StoryConfig, "config_json">;
-
-const configRows: Array<{
-  key: StoryConfigDisplayKey;
-  filterKey?: PlotFilterKey;
-  label: string;
-}> = [
-  { key: "theme", filterKey: "themes", label: "主题" },
-  { key: "genre", filterKey: "genres", label: "类型" },
-  { key: "background", filterKey: "backgrounds", label: "背景" },
-  { key: "world_setting", filterKey: "worldSettings", label: "世界设定" },
-  { key: "protagonist", filterKey: "protagonists", label: "主角" },
-  { key: "core_conflict", filterKey: "coreConflicts", label: "核心冲突" },
-  { key: "tone", filterKey: "tones", label: "基调" },
-  { key: "serial_structure", filterKey: "serialStructures", label: "连载结构" },
-];
-
 function buildConfigItems(config: StoryConfig | null): ConfigDisplayItem[] {
-  if (!config) {
-    return [];
-  }
-
-  return configRows.map((row) => ({
-    label: row.label,
-    value: row.filterKey
-      ? findPlotFilterLabel(row.filterKey, config[row.key])
-      : config[row.key] || "未填写",
-  }));
+  return buildStoryConfigDisplayItems(config);
 }
 
 export default async function ProjectDetailPage({
