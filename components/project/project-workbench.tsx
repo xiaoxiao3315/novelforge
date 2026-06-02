@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
 import {
   BookBadge,
   CreditBadge,
@@ -15,6 +16,7 @@ import type { ChapterSummary } from "@/prompts/chapter-summary";
 import type { VolumeOutline } from "@/prompts/outline";
 
 export type WorkbenchProject = {
+  id: string;
   title: string;
   description: string | null;
   status: string;
@@ -267,9 +269,13 @@ function ProjectBookHeader({
 
 function ChapterReaderPreview({
   chapter,
+  projectId,
+  projectMode,
   volume,
 }: {
   chapter: WorkbenchChapter | null;
+  projectId: string;
+  projectMode: ProjectMode;
   volume: VolumeOutline | null;
 }) {
   const reader = getReaderBody(chapter);
@@ -302,6 +308,14 @@ function ChapterReaderPreview({
         }
       >
         <div className="whitespace-pre-wrap">{reader.body}</div>
+        {projectMode === "interactive" && chapter ? (
+          <ChapterEndDecision
+            chapterId={chapter.id}
+            chapterNumber={chapter.chapterNumber}
+            initialDecision={chapter.decision ?? null}
+            projectId={projectId}
+          />
+        ) : null}
       </ReaderPage>
 
       {chapter ? (
@@ -424,7 +438,12 @@ export function ProjectWorkbenchLayout({
         </aside>
 
         <main className="project-reader-column min-w-0">
-          <ChapterReaderPreview chapter={currentChapter} volume={volume} />
+          <ChapterReaderPreview
+            chapter={currentChapter}
+            projectId={project.id}
+            projectMode={projectMode}
+            volume={volume}
+          />
         </main>
 
         <aside className="project-director-column xl:sticky xl:top-6">

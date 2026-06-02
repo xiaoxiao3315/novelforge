@@ -4,7 +4,6 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
-import type { ProjectMode } from "@/lib/projects/modes";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import {
   CHAPTER_INTERVENTION_LIMITS,
@@ -12,12 +11,6 @@ import {
   type ChapterContent,
   type ChapterIntervention,
 } from "@/prompts/chapter";
-import {
-  CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT,
-  hasSelectedChapterDecision,
-  type ChapterDecision,
-  type ChapterDecisionOptionId,
-} from "@/prompts/chapter-decision";
 import type { ChapterOutline, VolumeOutline } from "@/prompts/outline";
 
 type ChapterDisplay = ChapterContent & {
@@ -30,7 +23,6 @@ type OutlineGeneratorProps = {
   initialChapters: ChapterDisplay[];
   hasPrerequisites: boolean;
   creditBalance: number | null;
-  projectMode: ProjectMode;
 };
 
 type OutlineResponse = {
@@ -49,12 +41,6 @@ type SetOfficialResponse = {
   chapterId?: string;
   versionId?: string;
   official?: NonNullable<ChapterContent["official"]>;
-  error?: string;
-};
-
-type DecisionResponse = {
-  chapterId?: string;
-  decision?: ChapterDecision;
   error?: string;
 };
 
@@ -147,49 +133,21 @@ function getInitialInterventions(chapters: ChapterDisplay[]) {
   ) as Record<string, ChapterIntervention>;
 }
 
-function getInitialCustomChoices(chapters: ChapterDisplay[]) {
-  return Object.fromEntries(
-    chapters.map((chapter) => [chapterKey(chapter), chapter.decision?.customChoice ?? ""]),
-  ) as Record<string, string>;
-}
-
-function getInitialSelectedOptions(chapters: ChapterDisplay[]) {
-  return Object.fromEntries(
-    chapters.map((chapter) => [
-      chapterKey(chapter),
-      chapter.decision?.selectedOptionId ?? "",
-    ]),
-  ) as Record<string, ChapterDecisionOptionId | "">;
-}
-
 export function OutlineGenerator({
   projectId,
   initialVolume,
   initialChapters,
   hasPrerequisites,
   creditBalance,
-  projectMode,
 }: OutlineGeneratorProps) {
   const [volume, setVolume] = useState(initialVolume);
   const [chapters, setChapters] = useState(initialChapters);
   const [interventions, setInterventions] = useState(() =>
     getInitialInterventions(initialChapters),
   );
-  const [customChoices, setCustomChoices] = useState(() =>
-    getInitialCustomChoices(initialChapters),
-  );
-  const [selectedOptions, setSelectedOptions] = useState(() =>
-    getInitialSelectedOptions(initialChapters),
-  );
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
-  const [generatingDecisionChapterNumber, setGeneratingDecisionChapterNumber] = useState<
-    number | null
-  >(null);
-  const [savingDecisionChapterNumber, setSavingDecisionChapterNumber] = useState<number | null>(
-    null,
-  );
   const [settingOfficialChapterNumber, setSettingOfficialChapterNumber] = useState<number | null>(
     null,
   );
@@ -206,7 +164,6 @@ export function OutlineGenerator({
     creditBalance === null || hasEnoughChapterCredits
       ? ""
       : formatCreditShortfall(creditBalance, chapterCost);
-  const isInteractiveMode = projectMode === "interactive";
 
   async function generateOutline() {
     if (!hasPrerequisites) {
@@ -242,55 +199,6 @@ export function OutlineGenerator({
     setVolume(payload.volume);
     setChapters(payload.chapters);
     setInterventions(getInitialInterventions(payload.chapters));
-    setCustomChoices(getInitialCustomChoices(payload.chapters));
-    setSelectedOptions(getInitialSelectedOptions(payload.chapters));
-    router.refresh();
-  }
-
-  async function generateDecision(chapter: ChapterDisplay) {
-    if (!chapter.id) {
-      setError("当前章节还没有可生成剧情选择的章节记录。");
-      return;
-    }
-
-    setError("");
-    setGeneratingDecisionChapterNumber(chapter.chapterNumber);
-
-    const response = await fetch("/api/generate/chapter-decision", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        chapterId: chapter.id,
-        chapterNumber: chapter.chapterNumber,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as DecisionResponse | null;
-
-    setGeneratingDecisionChapterNumber(null);
-
-    if (!response.ok || !payload?.decision) {
-      setError(formatUserFacingError(payload?.error, "剧情选择生成失败，请稍后重试。"));
-      return;
-    }
-
-    setChapters((currentChapters) =>
-      currentChapters.map((currentChapter) =>
-        currentChapter.chapterNumber === chapter.chapterNumber
-          ? { ...currentChapter, decision: payload.decision }
-          : currentChapter,
-      ),
-    );
-    setSelectedOptions((currentOptions) => ({
-      ...currentOptions,
-      [chapterKey(chapter)]: payload.decision?.selectedOptionId ?? "",
-    }));
-    setCustomChoices((currentChoices) => ({
-      ...currentChoices,
-      [chapterKey(chapter)]: payload.decision?.customChoice ?? "",
-    }));
     router.refresh();
   }
 
@@ -344,67 +252,6 @@ export function OutlineGenerator({
           : currentChapter,
       ),
     );
-    router.refresh();
-  }
-
-  async function saveDecision(chapter: ChapterDisplay) {
-    if (!chapter.id) {
-      setError("当前章节还没有可保存选择的章节记录。");
-      return;
-    }
-
-    if (!chapter.decision) {
-      setError("请先生成剧情选择。");
-      return;
-    }
-
-    const selectedOptionId = selectedOptions[chapterKey(chapter)] || "";
-    const customChoice = customChoices[chapterKey(chapter)] ?? "";
-
-    if (!selectedOptionId && !customChoice.trim()) {
-      setError("请选择一个选项，或填写自定义选择。");
-      return;
-    }
-
-    setError("");
-    setSavingDecisionChapterNumber(chapter.chapterNumber);
-
-    const response = await fetch("/api/chapters/select-decision", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        chapterId: chapter.id,
-        optionId: selectedOptionId || null,
-        customChoice,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as DecisionResponse | null;
-
-    setSavingDecisionChapterNumber(null);
-
-    if (!response.ok || !payload?.decision) {
-      setError(formatUserFacingError(payload?.error, "剧情选择保存失败，请稍后重试。"));
-      return;
-    }
-
-    setChapters((currentChapters) =>
-      currentChapters.map((currentChapter) =>
-        currentChapter.chapterNumber === chapter.chapterNumber
-          ? { ...currentChapter, decision: payload.decision }
-          : currentChapter,
-      ),
-    );
-    setSelectedOptions((currentOptions) => ({
-      ...currentOptions,
-      [chapterKey(chapter)]: payload.decision?.selectedOptionId ?? "",
-    }));
-    setCustomChoices((currentChoices) => ({
-      ...currentChoices,
-      [chapterKey(chapter)]: payload.decision?.customChoice ?? "",
-    }));
     router.refresh();
   }
 
@@ -470,20 +317,6 @@ export function OutlineGenerator({
         },
       };
     });
-  }
-
-  function updateSelectedOption(chapter: ChapterDisplay, value: ChapterDecisionOptionId) {
-    setSelectedOptions((currentOptions) => ({
-      ...currentOptions,
-      [chapterKey(chapter)]: value,
-    }));
-  }
-
-  function updateCustomChoice(chapter: ChapterDisplay, value: string) {
-    setCustomChoices((currentChoices) => ({
-      ...currentChoices,
-      [chapterKey(chapter)]: value,
-    }));
   }
 
   return (
@@ -637,116 +470,6 @@ export function OutlineGenerator({
                     </div>
                   ))}
                 </div>
-
-                {isInteractiveMode ? (
-                  <div className="mt-5 border-t border-[var(--line)] pt-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                          本章剧情选择
-                        </p>
-                        <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-                          建议先选择剧情方向，再生成正文。未选择时仍可用导演指令生成。
-                        </p>
-                      </div>
-                      <button
-                        className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                        disabled={
-                          generatingDecisionChapterNumber !== null ||
-                          generatingChapterNumber !== null ||
-                          settingOfficialChapterNumber !== null ||
-                          !chapter.id
-                        }
-                        onClick={() => generateDecision(chapter)}
-                        type="button"
-                      >
-                        {generatingDecisionChapterNumber === chapter.chapterNumber
-                          ? "剧情选择生成中..."
-                          : chapter.decision
-                            ? "重新生成剧情选择"
-                            : "生成剧情选择"}
-                      </button>
-                    </div>
-
-                    {chapter.decision ? (
-                      <div className="mt-4 grid gap-3">
-                        <p className="font-bold text-[var(--ink)]">{chapter.decision.question}</p>
-                        <div className="grid gap-3 md:grid-cols-3">
-                          {chapter.decision.options.map((option) => (
-                            <label
-                              className={`rounded-md border px-3 py-3 ${
-                                selectedOptions[chapterKey(chapter)] === option.id
-                                  ? "border-[var(--accent)] bg-[#eef4f2]"
-                                  : "border-[var(--line)] bg-white"
-                              }`}
-                              key={option.id}
-                            >
-                              <span className="flex items-start gap-2">
-                                <input
-                                  checked={selectedOptions[chapterKey(chapter)] === option.id}
-                                  className="mt-1"
-                                  disabled={savingDecisionChapterNumber !== null}
-                                  name={`decision-${chapter.chapterNumber}`}
-                                  onChange={() => updateSelectedOption(chapter, option.id)}
-                                  type="radio"
-                                  value={option.id}
-                                />
-                                <span>
-                                  <span className="block font-black text-[var(--ink)]">
-                                    {option.id}. {option.label}
-                                  </span>
-                                  <span className="mt-1 block text-sm leading-6 text-[var(--muted)]">
-                                    {option.description}
-                                  </span>
-                                  <span className="mt-2 block text-xs leading-5 text-[var(--muted)]">
-                                    {option.expectedEffects.join("；")}
-                                  </span>
-                                </span>
-                              </span>
-                            </label>
-                          ))}
-                        </div>
-                        <label className="grid gap-1">
-                          <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                            自定义选择
-                          </span>
-                          <textarea
-                            className="min-h-20 resize-y rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
-                            disabled={savingDecisionChapterNumber !== null}
-                            maxLength={CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
-                            onChange={(event) =>
-                              updateCustomChoice(chapter, event.target.value)
-                            }
-                            placeholder="也可以写一个自己的剧情方向，保存后会注入正文生成。"
-                            rows={2}
-                            value={customChoices[chapterKey(chapter)] ?? ""}
-                          />
-                        </label>
-                        <div className="flex flex-wrap items-center justify-between gap-3">
-                          <p className="text-sm text-[var(--muted)]">
-                            {hasSelectedChapterDecision(chapter.decision)
-                              ? "已保存剧情选择。生成正文时会注入该方向。"
-                              : "尚未保存选择。"}
-                          </p>
-                          <button
-                            className="button-primary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={savingDecisionChapterNumber !== null}
-                            onClick={() => saveDecision(chapter)}
-                            type="button"
-                          >
-                            {savingDecisionChapterNumber === chapter.chapterNumber
-                              ? "保存中..."
-                              : "保存选择"}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-4 text-sm text-[var(--muted)]">
-                        还没有剧情选择。点击生成后会出现 3 个选项，也可以填写自定义方向。
-                      </div>
-                    )}
-                  </div>
-                ) : null}
 
                 <div className="mt-5 border-t border-[var(--line)] pt-4">
                   <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">

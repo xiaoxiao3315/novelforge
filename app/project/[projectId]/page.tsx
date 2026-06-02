@@ -222,7 +222,6 @@ export default async function ProjectDetailPage({
         initialChapters={chapters}
         initialVolume={volume}
         projectId={projectId}
-        projectMode={projectMode}
       />
     </>
   ) : (

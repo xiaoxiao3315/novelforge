@@ -404,7 +404,8 @@ function buildPromptInput(
   chapter: ChapterOutline,
   previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
   intervention: ChapterIntervention,
-  decision: ChapterPromptInput["decision"],
+  previousDecision: ChapterPromptInput["previousDecision"],
+  currentDecision: ChapterPromptInput["currentDecision"],
 ): ChapterPromptInput {
   return {
     project: {
@@ -429,7 +430,8 @@ function buildPromptInput(
     chapter,
     previousChapters,
     intervention,
-    decision,
+    previousDecision,
+    currentDecision,
     wordTarget: chapter.estimatedWords || DEFAULT_CHAPTER_WORD_TARGET,
   };
 }
@@ -687,7 +689,18 @@ export async function POST(request: Request) {
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const projectMode = getProjectModeFromConfig(config.config_json);
-  const decision =
+  const previousDecisionRow = (previousRows ?? []).find(
+    (row) => row.chapter_number === chapter.chapterNumber - 1,
+  );
+  const previousDecision =
+    projectMode === "interactive" && previousDecisionRow
+      ? normalizeChapterDecision(
+          isRecord(previousDecisionRow.content)
+            ? (previousDecisionRow.content as { decision?: unknown }).decision
+            : null,
+        )
+      : null;
+  const currentDecision =
     projectMode === "interactive"
       ? normalizeChapterDecision(
           isRecord(chapterRow.content)
@@ -706,7 +719,8 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
-    decision,
+    previousDecision,
+    currentDecision,
   );
   const logInput = {
     project: visibleProject,
@@ -718,7 +732,8 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
-    decision,
+    previousDecision,
+    currentDecision,
   };
   const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
 

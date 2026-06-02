@@ -79,7 +79,8 @@ export type ChapterPromptInput = {
   chapter: ChapterOutline;
   previousChapters: PreviousChapterContext[];
   intervention: ChapterIntervention;
-  decision?: ChapterDecision | null;
+  previousDecision?: ChapterDecision | null;
+  currentDecision?: ChapterDecision | null;
   wordTarget: number;
 };
 
@@ -396,7 +397,8 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "- 必须完成当前章节大纲中的事件、冲突、看点、伏笔和角色变化。",
     "- 不得违背 story_bible 的不可变规则、世界观、力量系统、角色卡和第一卷主线。",
     "- 本章导演指令 / 互动干预必须尽量吸收，但优先级低于 story_bible、characters、immutableRules、前文摘要和当前章节大纲。",
-    "- 如果存在已保存的互动剧情选择，正文必须明显吸收该选择；如果不存在选择，则按导演指令和章节大纲推进。",
+    "- 如果存在上一章已保存的章末抉择，正文必须明显吸收该选择；如果不存在上一章选择，则按导演指令和章节大纲推进。",
+    "- 当前章自己的章末抉择主要用于读完本章后影响下一章；如果旧数据中当前章已有保存选择，只能作为辅助参考，不得优先于上一章选择。",
     "- 如果导演指令和故事圣经或不可变规则冲突，必须遵守故事圣经，并用不冲突的方式吸收用户意图。",
     "- 结尾必须保留明确的悬念或情绪钩子，但不能直接进入下一章正文。",
     "- 文风必须符合项目 tone / genre，内容必须是中文小说正文。",
@@ -468,8 +470,11 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "本章导演指令 / 互动干预：",
     formatChapterIntervention(input.intervention),
     "",
-    "互动剧情选择：",
-    formatSelectedChapterDecision(input.decision),
+    "上一章章末抉择（优先影响当前章）：",
+    formatSelectedChapterDecision(input.previousDecision),
+    "",
+    "当前章旧有章末抉择（仅兼容旧数据，辅助参考）：",
+    formatSelectedChapterDecision(input.currentDecision),
     "",
     "现在只输出当前章中文小说正文。",
   ].join("\n");
