@@ -15,6 +15,13 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import {
+  formatInteractiveStoryState,
+  hasStoryStateChanges,
+  normalizeStoryStateChanges,
+  type InteractiveStoryState,
+  type StoryStateChanges,
+} from "@/prompts/story-state";
 
 export const CHAPTER_PROMPT_VERSION = "chapter-v1";
 export const DEFAULT_CHAPTER_WORD_TARGET = 2500;
@@ -52,6 +59,7 @@ export type ChapterContent = ChapterOutline & {
   summary?: ChapterSummary;
   official?: ChapterOfficial;
   decision?: ChapterDecision;
+  stateChanges?: StoryStateChanges;
   versionCount?: number;
 };
 
@@ -75,6 +83,7 @@ export type ChapterPromptInput = {
   intervention: ChapterIntervention;
   previousDecision?: ChapterDecision | null;
   currentDecision?: ChapterDecision | null;
+  interactiveState?: InteractiveStoryState | null;
   wordTarget: number;
 };
 
@@ -226,6 +235,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   const summary = normalizeChapterSummary(value.summary);
   const official = normalizeChapterOfficial(value.official);
   const decision = normalizeChapterDecision(value.decision);
+  const stateChanges = normalizeStoryStateChanges(value.stateChanges);
   const versionCount =
     typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
       ? Math.max(0, value.versionCount)
@@ -237,6 +247,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
     ...(summary ? { summary } : {}),
     ...(official ? { official } : {}),
     ...(decision ? { decision } : {}),
+    ...(hasStoryStateChanges(stateChanges) ? { stateChanges } : {}),
     versionCount,
   };
 }
@@ -455,6 +466,9 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "",
     "本章导演指令 / 互动干预：",
     formatChapterIntervention(input.intervention),
+    "",
+    "当前互动状态（仅 interactive 模式存在）：",
+    formatInteractiveStoryState(input.interactiveState),
     "",
     "上一章章末抉择（优先影响当前章）：",
     formatSelectedChapterDecision(input.previousDecision),

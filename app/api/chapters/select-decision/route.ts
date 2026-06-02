@@ -7,6 +7,11 @@ import {
   type ChapterDecisionOptionId,
 } from "@/prompts/chapter-decision";
 import { normalizeChapterOutlines, type ChapterOutline } from "@/prompts/outline";
+import {
+  applyStoryStateChanges,
+  buildStoryStateChanges,
+  normalizeInteractiveStoryState,
+} from "@/prompts/story-state";
 
 type SelectDecisionBody = {
   projectId?: unknown;
@@ -48,6 +53,10 @@ function cleanText(value: unknown, maxLength: number) {
   }
 
   return value.trim().slice(0, maxLength);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
@@ -108,6 +117,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<{ id: string }>();
 
   if (!project) {
@@ -118,6 +128,7 @@ export async function POST(request: Request) {
     .from("story_configs")
     .select("config_json")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfigRow>();
 
   if (!config || getProjectModeFromConfig(config.config_json) !== "interactive") {
@@ -172,10 +183,18 @@ export async function POST(request: Request) {
     customChoice,
     selectedAt: new Date().toISOString(),
   };
+  const stateChanges = buildStoryStateChanges(selectedDecision);
+  const interactiveState = applyStoryStateChanges(
+    isRecord(config.config_json)
+      ? (config.config_json as { interactiveState?: unknown }).interactiveState
+      : null,
+    stateChanges,
+  );
   const chapterContent = {
     ...(typeof chapterRow.content === "object" && chapterRow.content ? chapterRow.content : {}),
     ...chapter,
     decision: selectedDecision,
+    stateChanges,
   };
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -190,8 +209,51 @@ export async function POST(request: Request) {
     return serverError(updateError?.message || "剧情选择保存失败。");
   }
 
+  const configJson = isRecord(config.config_json) ? config.config_json : {};
+  const { error: configUpdateError } = await supabase
+    .from("story_configs")
+    .update({
+      config_json: {
+        ...configJson,
+        interactiveState: normalizeInteractiveStoryState(interactiveState),
+      },
+    })
+    .eq("project_id", project.id)
+    .eq("user_id", user.id);
+
+  if (configUpdateError) {
+    return serverError(configUpdateError.message);
+  }
+
+  const { error: logError } = await supabase.from("generation_logs").insert({
+    project_id: project.id,
+    operation: "select_decision_state_change",
+    target_type: "chapter",
+    target_id: savedChapter.id,
+    prompt_version: "story-state-rules-v1",
+    input: {
+      chapterId: savedChapter.id,
+      decision: selectedDecision,
+      previousInteractiveState: normalizeInteractiveStoryState(
+        isRecord(config.config_json)
+          ? (config.config_json as { interactiveState?: unknown }).interactiveState
+          : null,
+      ),
+    },
+    output: {
+      stateChanges,
+      interactiveState,
+    },
+  });
+
+  if (logError) {
+    return serverError(logError.message);
+  }
+
   return NextResponse.json({
     chapterId: savedChapter.id,
     decision: selectedDecision,
+    stateChanges,
+    interactiveState,
   });
 }

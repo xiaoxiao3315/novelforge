@@ -10,10 +10,17 @@ import {
   type ChapterDecision,
   type ChapterDecisionOptionId,
 } from "@/prompts/chapter-decision";
+import {
+  hasStoryStateChanges,
+  type InteractiveStoryState,
+  type StoryStateChanges,
+} from "@/prompts/story-state";
 
 type DecisionResponse = {
   chapterId?: string;
   decision?: ChapterDecision;
+  interactiveState?: InteractiveStoryState;
+  stateChanges?: StoryStateChanges;
   error?: string;
 };
 
@@ -21,16 +28,160 @@ type ChapterEndDecisionProps = {
   chapterId: string;
   chapterNumber: number;
   initialDecision?: ChapterDecision | null;
+  initialInteractiveState?: InteractiveStoryState | null;
+  initialStateChanges?: StoryStateChanges | null;
   projectId: string;
 };
+
+function formatChangeValue(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function StateChangeList({
+  items,
+  renderValue,
+}: {
+  items: Array<{ name?: string; key?: string; change?: number; value?: boolean; reason?: string; status?: string; note?: string }>;
+  renderValue?: (item: {
+    name?: string;
+    key?: string;
+    change?: number;
+    value?: boolean;
+    reason?: string;
+    status?: string;
+    note?: string;
+  }) => string;
+}) {
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="grid gap-2">
+      {items.map((item) => {
+        const title = item.name ?? item.key ?? "状态变化";
+
+        return (
+          <div
+            className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2"
+            key={`${title}-${item.change ?? item.status ?? item.value ?? ""}`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm font-bold text-[var(--ink)]">{title}</p>
+              {renderValue ? (
+                <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">
+                  {renderValue(item)}
+                </span>
+              ) : null}
+            </div>
+            {item.reason || item.note ? (
+              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+                {item.reason ?? item.note}
+              </p>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateChanges | null }) {
+  if (!stateChanges || !hasStoryStateChanges(stateChanges)) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.55)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-serif text-lg font-black text-[var(--ink)]">本章选择影响</h4>
+        <BookBadge tone="warning">已记录</BookBadge>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <div>
+          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">关系变化</p>
+          <StateChangeList
+            items={stateChanges.relationships}
+            renderValue={(item) => formatChangeValue(item.change ?? 0)}
+          />
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">风险计量</p>
+          <StateChangeList
+            items={stateChanges.meters}
+            renderValue={(item) => formatChangeValue(item.change ?? 0)}
+          />
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">标记与线索</p>
+          <StateChangeList
+            items={[...stateChanges.flags, ...stateChanges.clues]}
+            renderValue={(item) =>
+              item.status ?? (item.value === undefined ? "已记录" : item.value ? "是" : "否")
+            }
+          />
+        </div>
+        <div>
+          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">路线倾向</p>
+          <StateChangeList
+            items={stateChanges.routeTendency}
+            renderValue={(item) => formatChangeValue(item.change ?? 0)}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InteractiveStateAfterSave({
+  interactiveState,
+}: {
+  interactiveState: InteractiveStoryState | null;
+}) {
+  if (!interactiveState) {
+    return null;
+  }
+
+  const previewItems = [
+    ...Object.entries(interactiveState.relationships).map(([name, value]) => [name, value] as const),
+    ...Object.entries(interactiveState.meters).map(([name, value]) => [name, value] as const),
+    ...Object.entries(interactiveState.routeTendency).map(
+      ([name, value]) => [name, value] as const,
+    ),
+  ].slice(0, 6);
+
+  if (previewItems.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
+      <h4 className="font-serif text-lg font-black text-[var(--ink)]">当前互动状态摘要</h4>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {previewItems.map(([name, value]) => (
+          <span
+            className="rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.88)] px-2 py-1 text-xs font-bold text-[var(--ink)]"
+            key={name}
+          >
+            {name} {value}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function ChapterEndDecision({
   chapterId,
   chapterNumber,
   initialDecision,
+  initialInteractiveState,
+  initialStateChanges,
   projectId,
 }: ChapterEndDecisionProps) {
   const [decision, setDecision] = useState(initialDecision ?? null);
+  const [interactiveState, setInteractiveState] = useState(initialInteractiveState ?? null);
+  const [stateChanges, setStateChanges] = useState(initialStateChanges ?? null);
   const [selectedOptionId, setSelectedOptionId] = useState<ChapterDecisionOptionId | "">(
     initialDecision?.selectedOptionId ?? "",
   );
@@ -65,6 +216,7 @@ export function ChapterEndDecision({
     }
 
     setDecision(payload.decision);
+    setStateChanges(payload.stateChanges ?? null);
     setSelectedOptionId(payload.decision.selectedOptionId ?? "");
     setCustomChoice(payload.decision.customChoice ?? "");
     router.refresh();
@@ -106,6 +258,8 @@ export function ChapterEndDecision({
     }
 
     setDecision(payload.decision);
+    setInteractiveState(payload.interactiveState ?? interactiveState);
+    setStateChanges(payload.stateChanges ?? stateChanges);
     setSelectedOptionId(payload.decision.selectedOptionId ?? "");
     setCustomChoice(payload.decision.customChoice ?? "");
     router.refresh();
@@ -216,6 +370,8 @@ export function ChapterEndDecision({
               {isSaving ? "保存中..." : "保存选择"}
             </button>
           </div>
+          <ChapterStateChangesPanel stateChanges={stateChanges} />
+          <InteractiveStateAfterSave interactiveState={interactiveState} />
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">

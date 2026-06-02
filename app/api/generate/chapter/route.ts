@@ -40,6 +40,7 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import { normalizeInteractiveStoryState } from "@/prompts/story-state";
 
 type GenerateChapterBody = {
   projectId?: unknown;
@@ -406,6 +407,7 @@ function buildPromptInput(
   intervention: ChapterIntervention,
   previousDecision: ChapterPromptInput["previousDecision"],
   currentDecision: ChapterPromptInput["currentDecision"],
+  interactiveState: ChapterPromptInput["interactiveState"],
 ): ChapterPromptInput {
   return {
     project: {
@@ -424,6 +426,7 @@ function buildPromptInput(
     intervention,
     previousDecision,
     currentDecision,
+    interactiveState,
     wordTarget: chapter.estimatedWords || DEFAULT_CHAPTER_WORD_TARGET,
   };
 }
@@ -700,6 +703,12 @@ export async function POST(request: Request) {
             : null,
         )
       : null;
+  const interactiveState =
+    projectMode === "interactive" && isRecord(config.config_json)
+      ? normalizeInteractiveStoryState(
+          (config.config_json as { interactiveState?: unknown }).interactiveState,
+        )
+      : null;
 
   const promptInput = buildPromptInput(
     visibleProject,
@@ -713,6 +722,7 @@ export async function POST(request: Request) {
     intervention,
     previousDecision,
     currentDecision,
+    interactiveState,
   );
   const logInput = {
     project: visibleProject,
@@ -726,6 +736,7 @@ export async function POST(request: Request) {
     intervention,
     previousDecision,
     currentDecision,
+    interactiveState,
   };
   const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
 

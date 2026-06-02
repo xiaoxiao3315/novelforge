@@ -21,6 +21,7 @@ import {
 import { normalizeChapterContent, type ChapterContent } from "@/prompts/chapter";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 import { normalizeVolumeOutline, type VolumeOutline } from "@/prompts/outline";
+import { normalizeInteractiveStoryState } from "@/prompts/story-state";
 
 type StoryConfig = {
   theme: string | null;
@@ -105,6 +106,12 @@ export default async function ProjectDetailPage({
     .eq("project_id", projectId)
     .maybeSingle<StoryConfig>();
   const projectMode = getProjectModeFromConfig(config?.config_json);
+  const interactiveState =
+    projectMode === "interactive"
+      ? normalizeInteractiveStoryState(
+          (config?.config_json as { interactiveState?: unknown } | undefined)?.interactiveState,
+        )
+      : null;
 
   const { data: storyConcept } = await supabase
     .from("story_concepts")
@@ -218,6 +225,7 @@ export default async function ProjectDetailPage({
         directorSlot={directorSlot}
         extraIdeas={config?.extra_ideas ?? null}
         hasConfig={Boolean(config)}
+        interactiveState={interactiveState}
         project={project}
         projectMode={projectMode}
         volume={volume}

@@ -14,6 +14,7 @@ import { PROJECT_MODE_LABELS, type ProjectMode } from "@/lib/projects/modes";
 import type { ChapterContent } from "@/prompts/chapter";
 import type { ChapterSummary } from "@/prompts/chapter-summary";
 import type { VolumeOutline } from "@/prompts/outline";
+import type { InteractiveStoryState } from "@/prompts/story-state";
 
 export type WorkbenchProject = {
   id: string;
@@ -41,6 +42,7 @@ type ProjectWorkbenchLayoutProps = {
   directorSlot: ReactNode;
   extraIdeas: string | null;
   hasConfig: boolean;
+  interactiveState: InteractiveStoryState | null;
   project: WorkbenchProject;
   projectMode: ProjectMode;
   volume: VolumeOutline | null;
@@ -208,6 +210,94 @@ function ChapterSummaryPanel({ summary }: { summary: ChapterSummary | null }) {
   );
 }
 
+function hasInteractiveState(interactiveState: InteractiveStoryState | null) {
+  if (!interactiveState) {
+    return false;
+  }
+
+  return (
+    Object.keys(interactiveState.relationships).length > 0 ||
+    Object.keys(interactiveState.meters).length > 0 ||
+    Object.keys(interactiveState.flags).length > 0 ||
+    Object.keys(interactiveState.clues).length > 0 ||
+    Object.keys(interactiveState.routeTendency).length > 0
+  );
+}
+
+function StateValueGrid({
+  items,
+  valueSuffix = "",
+}: {
+  items: Array<[string, boolean | number | string]>;
+  valueSuffix?: string;
+}) {
+  if (items.length === 0) {
+    return <p className="text-sm leading-6 text-[var(--muted)]">暂无记录。</p>;
+  }
+
+  return (
+    <div className="grid gap-2">
+      {items.slice(0, 5).map(([name, value]) => (
+        <div
+          className="flex items-center justify-between gap-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2"
+          key={name}
+        >
+          <span className="min-w-0 truncate text-xs font-bold text-[var(--ink)]">{name}</span>
+          <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">
+            {typeof value === "boolean" ? (value ? "已触发" : "未触发") : `${value}${valueSuffix}`}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InteractiveStatePanel({
+  interactiveState,
+  projectMode,
+}: {
+  interactiveState: InteractiveStoryState | null;
+  projectMode: ProjectMode;
+}) {
+  if (projectMode !== "interactive") {
+    return null;
+  }
+
+  return (
+    <PaperPanel className="p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">互动状态</h3>
+        <BookBadge tone="warning">MVP</BookBadge>
+      </div>
+      {hasInteractiveState(interactiveState) && interactiveState ? (
+        <div className="mt-4 grid gap-4">
+          <div>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">角色关系</p>
+            <StateValueGrid items={Object.entries(interactiveState.relationships)} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">风险计量</p>
+            <StateValueGrid items={Object.entries(interactiveState.meters)} />
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与路线</p>
+            <StateValueGrid
+              items={[
+                ...Object.entries(interactiveState.clues),
+                ...Object.entries(interactiveState.routeTendency),
+              ]}
+            />
+          </div>
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          保存章末抉择后，这里会记录关系、风险、线索和路线倾向。
+        </p>
+      )}
+    </PaperPanel>
+  );
+}
+
 function ProjectBookHeader({
   creditBalance,
   project,
@@ -269,11 +359,13 @@ function ProjectBookHeader({
 
 function ChapterReaderPreview({
   chapter,
+  interactiveState,
   projectId,
   projectMode,
   volume,
 }: {
   chapter: WorkbenchChapter | null;
+  interactiveState: InteractiveStoryState | null;
   projectId: string;
   projectMode: ProjectMode;
   volume: VolumeOutline | null;
@@ -313,6 +405,8 @@ function ChapterReaderPreview({
             chapterId={chapter.id}
             chapterNumber={chapter.chapterNumber}
             initialDecision={chapter.decision ?? null}
+            initialInteractiveState={interactiveState}
+            initialStateChanges={chapter.stateChanges ?? null}
             projectId={projectId}
           />
         ) : null}
@@ -364,6 +458,7 @@ export function ProjectWorkbenchLayout({
   directorSlot,
   extraIdeas,
   hasConfig,
+  interactiveState,
   project,
   projectMode,
   volume,
@@ -408,6 +503,11 @@ export function ProjectWorkbenchLayout({
             </div>
           </PaperPanel>
 
+          <InteractiveStatePanel
+            interactiveState={interactiveState}
+            projectMode={projectMode}
+          />
+
           <PaperPanel className="p-5">
             <h3 className="font-serif text-xl font-black text-[var(--ink)]">剧情筛选器</h3>
             {hasConfig ? (
@@ -440,6 +540,7 @@ export function ProjectWorkbenchLayout({
         <main className="project-reader-column min-w-0">
           <ChapterReaderPreview
             chapter={currentChapter}
+            interactiveState={interactiveState}
             projectId={project.id}
             projectMode={projectMode}
             volume={volume}
