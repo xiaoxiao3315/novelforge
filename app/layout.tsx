@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "NovelForge / 小说工坊",
-  description: "互动小说生成工作台，用 DeepSeek 生成设定、大纲和章节正文。",
+  description: "电子书式 AI 互动小说创作工作台。",
 };
 
 export default function RootLayout({

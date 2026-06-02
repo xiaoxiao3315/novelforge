@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { CreditBadge } from "@/components/ui/book";
 
 type AppNavProps = {
   isAuthed: boolean;
@@ -8,24 +9,25 @@ type AppNavProps = {
 
 export function AppNav({ isAuthed, creditBalance }: AppNavProps) {
   return (
-    <nav className="flex flex-wrap items-center justify-between gap-4 py-4">
-      <Link href={isAuthed ? "/dashboard" : "/"} className="text-xl font-black">
-        NovelForge / 小说工坊
+    <nav className="app-nav">
+      <Link href={isAuthed ? "/dashboard" : "/"} className="app-nav-brand">
+        <span className="app-nav-brand-mark">NF</span>
+        <span>NovelForge / 小说工坊</span>
       </Link>
-      <div className="flex flex-wrap items-center gap-3">
-        <Link className="button-secondary min-h-10 px-4" href="/">
+      <div className="app-nav-links">
+        <Link className="app-nav-link" href="/">
           首页
         </Link>
         {isAuthed ? (
           <>
-            <Link className="button-secondary min-h-10 px-4" href="/dashboard">
-              Dashboard
+            <Link className="app-nav-link" href="/dashboard">
+              我的书架
             </Link>
-            <Link className="button-secondary min-h-10 px-4" href="/create">
-              创建作品
+            <Link className="app-nav-link" href="/create">
+              新建作品
             </Link>
-            <Link className="button-secondary min-h-10 px-4" href="/account/credits">
-              点数{typeof creditBalance === "number" ? `：${creditBalance}` : ""}
+            <Link className="app-nav-link app-nav-credit-link" href="/account/credits">
+              <CreditBadge balance={creditBalance} />
             </Link>
             <SignOutButton />
           </>
