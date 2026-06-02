@@ -350,7 +350,7 @@ export function ProjectWorkbenchLayout({
     <>
       <ProjectBookHeader creditBalance={creditBalance} project={project} />
 
-      <section className="grid items-start gap-5 pb-10 xl:grid-cols-[280px_minmax(0,1fr)_minmax(52px,420px)]">
+      <section className="grid items-start gap-5 pb-10 xl:grid-cols-[280px_minmax(0,1fr)_max-content]">
         <aside className="grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">Book Index</p>
