@@ -1,6 +1,9 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
+import {
+  ChapterEndDecision,
+  type NextChapterHint,
+} from "@/components/project/chapter-end-decision";
 import {
   BookBadge,
   CreditBadge,
@@ -76,6 +79,10 @@ function getChapterStatus(chapter: WorkbenchChapter) {
   return "未生成";
 }
 
+function getChapterCardId(chapterNumber: number) {
+  return `chapter-card-${chapterNumber}`;
+}
+
 function getReaderBody(chapter: WorkbenchChapter | null) {
   if (!chapter) {
     return {
@@ -140,6 +147,7 @@ function ChapterToc({
                 : "border-[var(--line)] bg-[rgba(255,248,234,0.58)] hover:border-[var(--gold)]",
             ].join(" ")}
             href="#chapter-reader"
+            id={getChapterCardId(chapter.chapterNumber)}
             key={chapter.id}
           >
             <div className="flex items-start justify-between gap-3">
@@ -456,12 +464,14 @@ function ProjectBookHeader({
 
 function ChapterReaderPreview({
   chapter,
+  chapters,
   interactiveState,
   projectId,
   projectMode,
   volume,
 }: {
   chapter: WorkbenchChapter | null;
+  chapters: WorkbenchChapter[];
   interactiveState: InteractiveStoryState | null;
   projectId: string;
   projectMode: ProjectMode;
@@ -469,6 +479,17 @@ function ChapterReaderPreview({
 }) {
   const reader = getReaderBody(chapter);
   const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
+  const nextChapter = chapter
+    ? chapters.find((item) => item.chapterNumber === chapter.chapterNumber + 1) ?? null
+    : null;
+  const nextChapterHint: NextChapterHint | null = nextChapter
+    ? {
+        anchorId: getChapterCardId(nextChapter.chapterNumber),
+        chapterNumber: nextChapter.chapterNumber,
+        hasBody: Boolean(nextChapter.official?.body || nextChapter.draft?.body),
+        title: nextChapter.title,
+      }
+    : null;
 
   return (
     <div className="grid gap-5" id="chapter-reader">
@@ -510,6 +531,7 @@ function ChapterReaderPreview({
             initialDecision={chapter.decision ?? null}
             initialInteractiveState={interactiveState}
             initialStateChanges={chapter.stateChanges ?? null}
+            nextChapter={nextChapterHint}
             projectId={projectId}
           />
         ) : null}
@@ -645,6 +667,7 @@ export function ProjectWorkbenchLayout({
         <main className="project-reader-column min-w-0">
           <ChapterReaderPreview
             chapter={currentChapter}
+            chapters={chapters}
             interactiveState={interactiveState}
             projectId={project.id}
             projectMode={projectMode}
