@@ -97,36 +97,42 @@ function formatModeCreditShortfall(balance: number, cost: number, isInteractive:
 const interventionFields: Array<{
   key: keyof ChapterIntervention;
   label: string;
+  interactiveLabel: string;
   placeholder: string;
   rows: number;
 }> = [
   {
     key: "directorInstruction",
     label: "导演指令",
+    interactiveLabel: "本章意图",
     placeholder: "这一章要更热血，让主角第一次意识到能力有代价。",
     rows: 3,
   },
   {
     key: "styleFocus",
     label: "风格倾向",
+    interactiveLabel: "叙事气质",
     placeholder: "热血 / 悬疑 / 黑暗 / 情感 / 打斗 / 快节奏 / 细腻",
     rows: 2,
   },
   {
     key: "mustInclude",
     label: "本章必须出现",
+    interactiveLabel: "必须发生",
     placeholder: "妹妹的旧照片、黑色灵纹失控、监察官的试探",
     rows: 2,
   },
   {
     key: "mustAvoid",
     label: "本章不能出现",
+    interactiveLabel: "不要发生",
     placeholder: "不要提前揭露最终反派身份，不要让女主突然表白",
     rows: 2,
   },
   {
     key: "endingRequirement",
     label: "结尾要求",
+    interactiveLabel: "结尾氛围",
     placeholder: "结尾留下主角记忆缺失的悬念",
     rows: 2,
   },
@@ -303,7 +309,12 @@ export function OutlineGenerator({
     setSettingOfficialChapterNumber(null);
 
     if (!response.ok || !payload?.official) {
-      setError(formatUserFacingError(payload?.error, "正式稿设置失败，请稍后重试。"));
+      setError(
+        formatUserFacingError(
+          payload?.error,
+          isInteractive ? "这条命运确认失败，请稍后重试。" : "正式稿设置失败，请稍后重试。",
+        ),
+      );
       return;
     }
 
@@ -359,7 +370,9 @@ export function OutlineGenerator({
           type="button"
         >
           {isGenerating
-            ? "生成中..."
+            ? isInteractive
+              ? "铺开中..."
+              : "生成中..."
             : volume
               ? `${isInteractive ? "重新铺开" : "重新生成"} · ${outlineCost} ${creditUnit}`
               : `${isInteractive ? "铺开章节" : "生成章节大纲"} · ${outlineCost} ${creditUnit}`}
@@ -385,7 +398,9 @@ export function OutlineGenerator({
         <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
           <p className="font-bold text-[var(--ink)]">需要先完成故事圣经和角色卡</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            章节大纲会基于已保存的 story_config、story_concept、story_bible 和 characters 生成。
+            {isInteractive
+              ? "故事章节会基于已保存的作品设定、故事圣经和角色卡铺开。"
+              : "章节大纲会基于已保存的 story_config、story_concept、story_bible 和 characters 生成。"}
           </p>
         </div>
       ) : volume ? (
@@ -441,7 +456,7 @@ export function OutlineGenerator({
                     </span>
                     {chapter.official ? (
                       <span className="rounded-full bg-[#e8f3ff] px-3 py-1 text-xs font-bold text-[#285f8f]">
-                        正式稿已确认
+                        {isInteractive ? "命运已确认" : "正式稿已确认"}
                       </span>
                     ) : null}
                     <button
@@ -509,13 +524,13 @@ export function OutlineGenerator({
 
                 <div className="mt-5 border-t border-[var(--line)] pt-4">
                   <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                    本章导演指令 / 互动干预
+                    {isInteractive ? "故事导演台" : "本章导演指令 / 互动干预"}
                   </p>
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     {interventionFields.map((field) => (
                       <label className="grid gap-1" key={field.key}>
                         <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                          {field.label}
+                          {isInteractive ? field.interactiveLabel : field.label}
                         </span>
                         <textarea
                           className="min-h-20 resize-y rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
@@ -539,7 +554,7 @@ export function OutlineGenerator({
                 {chapter.draft?.body ? (
                   <div className="mt-5 border-t border-[var(--line)] pt-4">
                     <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                      当前 draft 正文
+                      {isInteractive ? "当前篇章" : "当前 draft 正文"}
                     </p>
                     <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#fffaf0] px-4 py-4 leading-8 text-[var(--ink)]">
                       {chapter.draft.body}
@@ -550,7 +565,7 @@ export function OutlineGenerator({
                 {chapter.official ? (
                   <div className="mt-5 border-t border-[var(--line)] pt-4">
                     <p className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">
-                      正式稿
+                      {isInteractive ? "已确认篇章" : "正式稿"}
                     </p>
                     <div className="mt-3 whitespace-pre-wrap rounded-md bg-[#eef4f2] px-4 py-4 leading-8 text-[var(--ink)]">
                       {chapter.official.body}
@@ -588,7 +603,9 @@ export function OutlineGenerator({
         <div className="mt-6 rounded-md border border-dashed border-[var(--line)] bg-white/70 p-6 text-center">
           <p className="font-bold text-[var(--ink)]">还没有章节大纲</p>
           <p className="mt-2 text-sm text-[var(--muted)]">
-            点击生成后，第一卷信息会写入 volumes，20 章大纲会写入 chapters。
+            {isInteractive
+              ? "铺开章节后，第一卷和 20 个命运入口会出现在这里。"
+              : "点击生成后，第一卷信息会写入 volumes，20 章大纲会写入 chapters。"}
           </p>
         </div>
       )}
