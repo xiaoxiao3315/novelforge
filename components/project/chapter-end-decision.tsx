@@ -161,9 +161,9 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
     <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.55)] p-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="font-serif text-lg font-black text-[var(--ink)]">
-          角色关系和故事状态已更新
+          命运回声
         </h4>
-        <BookBadge tone="warning">写入故事状态</BookBadge>
+        <BookBadge tone="warning">故事会记住</BookBadge>
       </div>
       <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
         只保留最重要的故事反馈；下一章会沿着这些回声继续。
@@ -183,7 +183,7 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
         </div>
       ) : hasChanges ? (
         <p className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.58)] px-3 py-3 text-sm leading-6 text-[var(--muted)]">
-          这次选择已记录到故事状态，主要影响会在后续章节中显现。
+          这次选择已被故事记住，主要影响会在后续章节中显现。
         </p>
       ) : (
         <p className="mt-4 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.58)] px-3 py-3 text-sm leading-6 text-[var(--muted)]">
@@ -232,9 +232,9 @@ function InteractiveStateAfterSave({
 
   return (
     <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
-      <h4 className="font-serif text-lg font-black text-[var(--ink)]">当前故事状态</h4>
+      <h4 className="font-serif text-lg font-black text-[var(--ink)]">命运正在留下痕迹</h4>
       <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-        下一章会带着这些关系、风险、线索和命运倾向继续推进。
+        下一章会继承这些羁绊、风险、线索和命运倾向。
       </p>
       {hasValues && interactiveState ? (
         <div className="mt-4 grid gap-3 md:grid-cols-2">
@@ -256,7 +256,7 @@ function InteractiveStateAfterSave({
             <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">被点亮的线索</p>
             <StateValuePills
               emptyText="还没有线索被点亮。"
-              items={[...Object.entries(interactiveState.flags), ...Object.entries(interactiveState.clues)]}
+              items={Object.entries(interactiveState.clues)}
             />
           </div>
           <div>
@@ -281,7 +281,7 @@ function FateFlowGuide({ hasDecision, hasSavedDecision }: { hasDecision: boolean
     {
       active: true,
       label: "阅读本章",
-      note: "先确认当前章的冲突和结尾钩子。",
+      note: "先读完这一章的选择前夜。",
     },
     {
       active: hasDecision || hasSavedDecision,
@@ -355,8 +355,8 @@ function NextChapterGuide({ nextChapter }: { nextChapter?: NextChapterHint | nul
   const body = nextChapter
     ? nextChapter.hasBody
       ? `第 ${nextChapter.chapterNumber} 章《${nextChapter.title}》已有正文，可以从目录卡片继续阅读。`
-      : `第 ${nextChapter.chapterNumber} 章《${nextChapter.title}》已在目录中，正文尚未生成；使用现有生成入口继续。`
-    : "下一章还没有出现在目录中；回到故事导演台继续推进章节。";
+      : `第 ${nextChapter.chapterNumber} 章《${nextChapter.title}》已在目录中，正文尚未开启；使用故事导演台继续进入本章。`
+    : "下一章还没有出现在目录中；回到故事导演台继续铺开命运。";
 
   return (
     <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-4 py-4">
@@ -364,7 +364,7 @@ function NextChapterGuide({ nextChapter }: { nextChapter?: NextChapterHint | nul
         沿这条命运继续下一章
       </p>
       <p className="mt-1 text-sm leading-6 text-[var(--muted)]">{body}</p>
-      <a className="button-secondary mt-3 min-h-10 px-3 text-sm" href={href}>
+      <a className="button-primary mt-4 min-h-11 px-4 text-sm" href={href}>
         沿这条命运继续下一章
       </a>
     </div>
@@ -427,7 +427,7 @@ function ChoiceConfirmationPanel({
           </div>
         ) : (
           <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
-            主要影响已经记录，下一章会在关系、风险和线索中回应它。
+            主要影响已经被故事记住，下一章会在关系、风险和线索中回应它。
           </p>
         )}
       </div>
@@ -465,15 +465,15 @@ export function ChapterEndDecision({
     : false;
   const decisionStatus = hasPendingChoice
     ? {
-        body: "点击“做出选择”后，故事才会把这条路写入下一章。",
+        body: "点击“确认这条命运”后，故事才会把这条路写入下一章。",
         className: "border-[var(--gold)] bg-[rgba(255,244,220,0.9)]",
-        title: "有新的选择待确认",
+        title: "这段故事还没有落定",
       }
     : hasSavedDecision
       ? {
-          body: "角色关系和故事状态已更新。下一章将沿用这条命运继续。",
+          body: "命运已写入故事。下一章将沿用这条命运继续。",
           className: "border-[#b8d8c7] bg-[#f0fbf5]",
-          title: "这条命运已确认",
+          title: "命运已写入故事",
       }
     : {
         body: "这段故事还没有落定。读完本章后，选择你想走向的命运。",
@@ -501,7 +501,7 @@ export function ChapterEndDecision({
     setIsGenerating(false);
 
     if (!response.ok || !payload?.decision) {
-      setError(formatUserFacingError(payload?.error, "命运分歧生成失败，请稍后重试。"));
+      setError(formatUserFacingError(payload?.error, "命运分歧暂未浮现，请稍后重试。"));
       return;
     }
 
@@ -574,10 +574,10 @@ export function ChapterEndDecision({
           type="button"
         >
           {isGenerating
-            ? "命运分歧生成中..."
+            ? "命运分歧浮现中..."
             : decision
-              ? "重新生成命运分歧"
-              : "开启命运分歧"}
+              ? "重新召唤命运分歧"
+              : "让命运分歧浮现"}
         </button>
       </div>
 
@@ -660,7 +660,7 @@ export function ChapterEndDecision({
               onClick={saveDecision}
               type="button"
             >
-              {isSaving ? "正在写入..." : "做出选择"}
+              {isSaving ? "正在写入故事..." : "确认这条命运"}
             </button>
           </div>
           {hasSavedDecision && decision ? (
@@ -679,7 +679,7 @@ export function ChapterEndDecision({
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">
-          这段故事还没有落定。读完本章后，选择你想走向的命运。
+          本章的命运分歧尚未浮现。读完正文后，可以让故事给出下一步选择。
         </div>
       )}
     </PaperPanel>
