@@ -148,7 +148,7 @@ export async function POST(request: Request) {
   });
 
   if (configError) {
-    await supabase.from("projects").delete().eq("id", project.id);
+    await supabase.from("projects").delete().eq("id", project.id).eq("user_id", user.id);
     return NextResponse.json({ error: configError.message }, { status: 500 });
   }
 

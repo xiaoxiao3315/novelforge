@@ -209,6 +209,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -240,6 +241,7 @@ export async function POST(request: Request) {
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfigRow>();
 
   if (configError) {
@@ -258,6 +260,7 @@ export async function POST(request: Request) {
     .from("story_concepts")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConceptRow>();
   const concept = normalizeStoryConcept(storyConcept?.content);
 
@@ -269,6 +272,7 @@ export async function POST(request: Request) {
     .from("story_bibles")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryBibleRow>();
   const bible = normalizeStoryBible(storyBible?.content);
 
@@ -280,6 +284,7 @@ export async function POST(request: Request) {
     .from("characters")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("sort_order", { ascending: true })
     .returns<CharacterRow[]>();
   const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
@@ -292,6 +297,7 @@ export async function POST(request: Request) {
     .from("volumes")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("volume_number", { ascending: true })
     .limit(1)
     .maybeSingle<VolumeRow>();
@@ -306,7 +312,8 @@ export async function POST(request: Request) {
     .select(
       "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
-    .eq("project_id", projectId);
+    .eq("project_id", projectId)
+    .eq("user_id", user.id);
 
   if (chapterId) {
     chapterQuery = chapterQuery.eq("id", chapterId);
@@ -332,6 +339,7 @@ export async function POST(request: Request) {
       "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .lt("chapter_number", chapter.chapterNumber)
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();

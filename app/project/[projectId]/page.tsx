@@ -89,6 +89,7 @@ export default async function ProjectDetailPage({
     .from("projects")
     .select("id,title,description,status,created_at,updated_at")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (projectError || !project) {
@@ -104,6 +105,7 @@ export default async function ProjectDetailPage({
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfig>();
   const projectMode = getProjectModeFromConfig(config?.config_json);
   const interactiveState =
@@ -117,6 +119,7 @@ export default async function ProjectDetailPage({
     .from("story_concepts")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConceptRow>();
 
   const concept = normalizeStoryConcept(storyConcept?.content);
@@ -125,12 +128,14 @@ export default async function ProjectDetailPage({
     .from("story_bibles")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryBibleRow>();
 
   const { data: characterRows } = await supabase
     .from("characters")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("sort_order", { ascending: true })
     .returns<CharacterRow[]>();
 
@@ -141,6 +146,7 @@ export default async function ProjectDetailPage({
     .from("volumes")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("volume_number", { ascending: true })
     .limit(1)
     .maybeSingle<VolumeRow>();
@@ -149,6 +155,7 @@ export default async function ProjectDetailPage({
     .from("chapters")
     .select("id,content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();
 
@@ -156,6 +163,7 @@ export default async function ProjectDetailPage({
     .from("chapter_versions")
     .select("chapter_id")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .returns<ChapterVersionRow[]>();
 
   const chapterVersionCounts = new Map<string, number>();

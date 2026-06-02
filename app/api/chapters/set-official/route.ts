@@ -83,6 +83,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {

@@ -138,6 +138,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -156,6 +157,7 @@ export async function POST(request: Request) {
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfigRow>();
 
   if (configError) {
@@ -170,6 +172,7 @@ export async function POST(request: Request) {
     .from("story_concepts")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConceptRow>();
 
   if (conceptError) {
@@ -282,7 +285,8 @@ export async function POST(request: Request) {
   const { error: deleteCharactersError } = await supabase
     .from("characters")
     .delete()
-    .eq("project_id", visibleProject.id);
+    .eq("project_id", visibleProject.id)
+    .eq("user_id", user.id);
 
   if (deleteCharactersError) {
     const error = `旧角色卡清理失败：${deleteCharactersError.message}`;

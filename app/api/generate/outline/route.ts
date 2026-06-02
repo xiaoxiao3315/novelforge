@@ -249,6 +249,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -267,6 +268,7 @@ export async function POST(request: Request) {
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfigRow>();
 
   if (configError) {
@@ -281,6 +283,7 @@ export async function POST(request: Request) {
     .from("story_concepts")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConceptRow>();
 
   if (conceptError) {
@@ -297,6 +300,7 @@ export async function POST(request: Request) {
     .from("story_bibles")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryBibleRow>();
 
   if (bibleError) {
@@ -313,6 +317,7 @@ export async function POST(request: Request) {
     .from("characters")
     .select("content")
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .order("sort_order", { ascending: true })
     .returns<CharacterRow[]>();
 
