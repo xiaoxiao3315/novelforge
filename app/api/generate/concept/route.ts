@@ -114,6 +114,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -132,6 +133,7 @@ export async function POST(request: Request) {
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<StoryConfigRow>();
 
   if (configError) {

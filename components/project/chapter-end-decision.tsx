@@ -86,6 +86,35 @@ function StateChangeList({
   );
 }
 
+function ChapterRouteResult({
+  routeTendency,
+}: {
+  routeTendency: StoryStateChanges["routeTendency"];
+}) {
+  if (routeTendency.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-serif text-lg font-black text-[var(--ink)]">本章路线结果</h4>
+        <BookBadge tone="warning">Route</BookBadge>
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {routeTendency.map((route) => (
+          <span
+            className="rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.9)] px-3 py-2 text-xs font-black text-[var(--ink)]"
+            key={`${route.name}-${route.change}`}
+          >
+            {route.name} {formatChangeValue(route.change)}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateChanges | null }) {
   if (!stateChanges || !hasStoryStateChanges(stateChanges)) {
     return null;
@@ -96,6 +125,9 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h4 className="font-serif text-lg font-black text-[var(--ink)]">本章选择影响</h4>
         <BookBadge tone="warning">已记录</BookBadge>
+      </div>
+      <div className="mt-4">
+        <ChapterRouteResult routeTendency={stateChanges.routeTendency} />
       </div>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
@@ -119,13 +151,6 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
             renderValue={(item) =>
               item.status ?? (item.value === undefined ? "已记录" : item.value ? "是" : "否")
             }
-          />
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">路线倾向</p>
-          <StateChangeList
-            items={stateChanges.routeTendency}
-            renderValue={(item) => formatChangeValue(item.change ?? 0)}
           />
         </div>
       </div>

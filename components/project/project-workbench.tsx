@@ -252,6 +252,67 @@ function StateValueGrid({
   );
 }
 
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getRouteTendencyEntries(interactiveState: InteractiveStoryState | null) {
+  if (!interactiveState) {
+    return [];
+  }
+
+  return Object.entries(interactiveState.routeTendency)
+    .map(([name, value]) => ({
+      name,
+      value: clampPercent(value),
+    }))
+    .filter((item) => item.name && item.value > 0)
+    .sort((left, right) => right.value - left.value);
+}
+
+function RouteProgress({ name, value }: { name: string; value: number }) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate text-xs font-bold text-[var(--ink)]">{name}</span>
+        <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">{value}/100</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.82)]">
+        <div className="h-full rounded-sm bg-[var(--gold)]" style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CurrentRouteTendencyPanel({
+  interactiveState,
+}: {
+  interactiveState: InteractiveStoryState | null;
+}) {
+  const routes = getRouteTendencyEntries(interactiveState);
+  const mainRoute = routes[0] ?? null;
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-serif text-lg font-black text-[var(--ink)]">当前路线倾向</h4>
+        {mainRoute ? <BookBadge tone="warning">主路线 {mainRoute.name}</BookBadge> : null}
+      </div>
+      {routes.length > 0 ? (
+        <div className="mt-4 grid gap-3">
+          {routes.slice(0, 3).map((route) => (
+            <RouteProgress key={route.name} name={route.name} value={route.value} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          保存章末选择后，将出现路线倾向。
+        </p>
+      )}
+    </div>
+  );
+}
+
 function InteractiveStatePanel({
   interactiveState,
   projectMode,
@@ -269,6 +330,9 @@ function InteractiveStatePanel({
         <h3 className="font-serif text-xl font-black text-[var(--ink)]">互动状态</h3>
         <BookBadge tone="warning">MVP</BookBadge>
       </div>
+      <div className="mt-4">
+        <CurrentRouteTendencyPanel interactiveState={interactiveState} />
+      </div>
       {hasInteractiveState(interactiveState) && interactiveState ? (
         <div className="mt-4 grid gap-4">
           <div>
@@ -280,18 +344,154 @@ function InteractiveStatePanel({
             <StateValueGrid items={Object.entries(interactiveState.meters)} />
           </div>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与路线</p>
-            <StateValueGrid
-              items={[
-                ...Object.entries(interactiveState.clues),
-                ...Object.entries(interactiveState.routeTendency),
-              ]}
-            />
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索状态</p>
+            <StateValueGrid items={Object.entries(interactiveState.clues)} />
           </div>
         </div>
       ) : (
         <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
           保存章末抉择后，这里会记录关系、风险、线索和路线倾向。
+        </p>
+      )}
+    </PaperPanel>
+  );
+}
+
+function formatRouteChange(value: number) {
+  return value > 0 ? `+${value}` : String(value);
+}
+
+function getSelectedDecisionLabel(chapter: WorkbenchChapter) {
+  const decision = chapter.decision;
+
+  if (!decision) {
+    return "";
+  }
+
+  const selectedOption = decision.selectedOptionId
+    ? decision.options.find((option) => option.id === decision.selectedOptionId)
+    : null;
+  const parts = [
+    selectedOption ? `${selectedOption.id}. ${selectedOption.label}` : "",
+    decision.customChoice ? `自定义：${decision.customChoice}` : "",
+  ].filter(Boolean);
+
+  return parts.join(" / ");
+}
+
+function getStateChangeSummary(chapter: WorkbenchChapter) {
+  const stateChanges = chapter.stateChanges;
+
+  if (!stateChanges) {
+    return [];
+  }
+
+  return [
+    ...stateChanges.relationships.map((item) => `${item.name} ${formatRouteChange(item.change)}`),
+    ...stateChanges.meters.map((item) => `${item.name} ${formatRouteChange(item.change)}`),
+    ...stateChanges.clues.map((item) => `${item.name} ${item.status}`),
+  ].slice(0, 4);
+}
+
+function InteractiveRouteMapPanel({
+  chapters,
+  projectMode,
+}: {
+  chapters: WorkbenchChapter[];
+  projectMode: ProjectMode;
+}) {
+  if (projectMode !== "interactive") {
+    return null;
+  }
+
+  return (
+    <PaperPanel className="p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">你的故事路线</h3>
+        <BookBadge tone="warning">Route Map</BookBadge>
+      </div>
+      {chapters.length > 0 ? (
+        <div className="mt-4 grid max-h-[720px] gap-4 overflow-auto border-l border-[var(--line)] pl-4 pr-1">
+          {chapters.map((chapter) => {
+            const decisionLabel = getSelectedDecisionLabel(chapter);
+            const stateSummary = getStateChangeSummary(chapter);
+            const routeChanges = chapter.stateChanges?.routeTendency ?? [];
+
+            return (
+              <article
+                className="relative rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-3"
+                key={chapter.id}
+              >
+                <span className="absolute -left-[22px] top-4 h-3 w-3 rounded-full border border-[var(--gold-strong)] bg-[var(--gold)]" />
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-xs font-black text-[var(--gold-strong)]">
+                      第 {chapter.chapterNumber} 章
+                    </p>
+                    <h4 className="mt-1 line-clamp-2 font-serif text-base font-black leading-6 text-[var(--ink)]">
+                      {chapter.title}
+                    </h4>
+                  </div>
+                  <BookBadge tone={chapter.official ? "success" : "paper"}>
+                    {chapter.official ? "正式稿" : "未定稿"}
+                  </BookBadge>
+                </div>
+
+                <div className="mt-3 grid gap-3">
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">选择</p>
+                    <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                      {decisionLabel || "尚未做出选择"}
+                    </p>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">影响</p>
+                    {stateSummary.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {stateSummary.map((item) => (
+                          <span
+                            className="rounded-sm border border-[var(--line)] bg-[rgba(255,244,220,0.72)] px-2 py-1 text-xs font-bold text-[var(--ink)]"
+                            key={item}
+                          >
+                            {item}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                        尚未产生状态变化
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-black text-[var(--gold-strong)]">路线</p>
+                    {routeChanges.length > 0 ? (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {routeChanges.map((route) => (
+                          <span
+                            className="rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.9)] px-2 py-1 text-xs font-black text-[var(--ink)]"
+                            key={`${chapter.id}-${route.name}-${route.change}`}
+                          >
+                            {route.name} {formatRouteChange(route.change)}
+                          </span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
+                        暂无路线变化
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          生成章节大纲后，这里会按章节记录你的选择、影响和路线变化。
         </p>
       )}
     </PaperPanel>
@@ -507,6 +707,8 @@ export function ProjectWorkbenchLayout({
             interactiveState={interactiveState}
             projectMode={projectMode}
           />
+
+          <InteractiveRouteMapPanel chapters={chapters} projectMode={projectMode} />
 
           <PaperPanel className="p-5">
             <h3 className="font-serif text-xl font-black text-[var(--ink)]">剧情筛选器</h3>

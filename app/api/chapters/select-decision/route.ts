@@ -142,6 +142,7 @@ export async function POST(request: Request) {
     )
     .eq("project_id", projectId)
     .eq("id", chapterId)
+    .eq("user_id", user.id)
     .maybeSingle<ChapterRow>();
 
   if (chapterError) {
@@ -225,7 +226,7 @@ export async function POST(request: Request) {
     return serverError(configUpdateError.message);
   }
 
-  const { error: logError } = await supabase.from("generation_logs").insert({
+  await supabase.from("generation_logs").insert({
     project_id: project.id,
     operation: "select_decision_state_change",
     target_type: "chapter",
@@ -245,10 +246,6 @@ export async function POST(request: Request) {
       interactiveState,
     },
   });
-
-  if (logError) {
-    return serverError(logError.message);
-  }
 
   return NextResponse.json({
     chapterId: savedChapter.id,
