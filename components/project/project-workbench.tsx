@@ -252,6 +252,67 @@ function StateValueGrid({
   );
 }
 
+function clampPercent(value: number) {
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
+function getRouteTendencyEntries(interactiveState: InteractiveStoryState | null) {
+  if (!interactiveState) {
+    return [];
+  }
+
+  return Object.entries(interactiveState.routeTendency)
+    .map(([name, value]) => ({
+      name,
+      value: clampPercent(value),
+    }))
+    .filter((item) => item.name && item.value > 0)
+    .sort((left, right) => right.value - left.value);
+}
+
+function RouteProgress({ name, value }: { name: string; value: number }) {
+  return (
+    <div className="grid gap-1">
+      <div className="flex items-center justify-between gap-3">
+        <span className="min-w-0 truncate text-xs font-bold text-[var(--ink)]">{name}</span>
+        <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">{value}/100</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.82)]">
+        <div className="h-full rounded-sm bg-[var(--gold)]" style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function CurrentRouteTendencyPanel({
+  interactiveState,
+}: {
+  interactiveState: InteractiveStoryState | null;
+}) {
+  const routes = getRouteTendencyEntries(interactiveState);
+  const mainRoute = routes[0] ?? null;
+
+  return (
+    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="font-serif text-lg font-black text-[var(--ink)]">当前路线倾向</h4>
+        {mainRoute ? <BookBadge tone="warning">主路线 {mainRoute.name}</BookBadge> : null}
+      </div>
+      {routes.length > 0 ? (
+        <div className="mt-4 grid gap-3">
+          {routes.slice(0, 3).map((route) => (
+            <RouteProgress key={route.name} name={route.name} value={route.value} />
+          ))}
+        </div>
+      ) : (
+        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+          保存章末选择后，将出现路线倾向。
+        </p>
+      )}
+    </div>
+  );
+}
+
 function InteractiveStatePanel({
   interactiveState,
   projectMode,
@@ -269,6 +330,9 @@ function InteractiveStatePanel({
         <h3 className="font-serif text-xl font-black text-[var(--ink)]">互动状态</h3>
         <BookBadge tone="warning">MVP</BookBadge>
       </div>
+      <div className="mt-4">
+        <CurrentRouteTendencyPanel interactiveState={interactiveState} />
+      </div>
       {hasInteractiveState(interactiveState) && interactiveState ? (
         <div className="mt-4 grid gap-4">
           <div>
@@ -280,13 +344,8 @@ function InteractiveStatePanel({
             <StateValueGrid items={Object.entries(interactiveState.meters)} />
           </div>
           <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与路线</p>
-            <StateValueGrid
-              items={[
-                ...Object.entries(interactiveState.clues),
-                ...Object.entries(interactiveState.routeTendency),
-              ]}
-            />
+            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索状态</p>
+            <StateValueGrid items={Object.entries(interactiveState.clues)} />
           </div>
         </div>
       ) : (
