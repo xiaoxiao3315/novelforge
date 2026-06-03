@@ -2,8 +2,11 @@ import {
   buildStoryConfigPromptLines,
   type StoryConfigPromptData,
 } from "@/data/plot-filters";
-import type { ChapterWritingPlan } from "@/lib/quality/types";
-import { normalizeChapterWritingPlan } from "@/lib/quality/validators";
+import type { ChapterCharacterDirection, ChapterWritingPlan } from "@/lib/quality/types";
+import {
+  normalizeChapterCharacterDirection,
+  normalizeChapterWritingPlan,
+} from "@/lib/quality/validators";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 import {
   formatSelectedChapterDecision,
@@ -40,11 +43,13 @@ export type ChapterDraftQuality = {
   rewriteScoreThreshold?: number;
   promptVersions?: {
     plan?: string;
+    characterDirection?: string;
     critique?: string;
     rewrite?: string;
   };
   steps?: Record<string, string>;
   plan?: ChapterWritingPlan;
+  characterDirection?: ChapterCharacterDirection;
 };
 
 export type ChapterDraft = {
@@ -107,6 +112,7 @@ export type ChapterPromptInput = {
   currentDecision?: ChapterDecision | null;
   interactiveState?: InteractiveStoryState | null;
   chapterPlan?: ChapterWritingPlan | null;
+  chapterCharacterDirection?: ChapterCharacterDirection | null;
   wordTarget: number;
 };
 
@@ -185,6 +191,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
   const promptVersions = normalizeStringRecord(value.promptVersions);
   const steps = normalizeStringRecord(value.steps);
   const plan = normalizeChapterWritingPlan(value.plan);
+  const characterDirection = normalizeChapterCharacterDirection(value.characterDirection);
   const quality: ChapterDraftQuality = {
     ...(mode ? { mode } : {}),
     ...(status ? { status } : {}),
@@ -204,6 +211,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
     ...(promptVersions ? { promptVersions } : {}),
     ...(steps ? { steps } : {}),
     ...(plan ? { plan } : {}),
+    ...(characterDirection ? { characterDirection } : {}),
   };
 
   return Object.keys(quality).length > 0 ? quality : null;
@@ -511,6 +519,42 @@ function formatChapterWritingPlan(plan: ChapterWritingPlan) {
   ].join("\n");
 }
 
+function formatPromptList(items: string[]) {
+  return items.length > 0 ? items.join("；") : "未填写";
+}
+
+function formatChapterCharacterDirection(direction: ChapterCharacterDirection) {
+  const characterLines =
+    direction.focusCharacters.length > 0
+      ? direction.focusCharacters
+          .map((character) =>
+            [
+              `- character: ${character.character || "未填写"}`,
+              `  - activeDesire: ${character.activeDesire || "未填写"}`,
+              `  - emotionalMask: ${character.emotionalMask || "未填写"}`,
+              `  - dialogueVoice: ${character.dialogueVoice || "未填写"}`,
+              `  - actionPattern: ${character.actionPattern || "未填写"}`,
+              `  - relationshipPressure: ${character.relationshipPressure || "未填写"}`,
+              `  - mustNotDo: ${formatPromptList(character.mustNotDo)}`,
+            ].join("\n"),
+          )
+          .join("\n")
+      : "未填写";
+
+  return [
+    `- povGuidance: ${direction.povGuidance || "未填写"}`,
+    "角色执行指令：",
+    characterLines,
+    `- relationshipBeats: ${formatPromptList(direction.relationshipBeats)}`,
+    `- dialogueRules: ${formatPromptList(direction.dialogueRules)}`,
+    `- actionRules: ${formatPromptList(direction.actionRules)}`,
+    `- hiddenInformation: ${formatPromptList(direction.hiddenInformation)}`,
+    `- continuityGuards: ${formatPromptList(direction.continuityGuards)}`,
+    `- mustInclude: ${formatPromptList(direction.mustInclude)}`,
+    `- mustAvoid: ${formatPromptList(direction.mustAvoid)}`,
+  ].join("\n");
+}
+
 export function buildChapterPrompt(input: ChapterPromptInput) {
   return [
     "你是严谨的中文长篇网文单章正文作者。请基于已保存的项目设定、故事圣经、角色卡、第一卷信息、当前章节大纲和前文信息，只生成当前一章正文。",
@@ -593,6 +637,14 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
           "高质量章节写作计划（仅 quality 模式存在）：",
           "正文必须明显执行以下章节目标、核心冲突、情绪弧、关键场景、角色节拍和结尾钩子；但计划不得覆盖 story_bible、characters、前文摘要、互动状态和当前章节大纲。",
           formatChapterWritingPlan(input.chapterPlan),
+        ]
+      : []),
+    ...(input.chapterCharacterDirection
+      ? [
+          "",
+          "高质量角色导演指令（仅 quality 模式存在）：",
+          "正文必须执行以下角色声线、主动欲望、情绪遮罩、关系压力、动作约束、对白约束和 must avoid；但角色导演不得覆盖 story_bible、characters、前文摘要、互动状态、当前章节大纲和 chapter plan。若发生冲突，以上层信息为准。",
+          formatChapterCharacterDirection(input.chapterCharacterDirection),
         ]
       : []),
     "",

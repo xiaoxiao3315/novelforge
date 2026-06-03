@@ -1,4 +1,6 @@
 import type {
+  ChapterCharacterDirection,
+  ChapterCharacterDirectionInput,
   ChapterPlanInput,
   ChapterCritiqueInput,
   ChapterQualityCritique,
@@ -7,9 +9,12 @@ import type {
   ChapterWritingPlan,
 } from "@/lib/quality/types";
 import {
+  normalizeChapterCharacterDirection,
   normalizeChapterQualityCritique,
   normalizeChapterWritingPlan,
+  validateChapterCharacterDirection,
 } from "@/lib/quality/validators";
+import { CHAPTER_CHARACTER_DIRECTION_PROMPT_VERSION } from "@/prompts/chapter-character-direction";
 import { CHAPTER_PLAN_PROMPT_VERSION } from "@/prompts/chapter-plan";
 import { CHAPTER_CRITIQUE_PROMPT_VERSION } from "@/prompts/chapter-critique";
 import { CHAPTER_REWRITE_PROMPT_VERSION } from "@/prompts/chapter-rewrite";
@@ -19,17 +24,24 @@ export const DEFAULT_REWRITE_SCORE_THRESHOLD = 82;
 
 export type ChapterQualityDraftSource = "generate" | "existing";
 export type ChapterQualityRewritePolicy = "always" | "score-threshold" | "never";
-export type ChapterQualityPipelineStep = "plan" | "draft" | "critique" | "rewrite";
+export type ChapterQualityPipelineStep =
+  | "plan"
+  | "characterDirection"
+  | "draft"
+  | "critique"
+  | "rewrite";
 export type ChapterQualityPipelineStepStatus = "skipped" | "success" | "failed";
 export type ChapterQualityPipelineStatus = "success" | "failed";
 
 export type ChapterQualityDraftInput = {
   storyContext: ChapterQualityPromptContext;
   chapterPlan?: ChapterWritingPlan | null;
+  chapterCharacterDirection?: ChapterCharacterDirection | null;
 };
 
 export type QualityPipelineModel = {
   generatePlan?(input: ChapterPlanInput): Promise<unknown>;
+  generateCharacterDirection?(input: ChapterCharacterDirectionInput): Promise<unknown>;
   generateDraft(input: ChapterQualityDraftInput): Promise<string>;
   generateCritique(input: ChapterCritiqueInput): Promise<unknown>;
   generateRewrite(input: ChapterRewriteInput): Promise<string>;
@@ -42,11 +54,13 @@ export type ChapterQualityPipelineInput = {
   rewritePolicy?: ChapterQualityRewritePolicy;
   rewriteScoreThreshold?: number;
   enablePlanning?: boolean;
+  enableCharacterDirection?: boolean;
 };
 
 export type ChapterQualityPipelineResult = {
   status: ChapterQualityPipelineStatus;
   plan?: ChapterWritingPlan;
+  characterDirection?: ChapterCharacterDirection;
   draft?: string;
   critique?: ChapterQualityCritique;
   rewrittenDraft?: string;
@@ -59,6 +73,7 @@ export type ChapterQualityPipelineResult = {
   metadata: {
     promptVersions: {
       plan?: string;
+      characterDirection?: string;
       critique: string;
       rewrite: string;
     };
@@ -87,16 +102,19 @@ function createInitialResult({
   rewritePolicy,
   rewriteScoreThreshold,
   enablePlanning,
+  enableCharacterDirection,
 }: {
   draftSource: ChapterQualityDraftSource;
   rewritePolicy: ChapterQualityRewritePolicy;
   rewriteScoreThreshold: number;
   enablePlanning: boolean;
+  enableCharacterDirection: boolean;
 }): ChapterQualityPipelineResult {
   return {
     status: "failed",
     steps: {
       plan: "skipped",
+      characterDirection: "skipped",
       draft: "skipped",
       critique: "skipped",
       rewrite: "skipped",
@@ -105,6 +123,9 @@ function createInitialResult({
     metadata: {
       promptVersions: {
         ...(enablePlanning ? { plan: CHAPTER_PLAN_PROMPT_VERSION } : {}),
+        ...(enableCharacterDirection
+          ? { characterDirection: CHAPTER_CHARACTER_DIRECTION_PROMPT_VERSION }
+          : {}),
         critique: CHAPTER_CRITIQUE_PROMPT_VERSION,
         rewrite: CHAPTER_REWRITE_PROMPT_VERSION,
       },
@@ -147,15 +168,19 @@ export async function runChapterQualityPipeline(
     typeof input.rewriteScoreThreshold === "number"
       ? input.rewriteScoreThreshold
       : DEFAULT_REWRITE_SCORE_THRESHOLD;
-  const enablePlanning = input.enablePlanning ?? false;
+  const enableCharacterDirection = input.enableCharacterDirection ?? false;
+  const enablePlanning = (input.enablePlanning ?? false) || enableCharacterDirection;
   const result = createInitialResult({
     draftSource,
     rewritePolicy,
     rewriteScoreThreshold,
     enablePlanning,
+    enableCharacterDirection,
   });
 
   let chapterPlan: ChapterWritingPlan | null = null;
+  let chapterCharacterDirection: ChapterCharacterDirection | null =
+    input.storyContext.chapterCharacterDirection ?? null;
 
   if (enablePlanning) {
     if (!model.generatePlan) {
@@ -190,12 +215,73 @@ export async function runChapterQualityPipeline(
     }
   }
 
-  const storyContext = chapterPlan
+  const storyContextWithPlan = chapterPlan
     ? {
         ...input.storyContext,
         chapterPlan,
       }
     : input.storyContext;
+
+  if (enableCharacterDirection) {
+    if (!chapterPlan) {
+      result.steps.characterDirection = "failed";
+      result.errors.push({
+        step: "characterDirection",
+        message: "chapter plan is required before character direction.",
+      });
+      return result;
+    }
+
+    if (!model.generateCharacterDirection) {
+      result.steps.characterDirection = "failed";
+      result.errors.push({
+        step: "characterDirection",
+        message:
+          "generateCharacterDirection callback is required when character direction is enabled.",
+      });
+      return result;
+    }
+
+    try {
+      const directionOutput = await model.generateCharacterDirection({
+        storyContext: storyContextWithPlan,
+        chapterPlan,
+      });
+      const directionValidation = validateChapterCharacterDirection(directionOutput);
+      const normalizedDirection = directionValidation.ok
+        ? directionValidation.direction
+        : normalizeChapterCharacterDirection(directionOutput);
+
+      if (!normalizedDirection) {
+        result.steps.characterDirection = "failed";
+        result.errors.push({
+          step: "characterDirection",
+          message: directionValidation.ok
+            ? "chapter character direction output failed validation."
+            : `chapter character direction output failed validation: ${directionValidation.error}`,
+        });
+        return result;
+      }
+
+      chapterCharacterDirection = normalizedDirection;
+      result.characterDirection = normalizedDirection;
+      result.steps.characterDirection = "success";
+    } catch (error) {
+      result.steps.characterDirection = "failed";
+      result.errors.push({
+        step: "characterDirection",
+        message: getErrorMessage(error),
+      });
+      return result;
+    }
+  }
+
+  const storyContext = chapterCharacterDirection
+    ? {
+        ...storyContextWithPlan,
+        chapterCharacterDirection,
+      }
+    : storyContextWithPlan;
 
   let draft = "";
 
@@ -219,6 +305,7 @@ export async function runChapterQualityPipeline(
         await model.generateDraft({
           storyContext,
           chapterPlan,
+          chapterCharacterDirection,
         }),
       );
     } catch (error) {

@@ -53,6 +53,10 @@ import {
   buildChapterCritiquePrompt,
   CHAPTER_CRITIQUE_SYSTEM_PROMPT,
 } from "@/prompts/chapter-critique";
+import {
+  buildChapterCharacterDirectionPrompt,
+  CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
+} from "@/prompts/chapter-character-direction";
 import { buildChapterPlanPrompt, CHAPTER_PLAN_SYSTEM_PROMPT } from "@/prompts/chapter-plan";
 import {
   buildChapterRewritePrompt,
@@ -138,6 +142,8 @@ const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_PLAN_MAX_TOKENS = 2600;
 const CHAPTER_QUALITY_PLAN_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS = 2500;
+const CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS = 2600;
 const CHAPTER_QUALITY_CRITIQUE_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_REWRITE_MAX_TOKENS = 7000;
@@ -189,6 +195,7 @@ type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
   status: ChapterQualityPipelineResult["status"];
   plan?: ChapterWritingPlan;
+  characterDirection?: ChapterQualityPipelineResult["characterDirection"];
   critique: {
     overallScore: number;
     scores: NonNullable<ChapterQualityPipelineResult["critique"]>["scores"];
@@ -573,7 +580,21 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
         throw new Error("DeepSeek chapter plan response is empty.");
       }
 
-      return parseJsonObject(result.outputText);
+      return parseSummaryJsonObject(result.outputText);
+    },
+    async generateCharacterDirection(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
+        userPrompt: buildChapterCharacterDirectionPrompt(input),
+        maxTokens: CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek character direction response is empty.");
+      }
+
+      return parseSummaryJsonObject(result.outputText);
     },
     async generateDraft(input) {
       const result = await generateDeepSeekText({
@@ -581,6 +602,7 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
         userPrompt: buildChapterPrompt({
           ...promptInput,
           chapterPlan: input.chapterPlan ?? null,
+          chapterCharacterDirection: input.chapterCharacterDirection ?? null,
         }),
         maxTokens: CHAPTER_MAX_TOKENS,
         temperature: CHAPTER_TEMPERATURE,
@@ -600,7 +622,7 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
         throw new Error("DeepSeek quality critique response is empty.");
       }
 
-      return parseJsonObject(result.outputText);
+      return parseSummaryJsonObject(result.outputText);
     },
     async generateRewrite(input) {
       const result = await generateDeepSeekText({
@@ -615,6 +637,10 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
   };
 }
 
+function buildQualityPromptVersions(pipelineResult: ChapterQualityPipelineResult) {
+  return pipelineResult.metadata.promptVersions;
+}
+
 function buildQualityMetadata(
   pipelineResult: ChapterQualityPipelineResult,
 ): ChapterDraftQualityMetadata | null {
@@ -626,6 +652,9 @@ function buildQualityMetadata(
     mode: pipelineResult.metadata.mode,
     status: pipelineResult.status,
     ...(pipelineResult.plan ? { plan: pipelineResult.plan } : {}),
+    ...(pipelineResult.characterDirection
+      ? { characterDirection: pipelineResult.characterDirection }
+      : {}),
     critique: {
       overallScore: pipelineResult.critique.overallScore,
       scores: pipelineResult.critique.scores,
@@ -633,7 +662,7 @@ function buildQualityMetadata(
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
-    promptVersions: pipelineResult.metadata.promptVersions,
+    promptVersions: buildQualityPromptVersions(pipelineResult),
     steps: pipelineResult.steps,
   };
 }
@@ -656,12 +685,40 @@ function summarizeChapterPlan(plan: ChapterWritingPlan | undefined) {
   };
 }
 
+function summarizeChapterCharacterDirection(
+  characterDirection: ChapterQualityPipelineResult["characterDirection"],
+) {
+  if (!characterDirection) {
+    return null;
+  }
+
+  return {
+    povGuidance: characterDirection.povGuidance,
+    focusCharacterCount: characterDirection.focusCharacters.length,
+    focusCharacters: characterDirection.focusCharacters.slice(0, 5).map((character) => ({
+      character: character.character,
+      activeDesire: character.activeDesire,
+      emotionalMask: character.emotionalMask,
+      dialogueVoice: character.dialogueVoice,
+      relationshipPressure: character.relationshipPressure,
+    })),
+    relationshipBeats: characterDirection.relationshipBeats.slice(0, 3),
+    dialogueRules: characterDirection.dialogueRules.slice(0, 3),
+    actionRules: characterDirection.actionRules.slice(0, 3),
+    hiddenInformation: characterDirection.hiddenInformation.slice(0, 3),
+    continuityGuards: characterDirection.continuityGuards.slice(0, 3),
+    mustInclude: characterDirection.mustInclude.slice(0, 3),
+    mustAvoid: characterDirection.mustAvoid.slice(0, 3),
+  };
+}
+
 function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineResult) {
   return {
     status: pipelineResult.status,
     steps: pipelineResult.steps,
     errors: pipelineResult.errors,
     plan: summarizeChapterPlan(pipelineResult.plan),
+    characterDirection: summarizeChapterCharacterDirection(pipelineResult.characterDirection),
     critique: pipelineResult.critique
       ? {
           overallScore: pipelineResult.critique.overallScore,
@@ -671,7 +728,7 @@ function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineRe
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
-    promptVersions: pipelineResult.metadata.promptVersions,
+    promptVersions: buildQualityPromptVersions(pipelineResult),
   };
 }
 
@@ -1024,14 +1081,17 @@ export async function POST(request: Request) {
   let qualityMetadata: ChapterDraftQualityMetadata | null = null;
 
   if (qualityMode === "quality") {
+    const qualityPipelineInput = {
+      storyContext: buildChapterQualityContext(promptInput),
+      draftSource: "generate",
+      rewritePolicy: "score-threshold",
+      rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
+      enablePlanning: true,
+      enableCharacterDirection: true,
+    } satisfies Parameters<typeof runChapterQualityPipeline>[0];
+
     qualityPipelineResult = await runChapterQualityPipeline(
-      {
-        storyContext: buildChapterQualityContext(promptInput),
-        draftSource: "generate",
-        rewritePolicy: "score-threshold",
-        rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
-        enablePlanning: true,
-      },
+      qualityPipelineInput,
       createQualityPipelineModel(promptInput),
     );
     qualityMetadata = buildQualityMetadata(qualityPipelineResult);
