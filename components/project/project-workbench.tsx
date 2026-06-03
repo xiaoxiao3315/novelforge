@@ -477,7 +477,7 @@ function ProjectBookHeader({
             返回我的故事
           </Link>
           <Link className="button-secondary" href="/account/credits">
-            星火补给
+            {isInteractive ? "星火补给" : "创作额度"}
           </Link>
         </div>
       </div>
@@ -503,12 +503,12 @@ function ProjectBookHeader({
           </div>
           <div>
             <p className="text-xs font-black text-[var(--muted)]">
-              当前星火
+              {isInteractive ? "当前星火" : "当前余额"}
             </p>
             <CreditBadge
               balance={creditBalance}
               className="mt-2"
-              label="星火"
+              label={isInteractive ? "星火" : "余额"}
             />
           </div>
         </div>
@@ -765,7 +765,7 @@ export function ProjectWorkbenchLayout({
               </p>
               <CreditBadge
                 balance={creditBalance}
-                label="当前星火"
+                label={projectMode === "interactive" ? "当前星火" : "当前余额"}
               />
             </div>
             <div className="grid gap-5">{directorSlot}</div>
