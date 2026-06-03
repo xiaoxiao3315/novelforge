@@ -16,20 +16,17 @@ const modeStyles: Record<
   ProjectMode,
   {
     cta: string;
-    hint: string;
     short: string;
     tone: "gold" | "warning";
   }
 > = {
   classic: {
     cta: "继续创作",
-    hint: "稳定推进设定、大纲和章节正文。",
     short: "经典小说",
     tone: "gold",
   },
   interactive: {
     cta: "继续这段命运",
-    hint: "读完章节后做出选择，让故事记住决定。",
     short: "互动剧情",
     tone: "warning",
   },
@@ -54,7 +51,7 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
       href={`/project/${project.id}`}
     >
       <BookCard className="h-full" spine={mode.short}>
-        <div className="flex min-h-[190px] flex-col">
+        <div className="flex min-h-[176px] flex-col">
           <div className="flex items-start justify-between gap-4">
             <div className="min-w-0">
               <BookBadge tone={mode.tone}>{PROJECT_MODE_LABELS[project.mode]}</BookBadge>
@@ -65,12 +62,9 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
             <StatusBookmark tone="gold">{project.status}</StatusBookmark>
           </div>
 
-          <p className="mt-4 line-clamp-3 text-sm leading-7 text-[var(--muted)]">
+          <p className="mt-4 line-clamp-2 text-sm leading-7 text-[var(--muted)]">
             {project.description ||
-              "暂无简介。进入这本书后，可以继续生成设定、故事圣经、章节大纲和正文。"}
-          </p>
-          <p className="mt-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.62)] px-3 py-2 text-xs font-bold leading-5 text-[var(--muted)]">
-            {mode.hint}
+              "暂无简介。进入这本书后，继续上次留下的位置。"}
           </p>
 
           <div className="mt-auto pt-5">

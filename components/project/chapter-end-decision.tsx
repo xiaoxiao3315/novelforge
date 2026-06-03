@@ -100,16 +100,14 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
   }
 
   return (
-    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.55)] p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h4 className="font-serif text-lg font-black text-[var(--ink)]">
-          这次选择掀起的涟漪
-        </h4>
-        <BookBadge tone="warning">写入故事状态</BookBadge>
-      </div>
-      <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-        下一章会感知这些关系、压力和线索变化。
-      </p>
+    <details className="decision-ripple-details">
+      <summary>
+        <span>
+          <strong>查看完整命运涟漪</strong>
+          <span>关系、风险、线索和倾向已写入故事状态。</span>
+        </span>
+        <BookBadge tone="warning">可展开</BookBadge>
+      </summary>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
           <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">羁绊变化</p>
@@ -142,7 +140,7 @@ function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateCh
           />
         </div>
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -381,7 +379,7 @@ export function ChapterEndDecision({
           <div className="grid gap-3 lg:grid-cols-3">
             {decision.options.map((option) => (
               <label
-                className={`cursor-pointer rounded-md border px-3 py-3 transition ${
+                className={`decision-option-card cursor-pointer rounded-md border px-3 py-3 transition ${
                   selectedOptionId === option.id
                     ? "border-[var(--gold)] bg-[rgba(255,244,220,0.9)] shadow-sm"
                     : "border-[var(--line)] bg-[rgba(255,248,234,0.68)]"

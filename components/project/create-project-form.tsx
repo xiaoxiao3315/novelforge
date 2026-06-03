@@ -226,7 +226,7 @@ export function CreateProjectForm() {
         <div className="p-6">
           <div className="grid gap-7 md:grid-cols-2">
             <label className="block md:col-span-2">
-              <span className="mb-2 block text-sm font-bold text-[var(--ink)]">作品名</span>
+              <span className="mb-2 block text-sm font-bold text-[var(--ink)]">故事名</span>
               <input
                 className="input"
                 maxLength={80}
@@ -238,7 +238,7 @@ export function CreateProjectForm() {
             </label>
 
             <label className="block md:col-span-2">
-              <span className="mb-2 block text-sm font-bold text-[var(--ink)]">一句话简介</span>
+              <span className="mb-2 block text-sm font-bold text-[var(--ink)]">故事起点</span>
               <input
                 className="input"
                 maxLength={200}
@@ -248,7 +248,7 @@ export function CreateProjectForm() {
               />
             </label>
 
-            <Section title="先选故事形态">
+            <Section title="故事形态">
               <fieldset className="md:col-span-2">
                 <legend className="mb-3 block text-sm font-bold text-[var(--ink)]">项目模式</legend>
                 <div className="grid gap-3 md:grid-cols-2">
@@ -279,7 +279,9 @@ export function CreateProjectForm() {
                   ))}
                 </div>
               </fieldset>
+            </Section>
 
+            <Section title="故事起点">
               <SelectField
                 label="故事给谁看"
                 name="channel"
@@ -310,82 +312,88 @@ export function CreateProjectForm() {
               />
             </Section>
 
-            <Section title="爽点与钩子">
-              <fieldset className="md:col-span-2">
-                <legend className="mb-2 block text-sm font-bold text-[var(--ink)]">
-                  热门元素
-                </legend>
-                <div className="grid gap-3 md:grid-cols-3">
-                  {marketFilters.tropes.map((option) => {
-                    const checked = form.tropes.includes(option.value);
-                    const disabled = !checked && form.tropes.length >= TROPE_LIMIT;
+            <details className="creation-advanced md:col-span-2">
+              <summary>
+                <span>
+                  <strong>高级筛选</strong>
+                  <span>爽点、主角关系和补充灵感默认折叠，需要时再展开。</span>
+                </span>
+                <BookBadge tone="paper">可选</BookBadge>
+              </summary>
+              <div className="mt-5 grid gap-5 md:grid-cols-2">
+                <fieldset className="md:col-span-2">
+                  <legend className="mb-2 block text-sm font-bold text-[var(--ink)]">
+                    爽点与钩子
+                  </legend>
+                  <div className="grid gap-3 md:grid-cols-3">
+                    {marketFilters.tropes.map((option) => {
+                      const checked = form.tropes.includes(option.value);
+                      const disabled = !checked && form.tropes.length >= TROPE_LIMIT;
 
-                    return (
-                      <label
-                        className={`creation-check-card ${
-                          checked ? "creation-check-card-active" : ""
-                        } ${disabled ? "opacity-55" : ""}`}
-                        key={option.value}
-                      >
-                        <span className="flex items-start gap-2">
-                          <input
-                            checked={checked}
-                            className="mt-1"
-                            disabled={disabled}
-                            onChange={() => toggleTrope(option.value)}
-                            type="checkbox"
-                          />
-                          <span>
-                            <span className="block font-bold text-[var(--ink)]">{option.label}</span>
-                            <span className="mt-1 block leading-5 text-[var(--muted)]">
-                              {option.description}
+                      return (
+                        <label
+                          className={`creation-check-card ${
+                            checked ? "creation-check-card-active" : ""
+                          } ${disabled ? "opacity-55" : ""}`}
+                          key={option.value}
+                        >
+                          <span className="flex items-start gap-2">
+                            <input
+                              checked={checked}
+                              className="mt-1"
+                              disabled={disabled}
+                              onChange={() => toggleTrope(option.value)}
+                              type="checkbox"
+                            />
+                            <span>
+                              <span className="block font-bold text-[var(--ink)]">{option.label}</span>
+                              <span className="mt-1 block leading-5 text-[var(--muted)]">
+                                {option.description}
+                              </span>
                             </span>
                           </span>
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-                <p className="mt-2 text-xs text-[var(--muted)]">
-                  已选择 {form.tropes.length}/{TROPE_LIMIT}
-                </p>
-              </fieldset>
+                        </label>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-2 text-xs text-[var(--muted)]">
+                    已选择 {form.tropes.length}/{TROPE_LIMIT}
+                  </p>
+                </fieldset>
 
-              <SelectField
-                label="主角与关系"
-                name="protagonistArchetype"
-                options={marketFilters.protagonistArchetypes}
-                value={form.protagonistArchetype}
-                onChange={(value) => updateField("protagonistArchetype", value)}
-              />
-              <SelectField
-                label="核心爽点"
-                name="cheatPower"
-                options={marketFilters.cheatPowers}
-                value={form.cheatPower}
-                onChange={(value) => updateField("cheatPower", value)}
-              />
-              <SelectField
-                label="情感线"
-                name="romanceLine"
-                options={marketFilters.romanceLines}
-                value={form.romanceLine}
-                onChange={(value) => updateField("romanceLine", value)}
-              />
-            </Section>
-
-            <Section title="补充灵感">
-              <label className="block md:col-span-2">
-                <span className="mb-2 block text-sm font-bold text-[var(--ink)]">额外想法</span>
-                <textarea
-                  className="input min-h-32 resize-y py-3 leading-6"
-                  maxLength={1200}
-                  value={form.extraIdeas}
-                  onChange={(event) => updateField("extraIdeas", event.target.value)}
-                  placeholder="写下你已有的人物、场景、禁忌、爽点或不想写的方向。"
+                <SelectField
+                  label="主角与关系"
+                  name="protagonistArchetype"
+                  options={marketFilters.protagonistArchetypes}
+                  value={form.protagonistArchetype}
+                  onChange={(value) => updateField("protagonistArchetype", value)}
                 />
-              </label>
-            </Section>
+                <SelectField
+                  label="核心爽点"
+                  name="cheatPower"
+                  options={marketFilters.cheatPowers}
+                  value={form.cheatPower}
+                  onChange={(value) => updateField("cheatPower", value)}
+                />
+                <SelectField
+                  label="情感线"
+                  name="romanceLine"
+                  options={marketFilters.romanceLines}
+                  value={form.romanceLine}
+                  onChange={(value) => updateField("romanceLine", value)}
+                />
+                <label className="block md:col-span-2">
+                  <span className="mb-2 block text-sm font-bold text-[var(--ink)]">补充灵感</span>
+                  <textarea
+                    className="input min-h-32 resize-y py-3 leading-6"
+                    maxLength={1200}
+                    value={form.extraIdeas}
+                    onChange={(event) => updateField("extraIdeas", event.target.value)}
+                    placeholder="写下你已有的人物、场景、禁忌、爽点或不想写的方向。"
+                  />
+                </label>
+              </div>
+            </details>
           </div>
 
           {error ? (

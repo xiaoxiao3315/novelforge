@@ -178,8 +178,8 @@ export default async function CreditsPage() {
             <CreditPackagePanel packages={CREDIT_PACKAGES} mockPaymentEnabled={mockPaymentEnabled} />
           </PaperPanel>
 
-          <PaperPanel className="p-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
+          <details className="credits-fold">
+            <summary>
               <div>
                 <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
                   Spark Ledger
@@ -195,9 +195,9 @@ export default async function CreditsPage() {
                   { id: "transactions", label: "星火流水" },
                 ]}
               />
-            </div>
+            </summary>
 
-            <div className="mt-6 grid gap-6 xl:grid-cols-2">
+            <div className="credits-fold-body grid gap-6 xl:grid-cols-2">
               <section>
                 <h3 className="font-serif text-xl font-black text-[var(--ink)]">最近订单</h3>
                 <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
@@ -318,18 +318,23 @@ export default async function CreditsPage() {
                 )}
               </section>
             </div>
-          </PaperPanel>
+          </details>
         </div>
 
         <aside className="grid gap-6 xl:sticky xl:top-6">
-          <PaperPanel className="p-6">
-            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-              Spark Costs
-            </p>
-            <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
-              消耗规则
-            </h2>
-            <div className="mt-5 grid gap-3">
+          <details className="credits-fold">
+            <summary>
+              <div>
+                <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+                  Spark Costs
+                </p>
+                <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
+                  消耗规则
+                </h2>
+              </div>
+              <BookBadge tone="paper">展开</BookBadge>
+            </summary>
+            <div className="credits-fold-body grid gap-3">
               {Object.entries(GENERATION_CREDIT_COSTS).map(([operation, cost]) => (
                 <BookCard key={operation} spine="消耗">
                   <div className="flex items-start justify-between gap-3">
@@ -346,7 +351,7 @@ export default async function CreditsPage() {
                 </BookCard>
               ))}
             </div>
-          </PaperPanel>
+          </details>
         </aside>
       </section>
     </main>

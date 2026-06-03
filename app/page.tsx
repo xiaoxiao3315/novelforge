@@ -8,7 +8,6 @@ import {
   SectionTabs,
   StatusBookmark,
 } from "@/components/ui/book";
-import { DirectorConsole } from "@/components/ui/director-console";
 import { createClient } from "@/lib/supabase/server";
 
 const modes = [
@@ -30,38 +29,17 @@ const modes = [
 
 const features = [
   {
-    title: "剧情筛选器",
-    description: "用题材、背景、主角、冲突和连载结构先锁定作品方向。",
+    title: "进入故事",
+    description: "从一本故事开始阅读，而不是从后台表单开始操作。",
   },
   {
-    title: "DeepSeek 生成",
-    description: "生成设定、故事圣经、角色卡、章节大纲和单章正文。",
+    title: "做出选择",
+    description: "读完章节后选择下一条命运，让关系、风险和线索发生变化。",
   },
   {
-    title: "AI 导演指令",
-    description: "在章节阶段干预情绪、冲突、伏笔、爽点和结尾钩子。",
+    title: "故事记住你",
+    description: "下一章会继承你的选择与故事状态；星火补给仍只是测试闭环。",
   },
-  {
-    title: "章节摘要与连续性",
-    description: "沉淀关键事件、关系变化、线索和下一章上下文。",
-  },
-  {
-    title: "版本与正式稿",
-    description: "多次生成保留版本，满意后再确认正式稿。",
-  },
-  {
-    title: "星火系统",
-    description: "生成成功后消耗星火；当前星火补给和 mock 支付仅用于测试闭环。",
-  },
-];
-
-const creationSteps = [
-  "写下灵感",
-  "生成设定",
-  "搭建圣经",
-  "展开大纲",
-  "导演章节",
-  "确认文本",
 ];
 
 export default async function HomePage() {
@@ -114,48 +92,29 @@ export default async function HomePage() {
         </div>
 
         <div className="relative">
-          <div className="absolute -left-4 top-8 hidden h-[82%] w-7 rounded-l-md bg-[var(--brown)] shadow-xl lg:block" />
-          <div className="grid gap-4 rounded-lg border border-[var(--line-strong)] bg-[var(--paper-deep)] p-4 shadow-[var(--shadow-book)] md:grid-cols-[1fr_230px]">
+          <PaperPanel className="home-story-preview p-5">
             <ReaderPage
               className="max-w-none"
-              footer={<span>Draft v3 / 可确认正式稿</span>}
+              footer={<span>阅读 → 选择 → 命运改变 → 继续</span>}
               title={
                 <div className="flex items-center justify-between gap-3">
                   <span>第一章 雾城来信</span>
-                  <BookBadge tone="gold">正在创作</BookBadge>
+                  <BookBadge tone="warning">命运分歧</BookBadge>
                 </div>
               }
             >
               <p>
-                雨水敲在旧书店的玻璃上，像有人在门外急促地翻页。林岚拆开那封没有署名的信，
-                纸面浮出一行金色小字：今晚之后，你将记得另一个结局。
+                雨水敲在旧书店的玻璃上。林岚拆开那封没有署名的信，纸面浮出一行金色小字：
+                今晚之后，你将记得另一个结局。
               </p>
-              <p className="mt-5">
-                她抬头时，街灯一盏盏熄灭。柜台后的铜铃没有响，书架深处却传来一声轻笑。
-              </p>
-            </ReaderPage>
-
-            <DirectorConsole
-              className="min-h-full"
-              defaultOpen
-              eyebrow="Director Notes"
-              title="AI 导演批注"
-            >
-              <div className="space-y-4 text-sm leading-6 text-[var(--ink-soft)]">
-                <div>
-                  <p className="font-black text-[var(--ink)]">本章指令</p>
-                  <p className="mt-1 text-[var(--muted)]">
-                    增加悬疑感，但不要提前揭露寄信人身份。
-                  </p>
-                </div>
-                <div>
-                  <p className="font-black text-[var(--ink)]">必须出现</p>
-                  <p className="mt-1 text-[var(--muted)]">旧书店、金色小字、失控的街灯。</p>
-                </div>
-                <BookBadge tone="warning">进入本章 · 消耗星火</BookBadge>
+              <div className="mt-6 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.74)] p-4">
+                <p className="font-serif text-xl font-black text-[var(--ink)]">读完之后，选一条路</p>
+                <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+                  留在书店寻找寄信人，或追进雨夜。故事会记住这次决定。
+                </p>
               </div>
-            </DirectorConsole>
-          </div>
+            </ReaderPage>
+          </PaperPanel>
         </div>
       </section>
 
@@ -200,38 +159,6 @@ export default async function HomePage() {
             </BookCard>
           ))}
         </div>
-      </section>
-
-      <section className="py-10">
-        <PaperPanel className="p-6">
-          <div className="grid gap-6 lg:grid-cols-[280px_1fr]">
-            <div>
-              <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-                From Spark To Chapter
-              </p>
-              <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
-                从灵感到章节
-              </h2>
-              <p className="mt-3 leading-7 text-[var(--muted)]">
-                不是后台流程清单，而是一张创作桌：先定方向，再让 AI 生成可被你继续导演的文本。
-              </p>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {creationSteps.map((step, index) => (
-                <div
-                  className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.72)] px-4 py-4"
-                  key={step}
-                >
-                  <p className="text-xs font-black text-[var(--gold-strong)]">
-                    Chapter Desk {String(index + 1).padStart(2, "0")}
-                  </p>
-                  <p className="mt-2 font-serif text-xl font-black text-[var(--ink)]">{step}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        </PaperPanel>
       </section>
 
       <section className="py-10">

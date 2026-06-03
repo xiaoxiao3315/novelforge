@@ -69,8 +69,7 @@ export default async function DashboardPage() {
             我的故事
           </h1>
           <p className="mt-4 max-w-2xl text-lg leading-9 text-[var(--muted)]">
-            选择一本故事，继续你上次留下的命运。这里保存着你的设定、章节、版本和创作进度，
-            也保存每一次准备继续写下去的冲动。
+            选择一本故事，继续你上次留下的命运。
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <Link className="button-primary" href="/create">
@@ -96,7 +95,7 @@ export default async function DashboardPage() {
               <CreditBadge balance={creditBalance} className="mt-2" label="星火" />
             </div>
             <p className="text-sm leading-7 text-[var(--muted)]">
-              内测提示：真实支付尚未接入，星火补给与 mock 支付仅用于测试闭环。
+              内测：星火补给与 mock 支付仅用于测试闭环。
             </p>
           </div>
         </PaperPanel>
