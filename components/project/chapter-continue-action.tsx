@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { BookBadge } from "@/components/ui/book";
-import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
+import {
+  ChapterQualityModeSelector,
+  formatChapterQualityShortfall,
+  getChapterQualityModeCost,
+  type ChapterQualityMode,
+} from "@/components/project/chapter-quality-mode-selector";
 import { formatUserFacingError } from "@/lib/ui/errors";
 
 type ChapterGenerationResponse = {
@@ -28,12 +33,17 @@ export function ChapterContinueAction({
 }: ChapterContinueActionProps) {
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [qualityMode, setQualityMode] = useState<ChapterQualityMode>("normal");
   const router = useRouter();
-  const chapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
+  const chapterCost = getChapterQualityModeCost(qualityMode);
   const hasEnoughCredits = creditBalance === null || creditBalance >= chapterCost;
   const creditShortfallMessage = hasEnoughCredits
     ? ""
-    : `额度不足：当前 ${creditBalance} 额度，进入下一章需要 ${chapterCost} 额度。`;
+    : formatChapterQualityShortfall({
+        balance: creditBalance,
+        cost: chapterCost,
+        unit: "额度",
+      });
 
   async function generateNextChapter() {
     if (!hasNextChapter || !nextChapterNumber) {
@@ -57,7 +67,7 @@ export function ChapterContinueAction({
       body: JSON.stringify({
         projectId,
         chapterNumber: nextChapterNumber,
-        qualityMode: "normal",
+        qualityMode,
       }),
     });
     const payload = (await response.json().catch(() => null)) as ChapterGenerationResponse | null;
@@ -87,14 +97,26 @@ export function ChapterContinueAction({
           </p>
         </div>
         {hasNextChapter && nextChapterNumber ? (
-          <button
-            className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isGenerating || !hasEnoughCredits}
-            onClick={generateNextChapter}
-            type="button"
-          >
-            {isGenerating ? "下一章生成中..." : `消耗 ${chapterCost} 额度进入下一章`}
-          </button>
+          <div className="grid gap-3">
+            <ChapterQualityModeSelector
+              creditUnit="额度"
+              disabled={isGenerating}
+              mode={qualityMode}
+              onChange={setQualityMode}
+            />
+            <button
+              className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isGenerating || !hasEnoughCredits}
+              onClick={generateNextChapter}
+              type="button"
+            >
+              {isGenerating
+                ? qualityMode === "quality"
+                  ? "精修生成中..."
+                  : "下一章生成中..."
+                : `消耗 ${chapterCost} 额度进入下一章`}
+            </button>
+          </div>
         ) : (
           <p className="rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2 text-sm font-bold leading-6 text-[var(--muted)]">
             需要先铺开后续章节。

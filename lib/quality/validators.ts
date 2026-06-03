@@ -1,5 +1,6 @@
 import {
   CHAPTER_QUALITY_SCORE_KEYS,
+  type ChapterCharacterDirection,
   type ChapterQualityCritique,
   type ChapterQualityScoreKey,
   type ChapterQualityScores,
@@ -43,9 +44,38 @@ const chapterPlanBeatFields = [
   "dialogueTone",
 ] as const;
 
+const chapterCharacterDirectionArrayFields = [
+  "relationshipBeats",
+  "dialogueRules",
+  "actionRules",
+  "hiddenInformation",
+  "continuityGuards",
+  "mustInclude",
+  "mustAvoid",
+] as const;
+
+const chapterCharacterFocusStringFields = [
+  "character",
+  "activeDesire",
+  "emotionalMask",
+  "dialogueVoice",
+  "actionPattern",
+  "relationshipPressure",
+] as const;
+
+const chapterCharacterDirectionWrapperFields = [
+  "characterDirection",
+  "chapterCharacterDirection",
+  "direction",
+] as const;
+
 type ChapterPlanStringField = (typeof chapterPlanStringFields)[number];
 type ChapterPlanArrayField = (typeof chapterPlanArrayFields)[number];
 type ChapterPlanBeatField = (typeof chapterPlanBeatFields)[number];
+type ChapterCharacterDirectionArrayField =
+  (typeof chapterCharacterDirectionArrayFields)[number];
+type ChapterCharacterFocusStringField =
+  (typeof chapterCharacterFocusStringFields)[number];
 
 type ValidationResult =
   | { ok: true; critique: ChapterQualityCritique }
@@ -53,6 +83,10 @@ type ValidationResult =
 
 type ChapterPlanValidationResult =
   | { ok: true; plan: ChapterWritingPlan }
+  | { ok: false; error: string };
+
+type ChapterCharacterDirectionValidationResult =
+  | { ok: true; direction: ChapterCharacterDirection }
   | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -193,6 +227,180 @@ export function normalizeChapterQualityCritique(value: unknown) {
 
 export function isChapterQualityCritique(value: unknown): value is ChapterQualityCritique {
   return validateChapterQualityCritique(value).ok;
+}
+
+function readRequiredStringField(
+  source: Record<string, unknown>,
+  key: string,
+  scope: string,
+  maxLength = 500,
+) {
+  if (!(key in source)) {
+    return { ok: false as const, error: `${scope} missing field: ${key}.` };
+  }
+
+  const value = source[key];
+
+  if (typeof value !== "string") {
+    return { ok: false as const, error: `${scope}.${key} must be a string.` };
+  }
+
+  return { ok: true as const, text: cleanText(value, maxLength) };
+}
+
+function readFocusCharacters(source: Record<string, unknown>) {
+  const value = source.focusCharacters;
+
+  if (!Array.isArray(value)) {
+    return {
+      ok: false as const,
+      error: "focusCharacters must be an object array.",
+    };
+  }
+
+  const focusCharacters: ChapterCharacterDirection["focusCharacters"] = [];
+
+  for (const item of value) {
+    if (!isRecord(item)) {
+      return {
+        ok: false as const,
+        error: "focusCharacters can only contain objects.",
+      };
+    }
+
+    const character = {} as Record<ChapterCharacterFocusStringField, string>;
+
+    for (const key of chapterCharacterFocusStringFields) {
+      const result = readRequiredStringField(item, key, "focusCharacters");
+
+      if (!result.ok) {
+        return { ok: false as const, error: result.error };
+      }
+
+      character[key] = result.text;
+    }
+
+    if (!("mustNotDo" in item)) {
+      return {
+        ok: false as const,
+        error: "focusCharacters missing field: mustNotDo.",
+      };
+    }
+
+    const mustNotDoResult = readStringArray(item, "mustNotDo", 12);
+
+    if (!mustNotDoResult.ok) {
+      return { ok: false as const, error: mustNotDoResult.error };
+    }
+
+    focusCharacters.push({
+      character: character.character,
+      activeDesire: character.activeDesire,
+      emotionalMask: character.emotionalMask,
+      dialogueVoice: character.dialogueVoice,
+      actionPattern: character.actionPattern,
+      relationshipPressure: character.relationshipPressure,
+      mustNotDo: mustNotDoResult.items,
+    });
+  }
+
+  return {
+    ok: true as const,
+    focusCharacters: focusCharacters.slice(0, 12),
+  };
+}
+
+function unwrapChapterCharacterDirection(value: unknown) {
+  if (!isRecord(value) || "povGuidance" in value) {
+    return value;
+  }
+
+  for (const key of chapterCharacterDirectionWrapperFields) {
+    const wrappedValue = value[key];
+
+    if (isRecord(wrappedValue)) {
+      return wrappedValue;
+    }
+  }
+
+  return value;
+}
+
+export function validateChapterCharacterDirection(
+  value: unknown,
+): ChapterCharacterDirectionValidationResult {
+  const directionValue = unwrapChapterCharacterDirection(value);
+
+  if (!isRecord(directionValue)) {
+    return { ok: false, error: "chapter character direction must be a JSON object." };
+  }
+
+  const povGuidanceResult = readRequiredStringField(
+    directionValue,
+    "povGuidance",
+    "chapter character direction",
+    800,
+  );
+
+  if (!povGuidanceResult.ok) {
+    return { ok: false, error: povGuidanceResult.error };
+  }
+
+  if (!("focusCharacters" in directionValue)) {
+    return {
+      ok: false,
+      error: "chapter character direction missing field: focusCharacters.",
+    };
+  }
+
+  const focusCharactersResult = readFocusCharacters(directionValue);
+
+  if (!focusCharactersResult.ok) {
+    return { ok: false, error: focusCharactersResult.error };
+  }
+
+  const arrays = {} as Record<ChapterCharacterDirectionArrayField, string[]>;
+
+  for (const key of chapterCharacterDirectionArrayFields) {
+    if (!(key in directionValue)) {
+      return {
+        ok: false,
+        error: `chapter character direction missing field: ${key}.`,
+      };
+    }
+
+    const result = readStringArray(directionValue, key, 16);
+
+    if (!result.ok) {
+      return { ok: false, error: result.error };
+    }
+
+    arrays[key] = result.items;
+  }
+
+  return {
+    ok: true,
+    direction: {
+      povGuidance: povGuidanceResult.text,
+      focusCharacters: focusCharactersResult.focusCharacters,
+      relationshipBeats: arrays.relationshipBeats,
+      dialogueRules: arrays.dialogueRules,
+      actionRules: arrays.actionRules,
+      hiddenInformation: arrays.hiddenInformation,
+      continuityGuards: arrays.continuityGuards,
+      mustInclude: arrays.mustInclude,
+      mustAvoid: arrays.mustAvoid,
+    },
+  };
+}
+
+export function normalizeChapterCharacterDirection(value: unknown) {
+  const result = validateChapterCharacterDirection(value);
+  return result.ok ? result.direction : null;
+}
+
+export function isChapterCharacterDirection(value: unknown): value is ChapterCharacterDirection {
+  return validateChapterCharacterDirection(value).ok;
 }
 
 function readRequiredPlanString(source: Record<string, unknown>, key: ChapterPlanStringField) {
