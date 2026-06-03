@@ -2,8 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import {
+  ChapterQualityModeSelector,
+  formatChapterQualityShortfall,
+  getChapterQualityModeCost,
+  type ChapterQualityMode,
+} from "@/components/project/chapter-quality-mode-selector";
 import { BookBadge, PaperPanel } from "@/components/ui/book";
-import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import {
   CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT,
@@ -82,8 +87,10 @@ export function ChapterEndDecision({
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNextChapter, setIsGeneratingNextChapter] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [nextChapterQualityMode, setNextChapterQualityMode] =
+    useState<ChapterQualityMode>("normal");
   const router = useRouter();
-  const nextChapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
+  const nextChapterCost = getChapterQualityModeCost(nextChapterQualityMode);
   const hasSavedDecision = decision ? hasSelectedChapterDecision(decision) : false;
   const hasPendingChoice = decision
     ? (selectedOptionId || "") !== (decision.selectedOptionId ?? "") ||
@@ -111,7 +118,11 @@ export function ChapterEndDecision({
     creditBalance === null || creditBalance >= nextChapterCost;
   const nextChapterCreditShortfallMessage = hasEnoughNextChapterCredits
     ? ""
-    : `星火不足：当前 ${creditBalance} 星火，进入下一章需要 ${nextChapterCost} 星火。`;
+    : formatChapterQualityShortfall({
+        balance: creditBalance,
+        cost: nextChapterCost,
+        unit: "星火",
+      });
 
   async function generateDecision() {
     setError("");
@@ -214,7 +225,7 @@ export function ChapterEndDecision({
       body: JSON.stringify({
         projectId,
         chapterNumber: nextChapterNumber,
-        qualityMode: "normal",
+        qualityMode: nextChapterQualityMode,
       }),
     });
     const payload = (await response.json().catch(() => null)) as ChapterGenerationResponse | null;
@@ -356,23 +367,33 @@ export function ChapterEndDecision({
                   </p>
                 </div>
                 {hasNextChapter && nextChapterNumber ? (
-                  <button
-                    className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-                    disabled={
-                      isGeneratingNextChapter ||
-                      isSaving ||
-                      hasPendingChoice ||
-                      !hasEnoughNextChapterCredits
-                    }
-                    onClick={generateNextChapter}
-                    type="button"
-                  >
-                    {isGeneratingNextChapter
-                      ? "下一章生成中..."
-                      : hasPendingChoice
-                        ? "先确认新的选择"
-                        : `消耗 ${nextChapterCost} 星火进入下一章`}
-                  </button>
+                  <div className="grid gap-3">
+                    <ChapterQualityModeSelector
+                      creditUnit="星火"
+                      disabled={isGeneratingNextChapter || isSaving}
+                      mode={nextChapterQualityMode}
+                      onChange={setNextChapterQualityMode}
+                    />
+                    <button
+                      className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={
+                        isGeneratingNextChapter ||
+                        isSaving ||
+                        hasPendingChoice ||
+                        !hasEnoughNextChapterCredits
+                      }
+                      onClick={generateNextChapter}
+                      type="button"
+                    >
+                      {isGeneratingNextChapter
+                        ? nextChapterQualityMode === "quality"
+                          ? "精修生成中..."
+                          : "下一章生成中..."
+                        : hasPendingChoice
+                          ? "先确认新的选择"
+                          : `消耗 ${nextChapterCost} 星火进入下一章`}
+                    </button>
+                  </div>
                 ) : (
                   <p className="rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2 text-sm font-bold leading-6 text-[var(--muted)]">
                     需要先铺开后续章节。
