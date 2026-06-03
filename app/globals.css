@@ -100,6 +100,24 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.app-nav-brand-text {
+  display: grid;
+  gap: 2px;
+  line-height: 1.1;
+}
+
+.app-nav-subtitle {
+  color: var(--muted);
+  font-family:
+    "Microsoft YaHei",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    Arial,
+    sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .app-nav-links {
   display: flex;
   flex-wrap: wrap;
@@ -131,7 +149,12 @@ button:disabled {
 }
 
 .app-nav-credit-link {
-  padding: 0;
+  gap: 8px;
+  padding: 0 0 0 10px;
+}
+
+.app-nav-credit-text {
+  font-weight: 800;
 }
 
 .surface,
