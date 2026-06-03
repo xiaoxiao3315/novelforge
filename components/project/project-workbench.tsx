@@ -696,7 +696,7 @@ function ChapterReaderPreview({
     <div className="grid gap-5" id="chapter-reader">
       {isInteractive ? (
         <div className="story-flow-strip" aria-label="互动故事流程">
-          {["阅读本章", "做出选择", "命运改变", "继续下一章"].map((step, index) => (
+          {["阅读", "选择", "继续"].map((step, index) => (
             <span className="story-flow-step" key={step}>
               <span className="story-flow-index">{index + 1}</span>
               {step}
@@ -798,7 +798,7 @@ function ChapterBackmatter({
   );
 }
 
-function InteractiveTheaterHeader({
+function MinimalReaderHeader({
   chapter,
   creditBalance,
   project,
@@ -810,28 +810,27 @@ function InteractiveTheaterHeader({
   volume: VolumeOutline | null;
 }) {
   return (
-    <section className="minimal-theater-hero">
+    <section className="minimal-reader-header">
       <div>
-        <div className="flex flex-wrap items-center gap-3">
-          <StatusBookmark tone="warning">Story Theater</StatusBookmark>
+        <div className="minimal-reader-kicker-row">
           <BookBadge tone="warning">互动剧情</BookBadge>
+          <span>互动阅读器</span>
         </div>
-        <h1 className="minimal-theater-title">{project.title}</h1>
-        <p className="minimal-theater-subtitle">
+        <h1 className="minimal-reader-title">{project.title}</h1>
+        <p className="minimal-reader-subtitle">
           {chapter
             ? `当前停在第 ${chapter.chapterNumber} 章 · ${chapter.title}`
             : "先铺开章节，再进入这段会记住选择的故事。"}
         </p>
-        <p className="minimal-theater-meta">
+        <p className="minimal-reader-meta">
           {volume
             ? `第 ${volume.volumeNumber} 卷 · ${volume.title}`
             : project.description || "进入故事，阅读本章，做出选择。"}
         </p>
       </div>
-      <div className="minimal-theater-balance">
-        <p className="text-xs font-black text-[var(--gold-strong)]">当前星火</p>
-        <CreditBadge balance={creditBalance} className="mt-2" label="星火" />
-        <Link className="button-secondary mt-4 min-h-10 w-full px-3 text-sm" href="/account/credits">
+      <div className="minimal-reader-actions">
+        <CreditBadge balance={creditBalance} label="星火" />
+        <Link className="minimal-reader-link" href="/account/credits">
           星火补给
         </Link>
       </div>
@@ -839,69 +838,48 @@ function InteractiveTheaterHeader({
   );
 }
 
-function InteractiveFateDrawer({
+function MinimalChapterRail({
   chapters,
   currentChapter,
-  interactiveState,
-  project,
-  volume,
 }: {
   chapters: WorkbenchChapter[];
   currentChapter: WorkbenchChapter | null;
-  interactiveState: InteractiveStoryState | null;
-  project: WorkbenchProject;
-  volume: VolumeOutline | null;
 }) {
   return (
-    <details className="theater-drawer">
-      <summary>
-        <span>
-          <span className="theater-drawer-kicker">Destiny Book</span>
-          <strong>命运之书</strong>
-        </span>
-        <BookBadge tone="warning">目录</BookBadge>
-      </summary>
-      <div className="theater-drawer-body theater-drawer-body-grid">
-        <PaperPanel className="p-5">
-          <h2 className="font-serif text-2xl font-black text-[var(--ink)]">命运之书</h2>
-          <div className="mt-4 grid gap-3 sm:grid-cols-3">
-            <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
-              <p className="text-xs font-black text-[var(--muted)]">作品</p>
-              <p className="mt-1 font-bold text-[var(--ink)]">{project.title}</p>
-            </div>
-            <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
-              <p className="text-xs font-black text-[var(--muted)]">当前卷</p>
-              <p className="mt-1 font-bold text-[var(--ink)]">{volume?.title ?? "待开启"}</p>
-            </div>
-            <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
-              <p className="text-xs font-black text-[var(--muted)]">章节</p>
-              <p className="mt-1 font-bold text-[var(--ink)]">{chapters.length} 章</p>
-            </div>
-          </div>
-          <a className="button-primary mt-4 min-h-10 px-3 text-sm" href="#chapter-reader">
-            进入故事
-          </a>
-        </PaperPanel>
+    <aside className="minimal-chapter-rail" aria-label="章节目录">
+      <p className="minimal-chapter-rail-label">章节</p>
+      <nav className="minimal-chapter-dots" aria-label="章节快捷入口">
+        {chapters.slice(0, 12).map((chapter) => {
+          const isCurrent = chapter.id === currentChapter?.id;
 
-        <PaperPanel className="p-5">
-          <h3 className="font-serif text-xl font-black text-[var(--ink)]">章节目录</h3>
-          <div className="mt-4">
-            <ChapterToc
-              chapters={chapters}
-              currentChapterId={currentChapter?.id}
-              projectMode="interactive"
-              scrollable={false}
-            />
-          </div>
-        </PaperPanel>
-
-        <InteractiveStatePanel interactiveState={interactiveState} projectMode="interactive" />
-      </div>
-    </details>
+          return (
+            <a
+              aria-current={isCurrent ? "page" : undefined}
+              className={isCurrent ? "minimal-chapter-dot minimal-chapter-dot-active" : "minimal-chapter-dot"}
+              href="#chapter-reader"
+              key={chapter.id}
+              title={`第 ${chapter.chapterNumber} 章 ${chapter.title}`}
+            >
+              {chapter.chapterNumber}
+            </a>
+          );
+        })}
+      </nav>
+      <details className="minimal-chapter-menu">
+        <summary>目录</summary>
+        <div className="minimal-chapter-menu-body">
+          <ChapterToc
+            chapters={chapters}
+            currentChapterId={currentChapter?.id}
+            projectMode="interactive"
+          />
+        </div>
+      </details>
+    </aside>
   );
 }
 
-function InteractiveCreativeToolsDrawer({
+function MinimalCreativeToolsDrawer({
   chapter,
   configItems,
   directorSlot,
@@ -918,25 +896,25 @@ function InteractiveCreativeToolsDrawer({
   const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
 
   return (
-    <details className="theater-drawer">
+    <details className="minimal-tools-drawer">
       <summary>
         <span>
-          <span className="theater-drawer-kicker">Tool Drawer</span>
+          <span className="minimal-tools-kicker">创作辅助</span>
           <strong>创作工具</strong>
         </span>
-        <BookBadge tone="paper">默认隐藏</BookBadge>
+        <BookBadge tone="paper">默认收起</BookBadge>
       </summary>
-      <div className="theater-drawer-body">
-        <div className="theater-tool-grid">
+      <div className="minimal-tools-body">
+        <div className="minimal-tools-grid">
           <div className="grid gap-5">
             {directorSlot}
-          </div>
-          <div className="grid gap-5">
             <StoryConfigPanel
               configItems={configItems}
               extraIdeas={extraIdeas}
               hasConfig={hasConfig}
             />
+          </div>
+          <div className="grid gap-5">
             <ChapterBackmatter chapter={chapter} readerSource={reader.source} summary={summary} />
           </div>
         </div>
@@ -961,31 +939,15 @@ function InteractiveTheaterLayout({
 }) {
   return (
     <>
-      <InteractiveTheaterHeader
+      <MinimalReaderHeader
         chapter={currentChapter}
         creditBalance={creditBalance}
         project={project}
         volume={volume}
       />
 
-      <section className="minimal-theater-shell">
-        <div className="theater-drawer-row">
-          <InteractiveFateDrawer
-            chapters={chapters}
-            currentChapter={currentChapter}
-            interactiveState={interactiveState}
-            project={project}
-            volume={volume}
-          />
-          <InteractiveCreativeToolsDrawer
-            chapter={currentChapter}
-            configItems={configItems}
-            directorSlot={directorSlot}
-            extraIdeas={extraIdeas}
-            hasConfig={hasConfig}
-          />
-        </div>
-
+      <section className="minimal-reader-shell">
+        <MinimalChapterRail chapters={chapters} currentChapter={currentChapter} />
         <main className="minimal-reader-stage min-w-0">
           <ChapterReaderPreview
             chapter={currentChapter}
@@ -994,6 +956,13 @@ function InteractiveTheaterLayout({
             projectMode="interactive"
             showBackmatter={false}
             volume={volume}
+          />
+          <MinimalCreativeToolsDrawer
+            chapter={currentChapter}
+            configItems={configItems}
+            directorSlot={directorSlot}
+            extraIdeas={extraIdeas}
+            hasConfig={hasConfig}
           />
         </main>
 

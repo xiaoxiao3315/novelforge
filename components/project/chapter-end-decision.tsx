@@ -341,8 +341,8 @@ export function ChapterEndDecision({
   }
 
   return (
-    <PaperPanel className="chapter-decision-panel mt-8 p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <PaperPanel className="chapter-decision-panel mt-0 p-0">
+      <div className="decision-panel-header">
         <div>
           <BookBadge tone="warning">命运分歧</BookBadge>
           <h3 className="mt-3 font-serif text-2xl font-black text-[var(--ink)]">
@@ -353,7 +353,7 @@ export function ChapterEndDecision({
           </p>
         </div>
         <button
-          className="button-secondary min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
           disabled={isGenerating || isSaving}
           onClick={generateDecision}
           type="button"
@@ -376,7 +376,7 @@ export function ChapterEndDecision({
         <div className="mt-5 grid gap-4">
           <p className="font-bold leading-7 text-[var(--ink)]">{decision.question}</p>
 
-          <div className="grid gap-3 lg:grid-cols-3">
+          <div className="chapter-choice-list">
             {decision.options.map((option) => (
               <label
                 className={`decision-option-card cursor-pointer rounded-md border px-3 py-3 transition ${
@@ -386,49 +386,55 @@ export function ChapterEndDecision({
                 }`}
                 key={option.id}
               >
-                <span className="flex items-start gap-2">
+                <span className="grid gap-2">
                   <input
                     checked={selectedOptionId === option.id}
-                    className="mt-1"
+                    className="sr-only"
                     disabled={isSaving}
                     name={`chapter-end-decision-${chapterId}`}
                     onChange={() => setSelectedOptionId(option.id)}
                     type="radio"
                     value={option.id}
                   />
-                  <span>
+                  <span className="flex items-start justify-between gap-3">
                     <span className="block font-black text-[var(--ink)]">
                       {option.id}. {option.label}
                     </span>
-                    <span className="mt-1 block text-sm leading-6 text-[var(--muted)]">
-                      {option.description}
-                    </span>
-                    <span className="mt-2 block text-xs leading-5 text-[var(--muted)]">
-                      可能带来的回声：{option.expectedEffects.join("；")}
-                    </span>
+                    {selectedOptionId === option.id ? (
+                      <BookBadge tone="warning">已选</BookBadge>
+                    ) : null}
+                  </span>
+                  <span className="block text-sm leading-6 text-[var(--muted)]">
+                    {option.description}
+                  </span>
+                  <span className="block text-xs leading-5 text-[var(--muted)]">
+                    回声：{option.expectedEffects.join("；")}
                   </span>
                 </span>
               </label>
             ))}
           </div>
 
-          <label className="grid gap-1">
-            <span className="text-xs font-bold uppercase text-[var(--muted)]">
-              自定义命运
-            </span>
-            <textarea
-              className="min-h-24 resize-y rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.82)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--gold)]"
-              disabled={isSaving}
-              maxLength={CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
-              onChange={(event) => setCustomChoice(event.target.value)}
-              placeholder="如果三个选项都不够贴合，可以写下你希望主角做出的决定。"
-              rows={3}
-              value={customChoice}
-            />
-            <span className="text-right text-xs font-bold text-[var(--muted)]">
-              {customChoice.length}/{CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
-            </span>
-          </label>
+          <details className="custom-choice-details">
+            <summary>写自定义命运</summary>
+            <label className="mt-3 grid gap-1">
+              <span className="text-xs font-bold uppercase text-[var(--muted)]">
+                自定义命运
+              </span>
+              <textarea
+                className="min-h-24 resize-y rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.82)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--gold)]"
+                disabled={isSaving}
+                maxLength={CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
+                onChange={(event) => setCustomChoice(event.target.value)}
+                placeholder="如果三个选项都不够贴合，可以写下你希望主角做出的决定。"
+                rows={3}
+                value={customChoice}
+              />
+              <span className="text-right text-xs font-bold text-[var(--muted)]">
+                {customChoice.length}/{CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
+              </span>
+            </label>
+          </details>
 
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div
