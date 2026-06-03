@@ -343,7 +343,7 @@ export function ChapterEndDecision({
   }
 
   return (
-    <PaperPanel className="mt-8 p-5">
+    <PaperPanel className="chapter-decision-panel mt-8 p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <BookBadge tone="warning">命运分歧</BookBadge>

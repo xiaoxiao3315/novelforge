@@ -361,6 +361,105 @@ function StateValueGrid({
   );
 }
 
+function formatDirectorStateValue(value: boolean | number | string) {
+  if (typeof value === "boolean") {
+    return value ? "已触发" : "未触发";
+  }
+
+  if (typeof value === "number") {
+    return value > 0 ? `+${value}` : String(value);
+  }
+
+  return value;
+}
+
+function formatDirectorStateItems(
+  items: Array<[string, boolean | number | string]>,
+  fallback: string,
+) {
+  if (items.length === 0) {
+    return fallback;
+  }
+
+  return items
+    .slice(0, 3)
+    .map(([name, value]) => `${name} ${formatDirectorStateValue(value)}`)
+    .join(" / ");
+}
+
+function DirectorBriefPanel({
+  chapter,
+  creditBalance,
+  interactiveState,
+  projectMode,
+  volume,
+}: {
+  chapter: WorkbenchChapter | null;
+  creditBalance: number | null;
+  interactiveState: InteractiveStoryState | null;
+  projectMode: ProjectMode;
+  volume: VolumeOutline | null;
+}) {
+  const isInteractive = projectMode === "interactive";
+  const currentScene = chapter
+    ? `第 ${chapter.chapterNumber} 章 · ${chapter.title}`
+    : isInteractive
+      ? "命运尚未开场"
+      : "章节尚未生成";
+  const currentSceneDetail = chapter
+    ? chapter.highlight || chapter.event
+    : isInteractive
+      ? "先铺开章节，再进入故事。"
+      : "先生成章节大纲，再开始正文。";
+  const relationshipState = formatDirectorStateItems(
+    Object.entries(interactiveState?.relationships ?? {}),
+    chapter?.characterChange || (isInteractive ? "羁绊尚未改写" : "角色状态待生成"),
+  );
+  const worldState =
+    volume?.mainConflict ||
+    volume?.summary ||
+    (isInteractive ? "世界规则会随章节沉淀。" : "故事圣经生成后会固定世界规则。");
+  const routeState = formatDirectorStateItems(
+    Object.entries(interactiveState?.routeTendency ?? {}),
+    isInteractive ? "尚未分岔" : "按大纲推进",
+  );
+  const clueState = formatDirectorStateItems(
+    Object.entries(interactiveState?.clues ?? {}),
+    isInteractive ? "线索尚未点亮" : "伏笔待生成",
+  );
+  const creditLabel = isInteractive ? "星火状态" : "创作额度";
+  const creditValue = `${typeof creditBalance === "number" ? creditBalance : "--"} ${
+    isInteractive ? "星火" : "额度"
+  }`;
+
+  const cards = isInteractive
+    ? [
+        ["当前场景", currentScene, currentSceneDetail],
+        ["角色状态", relationshipState, "会影响下一章的人物反应。"],
+        ["世界设定", worldState, "把规则压在剧情背后，不打断阅读。"],
+        ["命运倾向", routeState, clueState],
+        [creditLabel, creditValue, "进入章节和铺开内容仍沿用现有扣费逻辑。"],
+      ]
+    : [
+        ["当前章节", currentScene, currentSceneDetail],
+        ["创作阶段", chapter ? getChapterStatus(chapter) : "等待大纲", "按设定、大纲、正文顺序推进。"],
+        ["世界设定", worldState, "故事圣经生成后会作为后续章节依据。"],
+        [creditLabel, creditValue, "创作入口仍沿用现有扣费逻辑。"],
+      ];
+
+  return (
+    <div className="director-brief-grid">
+      {cards.map(([label, value, detail]) => (
+        <article className="director-brief-card" key={label}>
+          <p className="director-brief-label">{label}</p>
+          <p className="director-brief-value">{value}</p>
+          <p className="director-brief-detail">{detail}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 function InteractiveStatePanel({
   interactiveState,
   projectMode,
@@ -566,7 +665,9 @@ function ChapterReaderPreview({
           </div>
         }
       >
-        <div className="whitespace-pre-wrap">{reader.body}</div>
+        <div className={isInteractive ? "story-page-prose whitespace-pre-wrap" : "whitespace-pre-wrap"}>
+          {reader.body}
+        </div>
         {isInteractive && chapter ? (
           <ChapterEndDecision
             chapterId={chapter.id}
@@ -633,6 +734,7 @@ export function ProjectWorkbenchLayout({
 }: ProjectWorkbenchLayoutProps) {
   const currentChapter =
     chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ?? chapters[0] ?? null;
+  const isInteractive = projectMode === "interactive";
 
   return (
     <>
@@ -642,7 +744,12 @@ export function ProjectWorkbenchLayout({
         projectMode={projectMode}
       />
 
-      <section className="project-workbench-shell project-workbench-grid">
+      <section
+        className={[
+          "project-workbench-shell project-workbench-grid",
+          isInteractive ? "project-workbench-grid-interactive" : "project-workbench-grid-classic",
+        ].join(" ")}
+      >
         <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
@@ -724,23 +831,33 @@ export function ProjectWorkbenchLayout({
 
         <aside className="project-director-column xl:sticky xl:top-6">
           <DirectorConsole
+            className={isInteractive ? "story-director-console" : "book-director-console"}
             collapsedLabel="展开导演台"
             defaultOpen
-            eyebrow={projectMode === "interactive" ? "Story Director" : "AI Director"}
-            title={projectMode === "interactive" ? "故事导演台" : "AI 导演台"}
+            eyebrow={isInteractive ? "Story Director" : "AI Director"}
+            title={isInteractive ? "故事导演台" : "AI 导演台"}
           >
-            <div className="mb-4 grid gap-3">
-              <p className="text-sm leading-7 text-[var(--muted)]">
-                {projectMode === "interactive"
-                  ? "设定、故事圣经、大纲与章节入口仍在这里；进入下一章前，会沿用上一章选择和当前故事状态。"
-                  : "生成设定、故事圣经、大纲、章节正文和正式稿确认仍使用原有入口；收起导演台后，中央书页会保持完整阅读宽度。"}
-              </p>
-              <CreditBadge
-                balance={creditBalance}
-                label={projectMode === "interactive" ? "当前星火" : "当前点数"}
-              />
-            </div>
-            <div className="grid gap-5">{directorSlot}</div>
+            <DirectorBriefPanel
+              chapter={currentChapter}
+              creditBalance={creditBalance}
+              interactiveState={interactiveState}
+              projectMode={projectMode}
+              volume={volume}
+            />
+            {isInteractive ? (
+              <details className="director-toolbox">
+                <summary>
+                  <span>
+                    <span className="director-toolbox-kicker">工具箱</span>
+                    <strong>展开故事生成入口</strong>
+                  </span>
+                  <BookBadge tone="warning">可选</BookBadge>
+                </summary>
+                <div className="director-toolbox-body">{directorSlot}</div>
+              </details>
+            ) : (
+              <div className="director-toolbox-body director-toolbox-body-open">{directorSlot}</div>
+            )}
           </DirectorConsole>
         </aside>
       </section>
