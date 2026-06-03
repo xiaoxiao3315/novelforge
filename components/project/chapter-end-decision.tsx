@@ -187,6 +187,43 @@ function InteractiveStateAfterSave({
   );
 }
 
+function getSelectedChoiceLabel(decision: ChapterDecision) {
+  const selectedOption = decision.selectedOptionId
+    ? decision.options.find((option) => option.id === decision.selectedOptionId)
+    : null;
+  const customChoice = decision.customChoice.trim();
+
+  if (customChoice) {
+    return customChoice;
+  }
+
+  if (selectedOption) {
+    return `${selectedOption.id}. ${selectedOption.label}`;
+  }
+
+  return "这条命运";
+}
+
+function getPrimaryImpactSummary(stateChanges: StoryStateChanges | null) {
+  if (!stateChanges || !hasStoryStateChanges(stateChanges)) {
+    return ["角色关系和故事状态已更新，下一章会继承这次选择。"];
+  }
+
+  return [
+    ...stateChanges.relationships.map(
+      (item) => `羁绊变化：${item.name} ${formatChangeValue(item.change)}`,
+    ),
+    ...stateChanges.meters.map(
+      (item) => `压力与风险：${item.name} ${formatChangeValue(item.change)}`,
+    ),
+    ...stateChanges.clues.map((item) => `被点亮的线索：${item.name} ${item.status}`),
+    ...stateChanges.routeTendency.map(
+      (item) => `命运倾向：${item.name} ${formatChangeValue(item.change)}`,
+    ),
+    ...stateChanges.flags.map((item) => `故事标记：${item.key}${item.value ? " 已触发" : ""}`),
+  ].slice(0, 4);
+}
+
 export function ChapterEndDecision({
   chapterId,
   chapterNumber,
@@ -228,6 +265,8 @@ export function ChapterEndDecision({
           className: "border-[var(--line)] bg-[rgba(255,248,234,0.68)]",
           title: "选择尚未落定",
         };
+  const selectedChoiceLabel = decision ? getSelectedChoiceLabel(decision) : "";
+  const primaryImpactSummary = getPrimaryImpactSummary(stateChanges);
 
   async function generateDecision() {
     setError("");
@@ -409,6 +448,35 @@ export function ChapterEndDecision({
               {isSaving ? "正在写入..." : "做出选择"}
             </button>
           </div>
+          {hasSavedDecision ? (
+            <div className="choice-result-card">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <BookBadge tone="success">命运已写入故事</BookBadge>
+                  <h4 className="mt-3 font-serif text-xl font-black text-[var(--ink)]">
+                    你选择了
+                  </h4>
+                  <p className="mt-2 text-sm font-bold leading-7 text-[var(--ink-soft)]">
+                    {selectedChoiceLabel}
+                  </p>
+                </div>
+                <a className="button-primary min-h-10 px-4 text-sm" href="#chapter-reader">
+                  沿这条命运继续下一章
+                </a>
+              </div>
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                下一章将沿着这条命运继续。角色关系和故事状态已更新。
+              </p>
+              <div className="mt-4 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.7)] px-3 py-3">
+                <p className="text-xs font-black text-[var(--gold-strong)]">主要影响摘要</p>
+                <ul className="mt-2 grid gap-2 text-sm leading-6 text-[var(--ink-soft)]">
+                  {primaryImpactSummary.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ) : null}
           <ChapterStateChangesPanel stateChanges={stateChanges} />
           <InteractiveStateAfterSave interactiveState={interactiveState} />
         </div>

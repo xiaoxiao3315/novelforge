@@ -5,9 +5,16 @@ import { CreditBadge } from "@/components/ui/book";
 type AppNavProps = {
   isAuthed: boolean;
   creditBalance?: number | null;
+  creditBadgeLabel?: string;
+  creditLinkLabel?: string;
 };
 
-export function AppNav({ isAuthed, creditBalance }: AppNavProps) {
+export function AppNav({
+  isAuthed,
+  creditBalance,
+  creditBadgeLabel = "星火",
+  creditLinkLabel = "星火补给",
+}: AppNavProps) {
   return (
     <nav className="app-nav">
       <Link href={isAuthed ? "/dashboard" : "/"} className="app-nav-brand">
@@ -30,8 +37,8 @@ export function AppNav({ isAuthed, creditBalance }: AppNavProps) {
               开启新故事
             </Link>
             <Link className="app-nav-link app-nav-credit-link" href="/account/credits">
-              <span className="app-nav-credit-text">星火补给</span>
-              <CreditBadge balance={creditBalance} label="星火" />
+              <span className="app-nav-credit-text">{creditLinkLabel}</span>
+              <CreditBadge balance={creditBalance} label={creditBadgeLabel} />
             </Link>
             <SignOutButton />
           </>

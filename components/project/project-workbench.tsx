@@ -421,44 +421,74 @@ function ProjectBookHeader({
 }) {
   const modeTone = getProjectModeTone(projectMode);
   const isInteractive = projectMode === "interactive";
+  const headerCopy = isInteractive
+    ? {
+        desk: "Theater Desk",
+        entry: "进入故事",
+        kicker: "读完章节，做出选择，故事会记住你的决定。",
+        returnLabel: "返回我的故事",
+        supplyLabel: "星火补给",
+        balanceLabel: "当前星火",
+        flow: ["阅读本章", "做出选择", "命运改变", "继续下一章"],
+      }
+    : {
+        desk: "Writing Desk",
+        entry: "创作书桌",
+        kicker: "整理设定、大纲和章节正文，稳稳推进这本小说。",
+        returnLabel: "返回我的故事",
+        supplyLabel: "创作补给",
+        balanceLabel: "当前额度",
+        flow: ["作品设定", "故事圣经", "章节大纲", "正文成稿"],
+      };
 
   return (
-    <section className="project-workbench-shell grid gap-6 py-8 lg:grid-cols-[minmax(0,1fr)_280px]">
-      <div>
+    <section className="project-workbench-shell project-hero-grid py-8">
+      <div className="project-hero-card">
         <div className="flex flex-wrap items-center gap-3">
           <StatusBookmark tone="gold">
             {isInteractive ? "Story Theater" : "Book Workbench"}
           </StatusBookmark>
           <BookBadge tone={modeTone}>{PROJECT_MODE_LABELS[projectMode]}</BookBadge>
         </div>
-        <h1 className="mt-8 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
+        <p className="mt-8 text-sm font-black uppercase text-[var(--gold-strong)]">
+          {headerCopy.entry}
+        </p>
+        <h1 className="mt-3 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
           {project.title}
         </h1>
         <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
           {project.description || "这本书暂未填写简介。"}
         </p>
-        {isInteractive ? (
-          <p className="mt-3 max-w-3xl rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.7)] px-3 py-2 text-sm leading-7 text-[var(--muted)]">
-            阅读章节后做出选择；下一章会沿用上一章选择和当前故事状态。
-          </p>
-        ) : null}
+        <p className="mt-3 max-w-3xl text-sm font-bold leading-7 text-[var(--ink-soft)]">
+          {headerCopy.kicker}
+        </p>
+        <div className="project-hero-flow mt-5" aria-label={isInteractive ? "互动故事流程" : "创作流程"}>
+          {headerCopy.flow.map((step, index) => (
+            <span className="project-hero-flow-step" key={step}>
+              <span className="project-hero-flow-index">{index + 1}</span>
+              {step}
+            </span>
+          ))}
+        </div>
         <div className="mt-6 flex flex-wrap gap-3">
           <Link className="button-secondary" href="/dashboard">
-            返回我的书架
+            {headerCopy.returnLabel}
           </Link>
           <Link className="button-secondary" href="/account/credits">
-            {isInteractive ? "星火补给" : "点数钱包"}
+            {headerCopy.supplyLabel}
           </Link>
         </div>
       </div>
 
-      <PaperPanel className="p-5">
+      <PaperPanel className="project-hero-ledger p-5">
         <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-          {isInteractive ? "Theater Desk" : "Project Desk"}
+          {headerCopy.desk}
         </p>
         <div className="mt-4 grid gap-4">
           <div>
-            <p className="text-xs font-black text-[var(--muted)]">作品状态</p>
+            <p className="text-xs font-black text-[var(--muted)]">
+              {isInteractive ? "故事状态" : "作品状态"}
+            </p>
             <BookBadge className="mt-2" tone="gold">
               {project.status}
             </BookBadge>
@@ -470,11 +500,11 @@ function ProjectBookHeader({
             </p>
           </div>
           <div>
-            <p className="text-xs font-black text-[var(--muted)]">当前余额</p>
+            <p className="text-xs font-black text-[var(--muted)]">{headerCopy.balanceLabel}</p>
             <CreditBadge
               balance={creditBalance}
               className="mt-2"
-              label={isInteractive ? "星火" : "点数"}
+              label={isInteractive ? "星火" : "额度"}
             />
           </div>
         </div>
@@ -498,11 +528,22 @@ function ChapterReaderPreview({
 }) {
   const reader = getReaderBody(chapter);
   const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
+  const isInteractive = projectMode === "interactive";
 
   return (
     <div className="grid gap-5" id="chapter-reader">
+      {isInteractive ? (
+        <div className="story-flow-strip" aria-label="互动故事流程">
+          {["阅读本章", "做出选择", "命运改变", "继续下一章"].map((step, index) => (
+            <span className="story-flow-step" key={step}>
+              <span className="story-flow-index">{index + 1}</span>
+              {step}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <ReaderPage
-        className="max-w-none"
+        className={isInteractive ? "story-theater-reader max-w-none" : "max-w-none"}
         footer={
           <span>
             {reader.source}
@@ -526,7 +567,7 @@ function ChapterReaderPreview({
         }
       >
         <div className="whitespace-pre-wrap">{reader.body}</div>
-        {projectMode === "interactive" && chapter ? (
+        {isInteractive && chapter ? (
           <ChapterEndDecision
             chapterId={chapter.id}
             chapterNumber={chapter.chapterNumber}
@@ -605,9 +646,11 @@ export function ProjectWorkbenchLayout({
         <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-              {projectMode === "interactive" ? "Story Index" : "Book Index"}
+              {projectMode === "interactive" ? "Destiny Book" : "Book Index"}
             </p>
-            <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">作品目录</h2>
+            <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">
+              {projectMode === "interactive" ? "命运之书" : "作品目录"}
+            </h2>
             <div className="mt-4 grid gap-3">
               <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
                 <p className="text-xs font-black text-[var(--muted)]">模式</p>
@@ -622,6 +665,9 @@ export function ProjectWorkbenchLayout({
                   <p className="mt-1 text-xs text-[var(--muted)]">{chapters.length} 章</p>
                 </div>
               ) : null}
+              <a className="button-secondary min-h-10 px-3 text-sm" href="#chapter-reader">
+                {projectMode === "interactive" ? "进入故事" : "进入章节"}
+              </a>
             </div>
           </PaperPanel>
 
@@ -666,7 +712,7 @@ export function ProjectWorkbenchLayout({
           </PaperPanel>
         </aside>
 
-        <main className="project-reader-column min-w-0">
+        <main className="project-reader-column project-reader-stage min-w-0">
           <ChapterReaderPreview
             chapter={currentChapter}
             interactiveState={interactiveState}

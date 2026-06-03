@@ -217,7 +217,12 @@ export default async function ProjectDetailPage({
 
   return (
     <main className="app-shell py-8">
-      <AppNav isAuthed creditBalance={creditBalance} />
+      <AppNav
+        creditBadgeLabel={projectMode === "interactive" ? "星火" : "额度"}
+        creditBalance={creditBalance}
+        creditLinkLabel={projectMode === "interactive" ? "星火补给" : "创作补给"}
+        isAuthed
+      />
 
       <ProjectWorkbenchLayout
         chapters={chapters}
