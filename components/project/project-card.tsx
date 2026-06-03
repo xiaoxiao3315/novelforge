@@ -15,16 +15,22 @@ export type ProjectCardData = {
 const modeStyles: Record<
   ProjectMode,
   {
+    cta: string;
+    hint: string;
     short: string;
     tone: "gold" | "warning";
   }
 > = {
   classic: {
-    short: "经典",
+    cta: "继续创作",
+    hint: "稳定推进设定、大纲和章节正文。",
+    short: "经典小说",
     tone: "gold",
   },
   interactive: {
-    short: "互动",
+    cta: "继续这段命运",
+    hint: "读完章节后做出选择，让故事记住决定。",
+    short: "互动剧情",
     tone: "warning",
   },
 };
@@ -43,7 +49,7 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
 
   return (
     <Link
-      aria-label={`进入作品 ${project.title}`}
+      aria-label={`进入故事 ${project.title}`}
       className="group block h-full"
       href={`/project/${project.id}`}
     >
@@ -63,6 +69,9 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
             {project.description ||
               "暂无简介。进入这本书后，可以继续生成设定、故事圣经、章节大纲和正文。"}
           </p>
+          <p className="mt-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.62)] px-3 py-2 text-xs font-bold leading-5 text-[var(--muted)]">
+            {mode.hint}
+          </p>
 
           <div className="mt-auto pt-5">
             <div className="grid gap-2 border-t border-[var(--line)] pt-4 text-xs font-bold text-[var(--muted)] sm:grid-cols-2">
@@ -74,7 +83,7 @@ export function ProjectCard({ project }: { project: ProjectCardData }) {
               </p>
             </div>
             <span className="button-secondary mt-4 min-h-10 w-full px-4 text-sm transition group-hover:border-[var(--gold)] group-hover:bg-[rgba(255,244,220,0.94)]">
-              进入创作
+              {mode.cta}
             </span>
           </div>
         </div>
