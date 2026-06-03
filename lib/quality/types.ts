@@ -45,6 +45,26 @@ export type ChapterWritingPlan = {
   continuityNotes: string[];
 };
 
+export type ChapterCharacterDirection = {
+  povGuidance: string;
+  focusCharacters: Array<{
+    character: string;
+    activeDesire: string;
+    emotionalMask: string;
+    dialogueVoice: string;
+    actionPattern: string;
+    relationshipPressure: string;
+    mustNotDo: string[];
+  }>;
+  relationshipBeats: string[];
+  dialogueRules: string[];
+  actionRules: string[];
+  hiddenInformation: string[];
+  continuityGuards: string[];
+  mustInclude: string[];
+  mustAvoid: string[];
+};
+
 export type ChapterQualityPromptContext = {
   storyConfig: unknown;
   storyConcept: unknown;
@@ -57,10 +77,16 @@ export type ChapterQualityPromptContext = {
   interactiveDecision?: unknown;
   interactiveState?: unknown;
   chapterPlan?: ChapterWritingPlan | null;
+  chapterCharacterDirection?: ChapterCharacterDirection | null;
 };
 
 export type ChapterPlanInput = {
   storyContext: ChapterQualityPromptContext;
+};
+
+export type ChapterCharacterDirectionInput = {
+  storyContext: ChapterQualityPromptContext;
+  chapterPlan: ChapterWritingPlan;
 };
 
 export type ChapterCritiqueInput = {
