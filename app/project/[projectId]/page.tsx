@@ -106,8 +106,9 @@ export default async function ProjectDetailPage({
     .eq("project_id", projectId)
     .maybeSingle<StoryConfig>();
   const projectMode = getProjectModeFromConfig(config?.config_json);
+  const isInteractiveProject = projectMode === "interactive";
   const interactiveState =
-    projectMode === "interactive"
+    isInteractiveProject
       ? normalizeInteractiveStoryState(
           (config?.config_json as { interactiveState?: unknown } | undefined)?.interactiveState,
         )
@@ -218,8 +219,14 @@ export default async function ProjectDetailPage({
   );
 
   return (
-    <main className="app-shell py-8">
-      <AppNav isAuthed creditBalance={creditBalance} />
+    <main className={isInteractiveProject ? "project-theater-page" : "app-shell py-8"}>
+      <AppNav
+        isAuthed
+        creditBalance={creditBalance}
+        creditLabel={isInteractiveProject ? "星火" : "余额"}
+        creditLinkLabel={isInteractiveProject ? "星火补给" : "创作额度"}
+        variant={isInteractiveProject ? "theater" : "default"}
+      />
 
       <ProjectWorkbenchLayout
         chapters={chapters}

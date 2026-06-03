@@ -95,6 +95,10 @@ function getChapterCardId(chapterNumber: number) {
   return `chapter-card-${chapterNumber}`;
 }
 
+function getTotalEstimatedWords(chapters: WorkbenchChapter[]) {
+  return chapters.reduce((total, chapter) => total + (chapter.estimatedWords || 0), 0);
+}
+
 function getReaderSourceLabel(source: string, projectMode: ProjectMode) {
   if (projectMode !== "interactive") {
     return source;
@@ -330,7 +334,7 @@ function InteractiveStatePanel({
   return (
     <PaperPanel className="p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-serif text-xl font-black text-[var(--ink)]">故事状态</h3>
+        <h3 className="font-serif text-xl font-black text-[var(--ink)]">故事状态总览</h3>
         <BookBadge tone="warning">随章节生长</BookBadge>
       </div>
       {hasInteractiveState(interactiveState) && interactiveState ? (
@@ -645,6 +649,277 @@ function ChapterReaderPreview({
   );
 }
 
+function TheaterDirectorBrief({
+  chapter,
+  creditBalance,
+  interactiveState,
+  volume,
+}: {
+  chapter: WorkbenchChapter | null;
+  creditBalance: number | null;
+  interactiveState: InteractiveStoryState | null;
+  volume: VolumeOutline | null;
+}) {
+  const relationshipEntries = interactiveState
+    ? Object.entries(interactiveState.relationships)
+    : [];
+  const clueEntries = interactiveState ? Object.entries(interactiveState.clues) : [];
+  const routeEntries = interactiveState ? Object.entries(interactiveState.routeTendency) : [];
+
+  return (
+    <div className="theater-director-brief">
+      <div className="theater-director-brief-item">
+        <p>当前场景</p>
+        <strong>{chapter ? `第 ${chapter.chapterNumber} 章 · ${chapter.title}` : "章节待开启"}</strong>
+      </div>
+      <div className="theater-director-brief-item">
+        <p>角色状态</p>
+        <strong>
+          {relationshipEntries[0]
+            ? `${relationshipEntries[0][0]} ${relationshipEntries[0][1]}`
+            : "羁绊尚未改写"}
+        </strong>
+      </div>
+      <div className="theater-director-brief-item">
+        <p>世界设定</p>
+        <strong>{volume?.mainConflict || volume?.summary || "等待故事规则点亮"}</strong>
+      </div>
+      <div className="theater-director-brief-item">
+        <p>命运倾向</p>
+        <strong>
+          {routeEntries[0]
+            ? `${routeEntries[0][0]} ${routeEntries[0][1]}`
+            : clueEntries[0]
+              ? `${clueEntries[0][0]} 已点亮`
+              : "尚未分岔"}
+        </strong>
+      </div>
+      <CreditBadge balance={creditBalance} className="theater-director-credit" label="星火状态" />
+    </div>
+  );
+}
+
+function InteractiveBookSpread({
+  chapter,
+  chapters,
+  interactiveState,
+  projectId,
+  volume,
+}: {
+  chapter: WorkbenchChapter | null;
+  chapters: WorkbenchChapter[];
+  interactiveState: InteractiveStoryState | null;
+  projectId: string;
+  volume: VolumeOutline | null;
+}) {
+  const reader = getReaderBody(chapter);
+  const nextChapter = chapter
+    ? chapters.find((item) => item.chapterNumber === chapter.chapterNumber + 1) ?? null
+    : null;
+  const nextChapterHint: NextChapterHint | null = nextChapter
+    ? {
+        anchorId: getChapterCardId(nextChapter.chapterNumber),
+        chapterNumber: nextChapter.chapterNumber,
+        hasBody: Boolean(nextChapter.official?.body || nextChapter.draft?.body),
+        title: nextChapter.title,
+      }
+    : null;
+
+  return (
+    <section className="story-book-stage" id="chapter-reader">
+      <div className="story-book-spread" aria-label="打开的故事书页">
+        <div className="story-book-gutter" aria-hidden="true" />
+        <article className="story-book-page story-book-page-left">
+          <header className="story-page-header">
+            <p className="story-page-kicker">
+              {volume ? `第 ${volume.volumeNumber} 卷 · ${volume.title}` : "当前篇章"}
+            </p>
+            <h2>{chapter ? `第 ${chapter.chapterNumber} 章 ${chapter.title}` : "等待章节开启"}</h2>
+            <div className="story-page-meta">
+              <BookBadge tone={chapter?.official ? "success" : chapter?.draft ? "gold" : "paper"}>
+                {chapter ? getChapterStatus(chapter, "interactive") : "待开启"}
+              </BookBadge>
+              <span>{getReaderSourceLabel(reader.source, "interactive")}</span>
+            </div>
+          </header>
+          <div className="story-page-body whitespace-pre-wrap">{reader.body}</div>
+          <footer className="story-page-footer">
+            {chapter
+              ? `第 ${chapter.chapterNumber}/${Math.max(chapters.length, chapter.chapterNumber)} 章 · 预计 ${
+                  chapter.estimatedWords
+                } 字`
+              : "章节进度等待开启"}
+          </footer>
+        </article>
+
+        <article className="story-book-page story-book-page-right">
+          {chapter ? (
+            <ChapterEndDecision
+              chapterId={chapter.id}
+              chapterNumber={chapter.chapterNumber}
+              initialDecision={chapter.decision ?? null}
+              initialInteractiveState={interactiveState}
+              initialStateChanges={chapter.stateChanges ?? null}
+              nextChapter={nextChapterHint}
+              projectId={projectId}
+            />
+          ) : (
+            <div className="story-empty-fate">
+              <BookBadge tone="warning">命运分歧</BookBadge>
+              <h3>右页等待命运浮现</h3>
+              <p>开启章节后，读完正文即可在这里选择下一条命运。</p>
+            </div>
+          )}
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function InteractiveStoryTheater({
+  chapters,
+  configItems,
+  creditBalance,
+  directorSlot,
+  extraIdeas,
+  hasConfig,
+  interactiveState,
+  project,
+  volume,
+}: ProjectWorkbenchLayoutProps) {
+  const currentChapter =
+    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ?? chapters[0] ?? null;
+  const totalEstimatedWords = getTotalEstimatedWords(chapters);
+
+  return (
+    <>
+      <section className="project-theater-hero project-workbench-shell">
+        <div>
+          <StatusBookmark tone="warning">Story Theater</StatusBookmark>
+          <h1>{project.title}</h1>
+          <p>
+            {project.description ||
+              "读完章节，做出选择，角色关系与命运会随之改变。"}
+          </p>
+        </div>
+        <div className="project-theater-hero-actions">
+          <Link className="button-secondary" href="/dashboard">
+            我的书架
+          </Link>
+          <Link className="button-primary" href="#chapter-reader">
+            进入故事
+          </Link>
+        </div>
+      </section>
+
+      <section className="project-theater-grid project-workbench-shell">
+        <aside className="theater-fate-column">
+          <PaperPanel className="theater-side-panel p-5">
+            <p className="theater-panel-kicker">Fate Book</p>
+            <h2 className="theater-panel-title">命运之书</h2>
+            <div className="mt-5 grid gap-3">
+              <div className="theater-stat-card">
+                <p>作品</p>
+                <strong>{project.title}</strong>
+              </div>
+              <div className="theater-stat-grid">
+                <div className="theater-stat-card">
+                  <p>模式</p>
+                  <strong>{PROJECT_MODE_LABELS.interactive}</strong>
+                </div>
+                <div className="theater-stat-card">
+                  <p>章节</p>
+                  <strong>{chapters.length || "待开启"}</strong>
+                </div>
+                <div className="theater-stat-card">
+                  <p>预计字数</p>
+                  <strong>{totalEstimatedWords || "待估算"}</strong>
+                </div>
+                <div className="theater-stat-card">
+                  <p>状态</p>
+                  <strong>{project.status}</strong>
+                </div>
+              </div>
+            </div>
+            <Link className="button-primary mt-5 w-full" href="#chapter-reader">
+              进入故事
+            </Link>
+          </PaperPanel>
+
+          <PaperPanel className="theater-side-panel p-5">
+            <h3 className="theater-panel-title text-2xl">章节目录</h3>
+            <div className="mt-4">
+              <ChapterToc
+                chapters={chapters}
+                currentChapterId={currentChapter?.id}
+                projectMode="interactive"
+              />
+            </div>
+          </PaperPanel>
+
+          <InteractiveStatePanel interactiveState={interactiveState} projectMode="interactive" />
+
+          <PaperPanel className="theater-side-panel p-5">
+            <h3 className="theater-panel-title text-2xl">故事筛选器</h3>
+            {hasConfig ? (
+              <>
+                <div className="mt-4 grid gap-2">
+                  {configItems.slice(0, 6).map((item) => (
+                    <div className="theater-stat-card" key={item.label}>
+                      <p>{item.label}</p>
+                      <strong>{item.value}</strong>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-4 line-clamp-4 text-sm leading-7 text-[var(--muted)]">
+                  {extraIdeas || "暂无补充灵感。"}
+                </p>
+              </>
+            ) : (
+              <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+                未找到剧情筛选器配置，暂时不能点亮故事起点。
+              </p>
+            )}
+          </PaperPanel>
+        </aside>
+
+        <main className="theater-book-column min-w-0">
+          <InteractiveFlowHint chapter={currentChapter} />
+          <InteractiveBookSpread
+            chapter={currentChapter}
+            chapters={chapters}
+            interactiveState={interactiveState}
+            projectId={project.id}
+            volume={volume}
+          />
+          <ChapterSummaryPanel
+            projectMode="interactive"
+            summary={currentChapter?.official?.summary ?? currentChapter?.summary ?? null}
+          />
+        </main>
+
+        <aside className="theater-director-column" id="story-director">
+          <DirectorConsole
+            className="story-director-console"
+            collapsedLabel="展开导演台"
+            defaultOpen
+            eyebrow="Story Director"
+            title="故事导演台"
+          >
+            <TheaterDirectorBrief
+              chapter={currentChapter}
+              creditBalance={creditBalance}
+              interactiveState={interactiveState}
+              volume={volume}
+            />
+            <div className="mt-5 grid gap-5">{directorSlot}</div>
+          </DirectorConsole>
+        </aside>
+      </section>
+    </>
+  );
+}
+
 export function ProjectWorkbenchLayout({
   chapters,
   configItems,
@@ -660,6 +935,23 @@ export function ProjectWorkbenchLayout({
   const currentChapter =
     chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ?? chapters[0] ?? null;
 
+  if (projectMode === "interactive") {
+    return (
+      <InteractiveStoryTheater
+        chapters={chapters}
+        configItems={configItems}
+        creditBalance={creditBalance}
+        directorSlot={directorSlot}
+        extraIdeas={extraIdeas}
+        hasConfig={hasConfig}
+        interactiveState={interactiveState}
+        project={project}
+        projectMode={projectMode}
+        volume={volume}
+      />
+    );
+  }
+
   return (
     <>
       <ProjectBookHeader
@@ -672,7 +964,7 @@ export function ProjectWorkbenchLayout({
         <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
           <PaperPanel className="p-5">
             <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-              {projectMode === "interactive" ? "Story Index" : "Book Index"}
+              Book Index
             </p>
             <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">作品目录</h2>
             <div className="mt-4 grid gap-3">
@@ -731,9 +1023,7 @@ export function ProjectWorkbenchLayout({
               </>
             ) : (
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                {projectMode === "interactive"
-                  ? "未找到剧情筛选器配置，暂时不能点亮故事起点。"
-                  : "未找到剧情筛选器配置，不能生成作品设定。"}
+                未找到剧情筛选器配置，不能生成作品设定。
               </p>
             )}
           </PaperPanel>
@@ -754,19 +1044,14 @@ export function ProjectWorkbenchLayout({
           <DirectorConsole
             collapsedLabel="展开导演台"
             defaultOpen
-            eyebrow={projectMode === "interactive" ? "Story Director" : "AI Director"}
-            title={projectMode === "interactive" ? "故事导演台" : "AI 导演台"}
+            eyebrow="AI Director"
+            title="AI 导演台"
           >
             <div className="mb-4 grid gap-3">
               <p className="text-sm leading-7 text-[var(--muted)]">
-                {projectMode === "interactive"
-                  ? "在这里给本章定调：本章意图、必须发生、不要发生和结尾氛围。进入下一章前，故事会沿用上一章选择和当前状态。"
-                  : "生成设定、故事圣经、大纲、章节正文和正式稿确认仍使用原有入口；收起导演台后，中央书页会保持完整阅读宽度。"}
+                生成设定、故事圣经、大纲、章节正文和正式稿确认仍使用原有入口；收起导演台后，中央书页会保持完整阅读宽度。
               </p>
-              <CreditBadge
-                balance={creditBalance}
-                label={projectMode === "interactive" ? "当前星火" : "当前余额"}
-              />
+              <CreditBadge balance={creditBalance} label="当前余额" />
             </div>
             <div className="grid gap-5">{directorSlot}</div>
           </DirectorConsole>

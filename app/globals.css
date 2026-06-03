@@ -100,6 +100,23 @@ button:disabled {
   letter-spacing: 0;
 }
 
+.app-nav-brand-text {
+  display: grid;
+  gap: 2px;
+}
+
+.app-nav-subtitle {
+  color: var(--muted);
+  font-family:
+    "Microsoft YaHei",
+    "PingFang SC",
+    "Noto Sans CJK SC",
+    Arial,
+    sans-serif;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
 .app-nav-links {
   display: flex;
   flex-wrap: wrap;
@@ -131,7 +148,29 @@ button:disabled {
 }
 
 .app-nav-credit-link {
-  padding: 0;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.app-nav-credit-text {
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.app-nav-avatar {
+  display: inline-flex;
+  min-height: 38px;
+  min-width: 38px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(184, 138, 61, 0.46);
+  border-radius: 999px;
+  background: rgba(255, 248, 234, 0.86);
+  color: var(--brown-deep);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .surface,
@@ -463,6 +502,388 @@ button:disabled {
   width: 100%;
 }
 
+.project-theater-page {
+  min-height: 100vh;
+  padding: 18px 0 52px;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(184, 138, 61, 0.2), transparent 28%),
+    radial-gradient(circle at 78% 12%, rgba(123, 64, 36, 0.22), transparent 32%),
+    linear-gradient(180deg, rgba(18, 13, 10, 0.72), rgba(13, 10, 8, 0.98)),
+    #120d0a;
+  color: #f5e7c8;
+}
+
+.project-theater-page .project-workbench-shell,
+.project-theater-page .app-nav {
+  width: min(1600px, calc(100vw - 32px));
+  margin-inline: auto;
+}
+
+.app-nav-theater {
+  border: 1px solid rgba(184, 138, 61, 0.26);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(55, 37, 24, 0.9), rgba(27, 19, 14, 0.96));
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.36);
+  padding: 14px 18px;
+}
+
+.app-nav-theater .app-nav-brand,
+.app-nav-theater .app-nav-link,
+.app-nav-theater .app-nav-credit-text {
+  color: #f8e8c0;
+}
+
+.app-nav-theater .app-nav-subtitle {
+  color: rgba(248, 232, 192, 0.68);
+}
+
+.app-nav-theater .app-nav-brand-mark,
+.app-nav-theater .credit-badge,
+.app-nav-theater .app-nav-avatar {
+  border-color: rgba(184, 138, 61, 0.52);
+  background: rgba(255, 244, 220, 0.12);
+  color: #ffe5a6;
+  box-shadow: none;
+}
+
+.app-nav-theater .app-nav-link:hover,
+.app-nav-theater .button-secondary:hover {
+  border-color: rgba(184, 138, 61, 0.72);
+  background: rgba(255, 244, 220, 0.1);
+  color: #fff5d8;
+}
+
+.app-nav-theater .button-secondary {
+  border-color: rgba(184, 138, 61, 0.38);
+  background: rgba(255, 244, 220, 0.08);
+  color: #f8e8c0;
+}
+
+.project-theater-hero {
+  display: grid;
+  gap: 18px;
+  align-items: end;
+  padding: 32px 0 22px;
+}
+
+.project-theater-hero h1 {
+  margin: 26px 0 0;
+  color: #ffecc5;
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", serif;
+  font-size: clamp(2.25rem, 5vw, 4.8rem);
+  font-weight: 900;
+  line-height: 1.05;
+}
+
+.project-theater-hero p {
+  max-width: 760px;
+  margin: 16px 0 0;
+  color: rgba(248, 232, 192, 0.74);
+  font-size: 1.02rem;
+  line-height: 1.9;
+}
+
+.project-theater-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.project-theater-hero .button-secondary {
+  border-color: rgba(184, 138, 61, 0.38);
+  background: rgba(255, 248, 234, 0.1);
+  color: #f8e8c0;
+}
+
+.project-theater-grid {
+  display: grid;
+  align-items: start;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.theater-fate-column,
+.theater-book-column,
+.theater-director-column {
+  min-width: 0;
+}
+
+.theater-side-panel.paper-panel,
+.project-theater-page .paper-panel {
+  border-color: rgba(184, 138, 61, 0.28);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.48), transparent 48%),
+    #fff4dc;
+}
+
+.theater-panel-kicker {
+  color: var(--gold-strong);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.theater-panel-title {
+  margin: 8px 0 0;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", serif;
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1.15;
+}
+
+.theater-stat-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.theater-stat-card {
+  border: 1px solid rgba(75, 46, 29, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 248, 234, 0.68);
+  padding: 10px;
+}
+
+.theater-stat-card p,
+.theater-director-brief-item p {
+  margin: 0;
+  color: var(--gold-strong);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.theater-stat-card strong,
+.theater-director-brief-item strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.55;
+}
+
+.story-book-stage {
+  min-width: 0;
+}
+
+.story-book-spread {
+  position: relative;
+  display: grid;
+  gap: 0;
+  border: 1px solid rgba(184, 138, 61, 0.3);
+  border-radius: 18px;
+  background:
+    linear-gradient(90deg, rgba(48, 28, 16, 0.92), rgba(93, 55, 28, 0.9), rgba(48, 28, 16, 0.92));
+  box-shadow:
+    0 30px 80px rgba(0, 0, 0, 0.42),
+    inset 0 0 0 1px rgba(255, 236, 197, 0.08);
+  overflow: hidden;
+  padding: 14px;
+}
+
+.story-book-gutter {
+  display: none;
+}
+
+.story-book-page {
+  min-height: 620px;
+  border: 1px solid rgba(75, 46, 29, 0.2);
+  background:
+    linear-gradient(90deg, rgba(75, 46, 29, 0.06), transparent 24px),
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.42), transparent 42%),
+    #fff2d2;
+  color: var(--ink);
+  padding: clamp(18px, 2.4vw, 30px);
+}
+
+.story-book-page-left {
+  border-radius: 12px 12px 4px 4px;
+  box-shadow: inset -16px 0 34px rgba(75, 46, 29, 0.08);
+}
+
+.story-book-page-right {
+  border-radius: 4px 4px 12px 12px;
+  box-shadow: inset 16px 0 34px rgba(75, 46, 29, 0.08);
+}
+
+.story-page-header {
+  border-bottom: 1px solid rgba(75, 46, 29, 0.14);
+  padding-bottom: 18px;
+}
+
+.story-page-kicker {
+  margin: 0;
+  color: var(--gold-strong);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.story-page-header h2 {
+  margin: 8px 0 0;
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", serif;
+  font-size: clamp(1.7rem, 3vw, 2.5rem);
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.story-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 800;
+}
+
+.story-page-body {
+  padding: 24px 0;
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", "Songti SC", serif;
+  font-size: 1.05rem;
+  line-height: 2;
+}
+
+.story-page-footer {
+  border-top: 1px solid rgba(75, 46, 29, 0.14);
+  color: var(--muted);
+  padding-top: 14px;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.story-book-page-right .paper-panel {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  margin-top: 0;
+  padding: 0;
+}
+
+.story-book-page-right label {
+  box-shadow: 0 8px 24px rgba(75, 46, 29, 0.08);
+}
+
+.story-empty-fate {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
+  justify-items: start;
+  gap: 12px;
+}
+
+.story-empty-fate h3 {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", serif;
+  font-size: 2rem;
+  font-weight: 900;
+}
+
+.story-empty-fate p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.8;
+}
+
+.project-theater-page .director-console {
+  border-color: rgba(184, 138, 61, 0.34);
+  background:
+    linear-gradient(180deg, rgba(62, 40, 25, 0.94), rgba(25, 18, 13, 0.96));
+  color: #f8e8c0;
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.36);
+}
+
+.project-theater-page .director-console-title {
+  color: #ffe9b0;
+}
+
+.project-theater-page .director-console-eyebrow,
+.project-theater-page .director-console-body .text-\[var\(--muted\)\] {
+  color: rgba(248, 232, 192, 0.72);
+}
+
+.project-theater-page .director-console-collapse,
+.project-theater-page .director-console-tab {
+  border-color: rgba(184, 138, 61, 0.5);
+  background: rgba(255, 244, 220, 0.1);
+  color: #ffe9b0;
+}
+
+.theater-director-brief {
+  display: grid;
+  gap: 10px;
+}
+
+.theater-director-brief-item {
+  border: 1px solid rgba(184, 138, 61, 0.24);
+  border-radius: 6px;
+  background: rgba(255, 244, 220, 0.08);
+  padding: 10px;
+}
+
+.theater-director-brief-item p {
+  color: rgba(255, 218, 142, 0.82);
+}
+
+.theater-director-brief-item strong {
+  color: #f8e8c0;
+  max-height: 4.5em;
+  overflow: hidden;
+}
+
+.theater-director-credit.credit-badge {
+  border-color: rgba(184, 138, 61, 0.38);
+  background: rgba(255, 244, 220, 0.1);
+  color: #f8e8c0;
+}
+
+.project-theater-page .story-director-console .surface,
+.project-theater-page .story-director-console .paper-panel {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.52), transparent 44%),
+    #fff4dc;
+  color: var(--ink);
+}
+
+.project-theater-page .story-director-console .control-panel {
+  background: linear-gradient(180deg, #fff6e4, #f7ead3);
+}
+
+@media (min-width: 900px) {
+  .story-book-spread {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .story-book-gutter {
+    position: absolute;
+    inset: 14px 50% 14px auto;
+    z-index: 1;
+    display: block;
+    width: 2px;
+    background: linear-gradient(
+      180deg,
+      transparent,
+      rgba(75, 46, 29, 0.18),
+      rgba(255, 236, 197, 0.28),
+      rgba(75, 46, 29, 0.16),
+      transparent
+    );
+    box-shadow:
+      -10px 0 28px rgba(75, 46, 29, 0.12),
+      10px 0 28px rgba(75, 46, 29, 0.1);
+  }
+
+  .story-book-page-left {
+    border-radius: 12px 4px 4px 12px;
+  }
+
+  .story-book-page-right {
+    border-radius: 4px 12px 12px 4px;
+  }
+}
+
 @media (min-width: 1024px) {
   .project-workbench-grid {
     grid-template-columns: 300px minmax(0, 1fr);
@@ -482,6 +903,25 @@ button:disabled {
 }
 
 @media (min-width: 1280px) {
+  .project-theater-grid {
+    grid-template-columns: 250px minmax(0, 1fr) 300px;
+  }
+
+  .project-theater-grid:has(.director-console-tab) {
+    grid-template-columns: 250px minmax(0, 1fr) 56px;
+  }
+
+  .theater-fate-column,
+  .theater-director-column {
+    position: sticky;
+    top: 22px;
+  }
+
+  .theater-director-column:has(.director-console-tab) {
+    justify-self: end;
+    width: 56px;
+  }
+
   .project-workbench-grid {
     grid-template-columns: 300px minmax(0, 1fr) 380px;
   }
@@ -506,6 +946,16 @@ button:disabled {
   .project-workbench-grid:has(.director-console-tab) .project-director-column {
     justify-self: end;
     width: 56px;
+  }
+}
+
+@media (min-width: 1536px) {
+  .project-theater-grid {
+    grid-template-columns: 280px minmax(0, 1fr) 320px;
+  }
+
+  .project-theater-grid:has(.director-console-tab) {
+    grid-template-columns: 280px minmax(0, 1fr) 56px;
   }
 }
 
