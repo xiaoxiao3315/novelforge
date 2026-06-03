@@ -1,5 +1,5 @@
-import Link from "next/link";
 import type { ReactNode } from "react";
+import { ChapterContinueAction } from "@/components/project/chapter-continue-action";
 import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
 import {
   BookBadge,
@@ -7,10 +7,8 @@ import {
   PaperPanel,
   ReaderPage,
   SectionTabs,
-  StatusBookmark,
 } from "@/components/ui/book";
-import { DirectorConsole } from "@/components/ui/director-console";
-import { PROJECT_MODE_LABELS, type ProjectMode } from "@/lib/projects/modes";
+import type { ProjectMode } from "@/lib/projects/modes";
 import type { ChapterContent } from "@/prompts/chapter";
 import type { ChapterSummary } from "@/prompts/chapter-summary";
 import type { VolumeOutline } from "@/prompts/outline";
@@ -30,31 +28,16 @@ export type WorkbenchChapter = ChapterContent & {
   versionCount: number;
 };
 
-export type ConfigDisplayItem = {
-  label: string;
-  value: string;
-};
-
 type ProjectWorkbenchLayoutProps = {
+  chapterGenerationSlot?: ReactNode;
   chapters: WorkbenchChapter[];
-  configItems: ConfigDisplayItem[];
   creditBalance: number | null;
-  directorSlot: ReactNode;
-  extraIdeas: string | null;
-  hasConfig: boolean;
+  currentChapterNumber?: number | null;
   interactiveState: InteractiveStoryState | null;
   project: WorkbenchProject;
   projectMode: ProjectMode;
   volume: VolumeOutline | null;
 };
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("zh-CN", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(value));
-}
 
 function formatSummaryValue(value: string | string[]) {
   return Array.isArray(value) ? value.join("；") : value;
@@ -119,10 +102,6 @@ function formatRewriteStatus(quality: WorkbenchQualityMetadata) {
   return "--";
 }
 
-function getProjectModeTone(projectMode: ProjectMode) {
-  return projectMode === "interactive" ? "warning" : "gold";
-}
-
 function getChapterStatus(chapter: WorkbenchChapter) {
   if (chapter.official) {
     return "正式稿";
@@ -151,10 +130,12 @@ function getChapterDisplayStatus(chapter: WorkbenchChapter, projectMode: Project
   return "待开启";
 }
 
-function getReaderBody(chapter: WorkbenchChapter | null) {
+function getReaderBody(chapter: WorkbenchChapter | null, projectMode: ProjectMode) {
+  const isInteractive = projectMode === "interactive";
+
   if (!chapter) {
     return {
-      body: "章节大纲生成后，正文会在这里像书页一样展开。",
+      body: "一键准备后，第 1 章会自动生成并出现在这里。",
       source: "等待章节",
     };
   }
@@ -174,74 +155,11 @@ function getReaderBody(chapter: WorkbenchChapter | null) {
   }
 
   return {
-    body: [
-      `事件：${chapter.event}`,
-      `冲突：${chapter.conflict}`,
-      `角色变化：${chapter.characterChange}`,
-      `看点：${chapter.highlight}`,
-      `伏笔：${chapter.foreshadowing}`,
-      `结尾钩子：${chapter.endingHook}`,
-    ].join("\n\n"),
-    source: "章节大纲",
+    body: isInteractive
+      ? "这一章还没有正文。读完上一章并确认命运后，可以消耗星火进入下一章。"
+      : "这一章还没有正文。读完当前章节后，可以消耗额度进入下一章。",
+    source: "待生成",
   };
-}
-
-function ChapterToc({
-  chapters,
-  currentChapterId,
-  projectMode,
-  scrollable = true,
-}: {
-  chapters: WorkbenchChapter[];
-  currentChapterId?: string;
-  projectMode: ProjectMode;
-  scrollable?: boolean;
-}) {
-  if (chapters.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-6 text-[var(--muted)]">
-        还没有章节目录。生成章节大纲后，这里会显示第一卷目录。
-      </div>
-    );
-  }
-
-  return (
-    <div className={["grid gap-2 pr-1", scrollable ? "max-h-[520px] overflow-auto" : ""].join(" ")}>
-      {chapters.map((chapter) => {
-        const isCurrent = chapter.id === currentChapterId;
-
-        return (
-          <a
-            className={[
-              "rounded-md border px-3 py-3 transition",
-              isCurrent
-                ? "border-[var(--gold)] bg-[rgba(255,244,220,0.9)]"
-                : "border-[var(--line)] bg-[rgba(255,248,234,0.58)] hover:border-[var(--gold)]",
-            ].join(" ")}
-            href="#chapter-reader"
-            key={chapter.id}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-xs font-black text-[var(--gold-strong)]">
-                  第 {chapter.chapterNumber} 章
-                </p>
-                <p className="mt-1 line-clamp-2 font-bold leading-5 text-[var(--ink)]">
-                  {chapter.title}
-                </p>
-              </div>
-              <BookBadge tone={chapter.official ? "success" : chapter.draft ? "gold" : "paper"}>
-                {getChapterDisplayStatus(chapter, projectMode)}
-              </BookBadge>
-            </div>
-            <p className="mt-2 text-xs font-bold text-[var(--muted)]">
-              {chapter.versionCount} 个版本 · 预计 {chapter.estimatedWords} 字
-            </p>
-          </a>
-        );
-      })}
-    </div>
-  );
 }
 
 function ChapterSummaryPanel({ summary }: { summary: ChapterSummary | null }) {
@@ -285,46 +203,6 @@ function ChapterSummaryPanel({ summary }: { summary: ChapterSummary | null }) {
           </div>
         ))}
       </div>
-    </PaperPanel>
-  );
-}
-
-function StoryConfigPanel({
-  configItems,
-  extraIdeas,
-  hasConfig,
-}: {
-  configItems: ConfigDisplayItem[];
-  extraIdeas: string | null;
-  hasConfig: boolean;
-}) {
-  return (
-    <PaperPanel className="p-5">
-      <h3 className="font-serif text-xl font-black text-[var(--ink)]">剧情筛选器</h3>
-      {hasConfig ? (
-        <>
-          <div className="mt-4 grid gap-2">
-            {configItems.map((item) => (
-              <div
-                className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2"
-                key={item.label}
-              >
-                <p className="text-xs font-black text-[var(--gold-strong)]">{item.label}</p>
-                <p className="mt-1 text-sm font-bold leading-6 text-[var(--ink)]">
-                  {item.value}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className="mt-4 whitespace-pre-wrap rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3 text-sm leading-7 text-[var(--muted)]">
-            {extraIdeas || "暂无补充想法。"}
-          </p>
-        </>
-      ) : (
-        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-          未找到剧情筛选器配置，不能生成作品设定。
-        </p>
-      )}
     </PaperPanel>
   );
 }
@@ -379,304 +257,14 @@ function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) 
   );
 }
 
-function hasInteractiveState(interactiveState: InteractiveStoryState | null) {
-  if (!interactiveState) {
-    return false;
-  }
-
-  return (
-    Object.keys(interactiveState.relationships).length > 0 ||
-    Object.keys(interactiveState.meters).length > 0 ||
-    Object.keys(interactiveState.flags).length > 0 ||
-    Object.keys(interactiveState.clues).length > 0 ||
-    Object.keys(interactiveState.routeTendency).length > 0
-  );
-}
-
-function StateValueGrid({
-  items,
-  valueSuffix = "",
-}: {
-  items: Array<[string, boolean | number | string]>;
-  valueSuffix?: string;
-}) {
-  if (items.length === 0) {
-    return <p className="text-sm leading-6 text-[var(--muted)]">还没有记录。</p>;
-  }
-
-  return (
-    <div className="grid gap-2">
-      {items.slice(0, 5).map(([name, value]) => (
-        <div
-          className="flex items-center justify-between gap-3 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2"
-          key={name}
-        >
-          <span className="min-w-0 truncate text-xs font-bold text-[var(--ink)]">{name}</span>
-          <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">
-            {typeof value === "boolean" ? (value ? "已触发" : "未触发") : `${value}${valueSuffix}`}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function formatDirectorStateValue(value: boolean | number | string) {
-  if (typeof value === "boolean") {
-    return value ? "已触发" : "未触发";
-  }
-
-  if (typeof value === "number") {
-    return value > 0 ? `+${value}` : String(value);
-  }
-
-  return value;
-}
-
-function formatDirectorStateItems(
-  items: Array<[string, boolean | number | string]>,
-  fallback: string,
-) {
-  if (items.length === 0) {
-    return fallback;
-  }
-
-  return items
-    .slice(0, 3)
-    .map(([name, value]) => `${name} ${formatDirectorStateValue(value)}`)
-    .join(" / ");
-}
-
-function DirectorBriefPanel({
-  chapter,
-  creditBalance,
-  interactiveState,
-  projectMode,
-  volume,
-}: {
-  chapter: WorkbenchChapter | null;
-  creditBalance: number | null;
-  interactiveState: InteractiveStoryState | null;
-  projectMode: ProjectMode;
-  volume: VolumeOutline | null;
-}) {
-  const isInteractive = projectMode === "interactive";
-  const currentScene = chapter
-    ? `第 ${chapter.chapterNumber} 章 · ${chapter.title}`
-    : isInteractive
-      ? "命运尚未开场"
-      : "章节尚未生成";
-  const currentSceneDetail = chapter
-    ? chapter.highlight || chapter.event
-    : isInteractive
-      ? "先铺开章节，再进入故事。"
-      : "先生成章节大纲，再开始正文。";
-  const relationshipState = formatDirectorStateItems(
-    Object.entries(interactiveState?.relationships ?? {}),
-    chapter?.characterChange || (isInteractive ? "羁绊尚未改写" : "角色状态待生成"),
-  );
-  const worldState =
-    volume?.mainConflict ||
-    volume?.summary ||
-    (isInteractive ? "世界规则会随章节沉淀。" : "故事圣经生成后会固定世界规则。");
-  const routeState = formatDirectorStateItems(
-    Object.entries(interactiveState?.routeTendency ?? {}),
-    isInteractive ? "尚未分岔" : "按大纲推进",
-  );
-  const clueState = formatDirectorStateItems(
-    Object.entries(interactiveState?.clues ?? {}),
-    isInteractive ? "线索尚未点亮" : "伏笔待生成",
-  );
-  const creditLabel = isInteractive ? "星火状态" : "创作额度";
-  const creditValue = `${typeof creditBalance === "number" ? creditBalance : "--"} ${
-    isInteractive ? "星火" : "额度"
-  }`;
-
-  const cards = isInteractive
-    ? [
-        ["当前场景", currentScene, currentSceneDetail],
-        ["角色状态", relationshipState, "会影响下一章的人物反应。"],
-        ["世界设定", worldState, "把规则压在剧情背后，不打断阅读。"],
-        ["命运倾向", routeState, clueState],
-        [creditLabel, creditValue, "进入章节和铺开内容仍沿用现有扣费逻辑。"],
-      ]
-    : [
-        ["当前章节", currentScene, currentSceneDetail],
-        ["创作阶段", chapter ? getChapterStatus(chapter) : "等待大纲", "按设定、大纲、正文顺序推进。"],
-        ["世界设定", worldState, "故事圣经生成后会作为后续章节依据。"],
-        [creditLabel, creditValue, "创作入口仍沿用现有扣费逻辑。"],
-      ];
-
-  return (
-    <div className="director-brief-grid">
-      {cards.map(([label, value, detail]) => (
-        <article className="director-brief-card" key={label}>
-          <p className="director-brief-label">{label}</p>
-          <p className="director-brief-value">{value}</p>
-          <p className="director-brief-detail">{detail}</p>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function InteractiveStatePanel({
-  interactiveState,
-  projectMode,
-}: {
-  interactiveState: InteractiveStoryState | null;
-  projectMode: ProjectMode;
-}) {
-  if (projectMode !== "interactive") {
-    return null;
-  }
-
-  return (
-    <PaperPanel className="p-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="font-serif text-xl font-black text-[var(--ink)]">故事状态</h3>
-        <BookBadge tone="warning">随章节生长</BookBadge>
-      </div>
-      {hasInteractiveState(interactiveState) && interactiveState ? (
-        <div className="mt-4 grid gap-4">
-          <p className="text-sm leading-6 text-[var(--muted)]">
-            下一章生成会读取这些状态，让选择留下痕迹。
-          </p>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">人物羁绊</p>
-            <StateValueGrid items={Object.entries(interactiveState.relationships)} />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">压力与风险</p>
-            <StateValueGrid items={Object.entries(interactiveState.meters)} />
-          </div>
-          <div>
-            <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">线索与倾向</p>
-            <StateValueGrid
-              items={[
-                ...Object.entries(interactiveState.clues),
-                ...Object.entries(interactiveState.routeTendency),
-              ]}
-            />
-          </div>
-        </div>
-      ) : (
-        <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-          做出命运分歧后，这里会沉淀关系、压力、线索和故事倾向。
-        </p>
-      )}
-    </PaperPanel>
-  );
-}
-
-function ProjectBookHeader({
-  creditBalance,
-  project,
-  projectMode,
-}: {
-  creditBalance: number | null;
-  project: WorkbenchProject;
-  projectMode: ProjectMode;
-}) {
-  const modeTone = getProjectModeTone(projectMode);
-  const isInteractive = projectMode === "interactive";
-  const headerCopy = isInteractive
-    ? {
-        desk: "Theater Desk",
-        entry: "进入故事",
-        kicker: "读完章节，做出选择，故事会记住你的决定。",
-        returnLabel: "返回我的故事",
-        supplyLabel: "星火补给",
-        balanceLabel: "当前星火",
-        flow: ["阅读本章", "做出选择", "命运改变", "继续下一章"],
-      }
-    : {
-        desk: "Writing Desk",
-        entry: "创作书桌",
-        kicker: "整理设定、大纲和章节正文，稳稳推进这本小说。",
-        returnLabel: "返回我的故事",
-        supplyLabel: "创作补给",
-        balanceLabel: "当前额度",
-        flow: ["作品设定", "故事圣经", "章节大纲", "正文成稿"],
-      };
-
-  return (
-    <section className="project-workbench-shell project-hero-grid py-8">
-      <div className="project-hero-card">
-        <div className="flex flex-wrap items-center gap-3">
-          <StatusBookmark tone="gold">
-            {isInteractive ? "Story Theater" : "Book Workbench"}
-          </StatusBookmark>
-          <BookBadge tone={modeTone}>{PROJECT_MODE_LABELS[projectMode]}</BookBadge>
-        </div>
-        <p className="mt-8 text-sm font-black uppercase text-[var(--gold-strong)]">
-          {headerCopy.entry}
-        </p>
-        <h1 className="mt-3 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
-          {project.title}
-        </h1>
-        <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
-          {project.description || "这本书暂未填写简介。"}
-        </p>
-        <p className="mt-3 max-w-3xl text-sm font-bold leading-7 text-[var(--ink-soft)]">
-          {headerCopy.kicker}
-        </p>
-        <div className="project-hero-flow mt-5" aria-label={isInteractive ? "互动故事流程" : "创作流程"}>
-          {headerCopy.flow.map((step, index) => (
-            <span className="project-hero-flow-step" key={step}>
-              <span className="project-hero-flow-index">{index + 1}</span>
-              {step}
-            </span>
-          ))}
-        </div>
-        <div className="mt-6 flex flex-wrap gap-3">
-          <Link className="button-secondary" href="/dashboard">
-            {headerCopy.returnLabel}
-          </Link>
-          <Link className="button-secondary" href="/account/credits">
-            {headerCopy.supplyLabel}
-          </Link>
-        </div>
-      </div>
-
-      <PaperPanel className="project-hero-ledger p-5">
-        <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-          {headerCopy.desk}
-        </p>
-        <div className="mt-4 grid gap-4">
-          <div>
-            <p className="text-xs font-black text-[var(--muted)]">
-              {isInteractive ? "故事状态" : "作品状态"}
-            </p>
-            <BookBadge className="mt-2" tone="gold">
-              {project.status}
-            </BookBadge>
-          </div>
-          <div>
-            <p className="text-xs font-black text-[var(--muted)]">最近翻阅</p>
-            <p className="mt-1 font-bold text-[var(--ink)]">
-              {formatDate(project.updated_at || project.created_at)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-black text-[var(--muted)]">{headerCopy.balanceLabel}</p>
-            <CreditBadge
-              balance={creditBalance}
-              className="mt-2"
-              label={isInteractive ? "星火" : "额度"}
-            />
-          </div>
-        </div>
-      </PaperPanel>
-    </section>
-  );
-}
-
 function ChapterReaderPreview({
   chapter,
   interactiveState,
   projectId,
   projectMode,
+  creditBalance,
+  hasNextChapter = false,
+  nextChapterNumber = null,
   showBackmatter = true,
   volume,
 }: {
@@ -684,28 +272,22 @@ function ChapterReaderPreview({
   interactiveState: InteractiveStoryState | null;
   projectId: string;
   projectMode: ProjectMode;
+  creditBalance?: number | null;
+  hasNextChapter?: boolean;
+  nextChapterNumber?: number | null;
   showBackmatter?: boolean;
   volume: VolumeOutline | null;
 }) {
-  const reader = getReaderBody(chapter);
-  const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
   const isInteractive = projectMode === "interactive";
-  const readerSourceLabel = isInteractive ? "阅读页" : reader.source;
+  const reader = getReaderBody(chapter, projectMode);
+  const hasReadableBody = Boolean(chapter?.official?.body || chapter?.draft?.body);
+  const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
+  const readerSourceLabel = "阅读页";
 
   return (
     <div className="grid gap-5" id="chapter-reader">
-      {isInteractive ? (
-        <div className="story-flow-strip" aria-label="互动故事流程">
-          {["阅读", "选择", "继续"].map((step, index) => (
-            <span className="story-flow-step" key={step}>
-              <span className="story-flow-index">{index + 1}</span>
-              {step}
-            </span>
-          ))}
-        </div>
-      ) : null}
       <ReaderPage
-        className={isInteractive ? "story-theater-reader max-w-none" : "max-w-none"}
+        className="interactive-reader-page max-w-none"
         footer={
           <span>
             {readerSourceLabel}
@@ -719,7 +301,7 @@ function ChapterReaderPreview({
                 {volume ? `第 ${volume.volumeNumber} 卷 · ${volume.title}` : "章节阅读区"}
               </p>
               <h2 className="mt-1 font-serif text-2xl font-black text-[var(--ink)]">
-                {chapter ? `第 ${chapter.chapterNumber} 章 ${chapter.title}` : "等待章节大纲"}
+                {chapter ? `第 ${chapter.chapterNumber} 章 ${chapter.title}` : "准备开始阅读"}
               </h2>
             </div>
             <BookBadge tone={chapter?.official ? "success" : chapter?.draft ? "gold" : "paper"}>
@@ -728,16 +310,42 @@ function ChapterReaderPreview({
           </div>
         }
       >
-        <div className={isInteractive ? "story-page-prose whitespace-pre-wrap" : "whitespace-pre-wrap"}>
-          {reader.body}
+        <div
+          className={[
+            "interactive-reader-prose whitespace-pre-wrap",
+            hasReadableBody ? "" : "interactive-reader-empty",
+          ].join(" ")}
+        >
+          {hasReadableBody ? (
+            reader.body
+          ) : (
+            <div className="reader-empty-state">
+              <p className="reader-empty-kicker">
+                {chapter ? `第 ${chapter.chapterNumber} 章` : "阅读准备"}
+              </p>
+              <h3>{chapter ? "这一章尚未生成" : "准备开始阅读"}</h3>
+              <p>{reader.body}</p>
+            </div>
+          )}
         </div>
-        {isInteractive && chapter ? (
+        {isInteractive && chapter && hasReadableBody ? (
           <ChapterEndDecision
             chapterId={chapter.id}
             chapterNumber={chapter.chapterNumber}
+            creditBalance={creditBalance ?? null}
+            hasNextChapter={hasNextChapter}
             initialDecision={chapter.decision ?? null}
             initialInteractiveState={interactiveState}
             initialStateChanges={chapter.stateChanges ?? null}
+            nextChapterNumber={nextChapterNumber}
+            projectId={projectId}
+          />
+        ) : null}
+        {!isInteractive && chapter && hasReadableBody ? (
+          <ChapterContinueAction
+            creditBalance={creditBalance ?? null}
+            hasNextChapter={hasNextChapter}
+            nextChapterNumber={nextChapterNumber}
             projectId={projectId}
           />
         ) : null}
@@ -798,340 +406,117 @@ function ChapterBackmatter({
   );
 }
 
-function MinimalReaderHeader({
-  chapter,
+function ProjectReaderShellLayout({
+  chapterGenerationSlot,
+  chapters,
   creditBalance,
+  currentChapter,
+  interactiveState,
   project,
+  projectMode,
   volume,
-}: {
-  chapter: WorkbenchChapter | null;
-  creditBalance: number | null;
-  project: WorkbenchProject;
-  volume: VolumeOutline | null;
+}: Pick<
+  ProjectWorkbenchLayoutProps,
+  | "chapterGenerationSlot"
+  | "chapters"
+  | "creditBalance"
+  | "interactiveState"
+  | "project"
+  | "projectMode"
+  | "volume"
+> & {
+  currentChapter: WorkbenchChapter | null;
 }) {
+  const isInteractive = projectMode === "interactive";
+  const modeLabel = isInteractive ? "互动阅读" : "经典阅读";
+  const creditLabel = isInteractive ? "星火" : "额度";
+  const nextChapter = currentChapter
+    ? chapters.find((chapter) => chapter.chapterNumber === currentChapter.chapterNumber + 1)
+    : null;
+
   return (
-    <section className="minimal-reader-header">
-      <div>
-        <div className="minimal-reader-kicker-row">
-          <BookBadge tone="warning">互动剧情</BookBadge>
-          <span>互动阅读器</span>
-        </div>
-        <h1 className="minimal-reader-title">{project.title}</h1>
-        <p className="minimal-reader-subtitle">
-          {chapter
-            ? `当前停在第 ${chapter.chapterNumber} 章 · ${chapter.title}`
-            : "先铺开章节，再进入这段会记住选择的故事。"}
-        </p>
-        <p className="minimal-reader-meta">
-          {volume
-            ? `第 ${volume.volumeNumber} 卷 · ${volume.title}`
-            : project.description || "进入故事，阅读本章，做出选择。"}
-        </p>
-      </div>
-      <div className="minimal-reader-actions">
-        <CreditBadge balance={creditBalance} label="星火" />
-        <Link className="minimal-reader-link" href="/account/credits">
-          星火补给
-        </Link>
-      </div>
+    <section className="interactive-reader-shell">
+      <aside className="interactive-reader-sidebar">
+        <PaperPanel className="reader-sidebar-panel reader-sidebar-unified p-4">
+          <div className="reader-sidebar-project">
+            <div className="flex items-start gap-3">
+              <div className="reader-sidebar-cover" aria-hidden="true">
+                {project.title.slice(0, 1)}
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-black text-[var(--gold-strong)]">{modeLabel}</p>
+                <h1 className="mt-1 line-clamp-2 font-serif text-2xl font-black text-[var(--ink)]">
+                  {project.title}
+                </h1>
+                <p className="mt-2 text-xs font-bold leading-5 text-[var(--muted)]">
+                  {volume ? `第 ${volume.volumeNumber} 卷 · ${volume.title}` : project.status}
+                </p>
+              </div>
+            </div>
+            <div className="reader-sidebar-meta-grid">
+              <div>
+                <p className="reader-sidebar-meta-label">当前章节</p>
+                <p className="reader-sidebar-meta-value">
+                  {currentChapter
+                    ? `第 ${currentChapter.chapterNumber} 章 · ${currentChapter.title}`
+                    : "章节尚未铺开"}
+                </p>
+              </div>
+              <div>
+                <p className="reader-sidebar-meta-label">{creditLabel}</p>
+                <CreditBadge balance={creditBalance} className="mt-1" label={creditLabel} />
+              </div>
+            </div>
+          </div>
+          {chapterGenerationSlot}
+        </PaperPanel>
+      </aside>
+      <main className="interactive-reader-main">
+        <ChapterReaderPreview
+          chapter={currentChapter}
+          creditBalance={creditBalance}
+          hasNextChapter={Boolean(nextChapter)}
+          interactiveState={interactiveState}
+          nextChapterNumber={nextChapter?.chapterNumber ?? null}
+          projectId={project.id}
+          projectMode={projectMode}
+          showBackmatter={false}
+          volume={volume}
+        />
+      </main>
     </section>
   );
 }
 
-function MinimalChapterRail({
-  chapters,
-  currentChapter,
-}: {
-  chapters: WorkbenchChapter[];
-  currentChapter: WorkbenchChapter | null;
-}) {
-  return (
-    <aside className="minimal-chapter-rail" aria-label="章节目录">
-      <p className="minimal-chapter-rail-label">章节</p>
-      <nav className="minimal-chapter-dots" aria-label="章节快捷入口">
-        {chapters.slice(0, 12).map((chapter) => {
-          const isCurrent = chapter.id === currentChapter?.id;
-
-          return (
-            <a
-              aria-current={isCurrent ? "page" : undefined}
-              className={isCurrent ? "minimal-chapter-dot minimal-chapter-dot-active" : "minimal-chapter-dot"}
-              href="#chapter-reader"
-              key={chapter.id}
-              title={`第 ${chapter.chapterNumber} 章 ${chapter.title}`}
-            >
-              {chapter.chapterNumber}
-            </a>
-          );
-        })}
-      </nav>
-      <details className="minimal-chapter-menu">
-        <summary>目录</summary>
-        <div className="minimal-chapter-menu-body">
-          <ChapterToc
-            chapters={chapters}
-            currentChapterId={currentChapter?.id}
-            projectMode="interactive"
-          />
-        </div>
-      </details>
-    </aside>
-  );
-}
-
-function MinimalCreativeToolsDrawer({
-  chapter,
-  configItems,
-  directorSlot,
-  extraIdeas,
-  hasConfig,
-}: {
-  chapter: WorkbenchChapter | null;
-  configItems: ConfigDisplayItem[];
-  directorSlot: ReactNode;
-  extraIdeas: string | null;
-  hasConfig: boolean;
-}) {
-  const reader = getReaderBody(chapter);
-  const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
-
-  return (
-    <details className="minimal-tools-drawer">
-      <summary>
-        <span>
-          <span className="minimal-tools-kicker">创作辅助</span>
-          <strong>创作工具</strong>
-        </span>
-        <BookBadge tone="paper">默认收起</BookBadge>
-      </summary>
-      <div className="minimal-tools-body">
-        <div className="minimal-tools-grid">
-          <div className="grid gap-5">
-            {directorSlot}
-            <StoryConfigPanel
-              configItems={configItems}
-              extraIdeas={extraIdeas}
-              hasConfig={hasConfig}
-            />
-          </div>
-          <div className="grid gap-5">
-            <ChapterBackmatter chapter={chapter} readerSource={reader.source} summary={summary} />
-          </div>
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function InteractiveTheaterLayout({
-  chapters,
-  configItems,
-  creditBalance,
-  currentChapter,
-  directorSlot,
-  extraIdeas,
-  hasConfig,
-  interactiveState,
-  project,
-  volume,
-}: ProjectWorkbenchLayoutProps & {
-  currentChapter: WorkbenchChapter | null;
-}) {
-  return (
-    <>
-      <MinimalReaderHeader
-        chapter={currentChapter}
-        creditBalance={creditBalance}
-        project={project}
-        volume={volume}
-      />
-
-      <section className="minimal-reader-shell">
-        <MinimalChapterRail chapters={chapters} currentChapter={currentChapter} />
-        <main className="minimal-reader-stage min-w-0">
-          <ChapterReaderPreview
-            chapter={currentChapter}
-            interactiveState={interactiveState}
-            projectId={project.id}
-            projectMode="interactive"
-            showBackmatter={false}
-            volume={volume}
-          />
-          <MinimalCreativeToolsDrawer
-            chapter={currentChapter}
-            configItems={configItems}
-            directorSlot={directorSlot}
-            extraIdeas={extraIdeas}
-            hasConfig={hasConfig}
-          />
-        </main>
-
-        <aside className="minimal-director-dock">
-          <DirectorConsole
-            className="story-director-console minimal-director-console"
-            collapsedLabel="故事导演台"
-            defaultOpen={false}
-            eyebrow="Story Director"
-            title="故事导演台"
-          >
-            <DirectorBriefPanel
-              chapter={currentChapter}
-              creditBalance={creditBalance}
-              interactiveState={interactiveState}
-              projectMode="interactive"
-              volume={volume}
-            />
-            <p className="minimal-director-hint">
-              创作工具已收进页面上方抽屉；这里保留本章摘要，不打断阅读。
-            </p>
-          </DirectorConsole>
-        </aside>
-      </section>
-    </>
-  );
-}
-
 export function ProjectWorkbenchLayout({
+  chapterGenerationSlot,
   chapters,
-  configItems,
   creditBalance,
-  directorSlot,
-  extraIdeas,
-  hasConfig,
+  currentChapterNumber,
   interactiveState,
   project,
   projectMode,
   volume,
 }: ProjectWorkbenchLayoutProps) {
+  const requestedChapter =
+    typeof currentChapterNumber === "number"
+      ? chapters.find((chapter) => chapter.chapterNumber === currentChapterNumber)
+      : null;
   const currentChapter =
-    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ?? chapters[0] ?? null;
-  const isInteractive = projectMode === "interactive";
-
-  if (isInteractive) {
-    return (
-      <InteractiveTheaterLayout
-        chapters={chapters}
-        configItems={configItems}
-        creditBalance={creditBalance}
-        currentChapter={currentChapter}
-        directorSlot={directorSlot}
-        extraIdeas={extraIdeas}
-        hasConfig={hasConfig}
-        interactiveState={interactiveState}
-        project={project}
-        projectMode={projectMode}
-        volume={volume}
-      />
-    );
-  }
-
+    requestedChapter ??
+    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ??
+    chapters[0] ??
+    null;
   return (
-    <>
-      <ProjectBookHeader
-        creditBalance={creditBalance}
-        project={project}
-        projectMode={projectMode}
-      />
-
-      <section
-        className={[
-          "project-workbench-shell project-workbench-grid",
-          "project-workbench-grid-classic",
-        ].join(" ")}
-      >
-        <aside className="project-sidebar-column grid gap-5 xl:sticky xl:top-6">
-          <PaperPanel className="p-5">
-            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
-              Book Index
-            </p>
-            <h2 className="mt-2 font-serif text-2xl font-black text-[var(--ink)]">
-              作品目录
-            </h2>
-            <div className="mt-4 grid gap-3">
-              <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
-                <p className="text-xs font-black text-[var(--muted)]">模式</p>
-                <BookBadge className="mt-2" tone={getProjectModeTone(projectMode)}>
-                  {PROJECT_MODE_LABELS[projectMode]}
-                </BookBadge>
-              </div>
-              {volume ? (
-                <div className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-3">
-                  <p className="text-xs font-black text-[var(--muted)]">当前卷</p>
-                  <p className="mt-1 font-bold leading-6 text-[var(--ink)]">{volume.title}</p>
-                  <p className="mt-1 text-xs text-[var(--muted)]">{chapters.length} 章</p>
-                </div>
-              ) : null}
-              <a className="button-secondary min-h-10 px-3 text-sm" href="#chapter-reader">
-                进入章节
-              </a>
-            </div>
-          </PaperPanel>
-
-          <PaperPanel className="p-5">
-            <h3 className="font-serif text-xl font-black text-[var(--ink)]">章节目录</h3>
-            <div className="mt-4">
-              <ChapterToc
-                chapters={chapters}
-                currentChapterId={currentChapter?.id}
-                projectMode={projectMode}
-              />
-            </div>
-          </PaperPanel>
-
-          <InteractiveStatePanel
-            interactiveState={interactiveState}
-            projectMode={projectMode}
-          />
-
-          <StoryConfigPanel
-            configItems={configItems}
-            extraIdeas={extraIdeas}
-            hasConfig={hasConfig}
-          />
-        </aside>
-
-        <main className="project-reader-column project-reader-stage min-w-0">
-          <ChapterReaderPreview
-            chapter={currentChapter}
-            interactiveState={interactiveState}
-            projectId={project.id}
-            projectMode={projectMode}
-            volume={volume}
-          />
-        </main>
-
-        <aside className="project-director-column xl:sticky xl:top-6">
-          <DirectorConsole
-            className={isInteractive ? "story-director-console" : "book-director-console"}
-            collapsedLabel="展开导演台"
-            defaultOpen
-            eyebrow={isInteractive ? "Story Director" : "AI Director"}
-            title={isInteractive ? "故事导演台" : "AI 导演台"}
-          >
-            <DirectorBriefPanel
-              chapter={currentChapter}
-              creditBalance={creditBalance}
-              interactiveState={interactiveState}
-              projectMode={projectMode}
-              volume={volume}
-            />
-            {isInteractive ? (
-              <details className="director-toolbox">
-                <summary>
-                  <span>
-                    <span className="director-toolbox-kicker">工具箱</span>
-                    <strong>展开故事生成入口</strong>
-                  </span>
-                  <BookBadge tone="warning">可选</BookBadge>
-                </summary>
-                <div className="director-toolbox-body">{directorSlot}</div>
-              </details>
-            ) : (
-              <div className="director-toolbox-body director-toolbox-body-open">{directorSlot}</div>
-            )}
-          </DirectorConsole>
-        </aside>
-      </section>
-    </>
+    <ProjectReaderShellLayout
+      chapterGenerationSlot={chapterGenerationSlot}
+      chapters={chapters}
+      creditBalance={creditBalance}
+      currentChapter={currentChapter}
+      interactiveState={interactiveState}
+      project={project}
+      projectMode={projectMode}
+      volume={volume}
+    />
   );
 }

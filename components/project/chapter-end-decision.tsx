@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { BookBadge, PaperPanel } from "@/components/ui/book";
+import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import {
   CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT,
@@ -11,7 +12,6 @@ import {
   type ChapterDecisionOptionId,
 } from "@/prompts/chapter-decision";
 import {
-  hasStoryStateChanges,
   type InteractiveStoryState,
   type StoryStateChanges,
 } from "@/prompts/story-state";
@@ -24,166 +24,24 @@ type DecisionResponse = {
   error?: string;
 };
 
+type ChapterGenerationResponse = {
+  chapter?: {
+    chapterNumber?: number;
+  };
+  error?: string;
+};
+
 type ChapterEndDecisionProps = {
   chapterId: string;
   chapterNumber: number;
+  creditBalance: number | null;
+  hasNextChapter: boolean;
   initialDecision?: ChapterDecision | null;
   initialInteractiveState?: InteractiveStoryState | null;
   initialStateChanges?: StoryStateChanges | null;
+  nextChapterNumber?: number | null;
   projectId: string;
 };
-
-function formatChangeValue(value: number) {
-  return value > 0 ? `+${value}` : String(value);
-}
-
-function StateChangeList({
-  items,
-  renderValue,
-}: {
-  items: Array<{
-    name?: string;
-    key?: string;
-    change?: number;
-    value?: boolean;
-    reason?: string;
-    status?: string;
-    note?: string;
-  }>;
-  renderValue?: (item: {
-    name?: string;
-    key?: string;
-    change?: number;
-    value?: boolean;
-    reason?: string;
-    status?: string;
-    note?: string;
-  }) => string;
-}) {
-  if (items.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="grid gap-2">
-      {items.map((item) => {
-        const title = item.name ?? item.key ?? "状态变化";
-
-        return (
-          <div
-            className="rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2"
-            key={`${title}-${item.change ?? item.status ?? item.value ?? ""}`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-w-0 truncate text-sm font-bold text-[var(--ink)]">{title}</p>
-              {renderValue ? (
-                <span className="shrink-0 text-xs font-black text-[var(--gold-strong)]">
-                  {renderValue(item)}
-                </span>
-              ) : null}
-            </div>
-            {item.reason || item.note ? (
-              <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-                {item.reason ?? item.note}
-              </p>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function ChapterStateChangesPanel({ stateChanges }: { stateChanges: StoryStateChanges | null }) {
-  if (!stateChanges || !hasStoryStateChanges(stateChanges)) {
-    return null;
-  }
-
-  return (
-    <details className="decision-ripple-details">
-      <summary>
-        <span>
-          <strong>查看完整命运涟漪</strong>
-          <span>关系、风险、线索和倾向已写入故事状态。</span>
-        </span>
-        <BookBadge tone="warning">可展开</BookBadge>
-      </summary>
-      <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <div>
-          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">羁绊变化</p>
-          <StateChangeList
-            items={stateChanges.relationships}
-            renderValue={(item) => formatChangeValue(item.change ?? 0)}
-          />
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">压力与风险</p>
-          <StateChangeList
-            items={stateChanges.meters}
-            renderValue={(item) => formatChangeValue(item.change ?? 0)}
-          />
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">被点亮的线索</p>
-          <StateChangeList
-            items={[...stateChanges.flags, ...stateChanges.clues]}
-            renderValue={(item) =>
-              item.status ?? (item.value === undefined ? "已记录" : item.value ? "是" : "否")
-            }
-          />
-        </div>
-        <div>
-          <p className="mb-2 text-xs font-black text-[var(--gold-strong)]">故事倾向</p>
-          <StateChangeList
-            items={stateChanges.routeTendency}
-            renderValue={(item) => formatChangeValue(item.change ?? 0)}
-          />
-        </div>
-      </div>
-    </details>
-  );
-}
-
-function InteractiveStateAfterSave({
-  interactiveState,
-}: {
-  interactiveState: InteractiveStoryState | null;
-}) {
-  if (!interactiveState) {
-    return null;
-  }
-
-  const previewItems = [
-    ...Object.entries(interactiveState.relationships).map(([name, value]) => [name, value] as const),
-    ...Object.entries(interactiveState.meters).map(([name, value]) => [name, value] as const),
-    ...Object.entries(interactiveState.routeTendency).map(
-      ([name, value]) => [name, value] as const,
-    ),
-  ].slice(0, 6);
-
-  if (previewItems.length === 0) {
-    return null;
-  }
-
-  return (
-    <div className="rounded-md border border-[var(--line)] bg-[rgba(255,244,220,0.72)] p-4">
-      <h4 className="font-serif text-lg font-black text-[var(--ink)]">故事火种已更新</h4>
-      <p className="mt-1 text-sm leading-6 text-[var(--muted)]">
-        下一章会带着这些关系、风险和线索继续推进。
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {previewItems.map(([name, value], index) => (
-          <span
-            className="rounded-sm border border-[var(--line)] bg-[rgba(255,248,234,0.88)] px-2 py-1 text-xs font-bold text-[var(--ink)]"
-            key={`${name}-${index}`}
-          >
-            {name} {value}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 function getSelectedChoiceLabel(decision: ChapterDecision) {
   const selectedOption = decision.selectedOptionId
@@ -202,32 +60,15 @@ function getSelectedChoiceLabel(decision: ChapterDecision) {
   return "这条命运";
 }
 
-function getPrimaryImpactSummary(stateChanges: StoryStateChanges | null) {
-  if (!stateChanges || !hasStoryStateChanges(stateChanges)) {
-    return ["角色关系和故事状态已更新，下一章会继承这次选择。"];
-  }
-
-  return [
-    ...stateChanges.relationships.map(
-      (item) => `羁绊变化：${item.name} ${formatChangeValue(item.change)}`,
-    ),
-    ...stateChanges.meters.map(
-      (item) => `压力与风险：${item.name} ${formatChangeValue(item.change)}`,
-    ),
-    ...stateChanges.clues.map((item) => `被点亮的线索：${item.name} ${item.status}`),
-    ...stateChanges.routeTendency.map(
-      (item) => `命运倾向：${item.name} ${formatChangeValue(item.change)}`,
-    ),
-    ...stateChanges.flags.map((item) => `故事标记：${item.key}${item.value ? " 已触发" : ""}`),
-  ].slice(0, 4);
-}
-
 export function ChapterEndDecision({
   chapterId,
   chapterNumber,
+  creditBalance,
+  hasNextChapter,
   initialDecision,
   initialInteractiveState,
   initialStateChanges,
+  nextChapterNumber,
   projectId,
 }: ChapterEndDecisionProps) {
   const [decision, setDecision] = useState(initialDecision ?? null);
@@ -239,8 +80,10 @@ export function ChapterEndDecision({
   const [customChoice, setCustomChoice] = useState(initialDecision?.customChoice ?? "");
   const [error, setError] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingNextChapter, setIsGeneratingNextChapter] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const router = useRouter();
+  const nextChapterCost = GENERATION_CREDIT_COSTS.generate_chapter;
   const hasSavedDecision = decision ? hasSelectedChapterDecision(decision) : false;
   const hasPendingChoice = decision
     ? (selectedOptionId || "") !== (decision.selectedOptionId ?? "") ||
@@ -264,7 +107,11 @@ export function ChapterEndDecision({
           title: "选择尚未落定",
         };
   const selectedChoiceLabel = decision ? getSelectedChoiceLabel(decision) : "";
-  const primaryImpactSummary = getPrimaryImpactSummary(stateChanges);
+  const hasEnoughNextChapterCredits =
+    creditBalance === null || creditBalance >= nextChapterCost;
+  const nextChapterCreditShortfallMessage = hasEnoughNextChapterCredits
+    ? ""
+    : `星火不足：当前 ${creditBalance} 星火，进入下一章需要 ${nextChapterCost} 星火。`;
 
   async function generateDecision() {
     setError("");
@@ -340,6 +187,50 @@ export function ChapterEndDecision({
     router.refresh();
   }
 
+  async function generateNextChapter() {
+    if (!hasNextChapter || !nextChapterNumber) {
+      setError("需要先铺开后续章节。");
+      return;
+    }
+
+    if (!hasEnoughNextChapterCredits) {
+      setError(nextChapterCreditShortfallMessage);
+      return;
+    }
+
+    if (hasPendingChoice) {
+      setError("请先确认新的命运选择。");
+      return;
+    }
+
+    setError("");
+    setIsGeneratingNextChapter(true);
+
+    const response = await fetch("/api/generate/chapter", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        chapterNumber: nextChapterNumber,
+        qualityMode: "normal",
+      }),
+    });
+    const payload = (await response.json().catch(() => null)) as ChapterGenerationResponse | null;
+
+    setIsGeneratingNextChapter(false);
+
+    if (!response.ok || !payload?.chapter) {
+      setError(formatUserFacingError(payload?.error, "下一章生成失败，请稍后重试。"));
+      return;
+    }
+
+    const generatedChapterNumber = payload.chapter.chapterNumber ?? nextChapterNumber;
+    router.push(`/project/${projectId}?chapter=${generatedChapterNumber}#chapter-reader`);
+    router.refresh();
+  }
+
   return (
     <PaperPanel className="chapter-decision-panel mt-0 p-0">
       <div className="decision-panel-header">
@@ -354,7 +245,7 @@ export function ChapterEndDecision({
         </div>
         <button
           className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-          disabled={isGenerating || isSaving}
+          disabled={isGenerating || isSaving || isGeneratingNextChapter}
           onClick={generateDecision}
           type="button"
         >
@@ -390,7 +281,7 @@ export function ChapterEndDecision({
                   <input
                     checked={selectedOptionId === option.id}
                     className="sr-only"
-                    disabled={isSaving}
+                    disabled={isSaving || isGeneratingNextChapter}
                     name={`chapter-end-decision-${chapterId}`}
                     onChange={() => setSelectedOptionId(option.id)}
                     type="radio"
@@ -423,7 +314,7 @@ export function ChapterEndDecision({
               </span>
               <textarea
                 className="min-h-24 resize-y rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.82)] px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--gold)]"
-                disabled={isSaving}
+                disabled={isSaving || isGeneratingNextChapter}
                 maxLength={CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT}
                 onChange={(event) => setCustomChoice(event.target.value)}
                 placeholder="如果三个选项都不够贴合，可以写下你希望主角做出的决定。"
@@ -445,7 +336,7 @@ export function ChapterEndDecision({
             </div>
             <button
               className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isSaving}
+              disabled={isSaving || isGeneratingNextChapter}
               onClick={saveDecision}
               type="button"
             >
@@ -464,25 +355,40 @@ export function ChapterEndDecision({
                     {selectedChoiceLabel}
                   </p>
                 </div>
-                <a className="button-primary min-h-10 px-4 text-sm" href="#chapter-reader">
-                  沿这条命运继续下一章
-                </a>
+                {hasNextChapter && nextChapterNumber ? (
+                  <button
+                    className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    disabled={
+                      isGeneratingNextChapter ||
+                      isSaving ||
+                      hasPendingChoice ||
+                      !hasEnoughNextChapterCredits
+                    }
+                    onClick={generateNextChapter}
+                    type="button"
+                  >
+                    {isGeneratingNextChapter
+                      ? "下一章生成中..."
+                      : hasPendingChoice
+                        ? "先确认新的选择"
+                        : `消耗 ${nextChapterCost} 星火进入下一章`}
+                  </button>
+                ) : (
+                  <p className="rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] px-3 py-2 text-sm font-bold leading-6 text-[var(--muted)]">
+                    需要先铺开后续章节。
+                  </p>
+                )}
               </div>
+              {nextChapterCreditShortfallMessage ? (
+                <p className="mt-3 text-sm font-bold leading-6 text-[#7f2f1d]">
+                  {nextChapterCreditShortfallMessage}
+                </p>
+              ) : null}
               <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
-                下一章将沿着这条命运继续。角色关系和故事状态已更新。
+                下一章将沿着这条命运继续，当前正文不会被改写。
               </p>
-              <div className="mt-4 rounded-md border border-[var(--line)] bg-[rgba(255,248,234,0.7)] px-3 py-3">
-                <p className="text-xs font-black text-[var(--gold-strong)]">主要影响摘要</p>
-                <ul className="mt-2 grid gap-2 text-sm leading-6 text-[var(--ink-soft)]">
-                  {primaryImpactSummary.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
             </div>
           ) : null}
-          <ChapterStateChangesPanel stateChanges={stateChanges} />
-          <InteractiveStateAfterSave interactiveState={interactiveState} />
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">
