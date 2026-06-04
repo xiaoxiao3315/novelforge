@@ -881,7 +881,7 @@ button:disabled {
 
 .chapter-decision-dock-open {
   top: 104px;
-  width: min(520px, calc(100vw - 48px));
+  width: min(420px, calc(100vw - 48px));
 }
 
 .chapter-decision-dock > * {
@@ -920,7 +920,7 @@ button:disabled {
 .chapter-decision-floating-panel {
   border-color: rgba(75, 46, 29, 0.16);
   background: rgba(255, 253, 248, 0.98);
-  box-shadow: 0 28px 70px rgba(45, 27, 18, 0.22);
+  box-shadow: 0 22px 54px rgba(45, 27, 18, 0.18);
   max-height: calc(100dvh - 136px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -929,6 +929,7 @@ button:disabled {
 }
 
 .decision-panel-title {
+  font-size: 1.42rem;
   line-height: 1.18;
   text-wrap: balance;
 }
@@ -953,7 +954,7 @@ button:disabled {
 
 .chapter-choice-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .interactive-reader-page .chapter-decision-panel .button-primary,
@@ -971,7 +972,7 @@ button:disabled {
     linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 42%),
     #f3fbf2;
   box-shadow: 0 12px 28px rgba(45, 27, 18, 0.08);
-  padding: 16px;
+  padding: 14px;
 }
 
 .choice-result-card ul {
@@ -998,7 +999,8 @@ button:disabled {
 
 .decision-option-card {
   user-select: none;
-  min-height: 78px;
+  min-height: 68px;
+  padding-block: 10px;
 }
 
 .decision-option-card input {
@@ -1371,6 +1373,12 @@ button:disabled {
   font-size: 0.74rem;
   font-weight: 800;
   white-space: nowrap;
+}
+
+@media (min-width: 1800px) {
+  .chapter-decision-dock-open {
+    right: max(18px, calc((100vw - 1160px) / 2 - 420px - 16px));
+  }
 }
 
 @media (max-width: 1480px) and (min-width: 981px) {
