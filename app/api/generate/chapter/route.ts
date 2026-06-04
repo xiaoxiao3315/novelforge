@@ -1,11 +1,19 @@
 import { NextResponse } from "next/server";
-import { findPlotFilterLabel } from "@/data/plot-filters";
+import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
 import {
   GENERATION_CREDIT_COSTS,
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { getProjectModeFromConfig } from "@/lib/projects/modes";
+import {
+  DEFAULT_REWRITE_SCORE_THRESHOLD,
+  runChapterQualityPipeline,
+  type ChapterQualityPipelineResult,
+  type QualityPipelineModel,
+} from "@/lib/quality/pipeline";
+import type { ChapterQualityPromptContext, ChapterWritingPlan } from "@/lib/quality/types";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -25,10 +33,13 @@ import {
   type ChapterIntervention,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
+import { normalizeChapterDecision } from "@/prompts/chapter-decision";
 import {
   buildChapterSummary,
   buildChapterSummaryPrompt,
+  buildChapterSummaryRetryPrompt,
   CHAPTER_SUMMARY_PROMPT_VERSION,
+  repairChapterSummaryOutput,
   validateChapterSummaryOutput,
 } from "@/prompts/chapter-summary";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
@@ -38,12 +49,27 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import {
+  buildChapterCritiquePrompt,
+  CHAPTER_CRITIQUE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-critique";
+import {
+  buildChapterCharacterDirectionPrompt,
+  CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
+} from "@/prompts/chapter-character-direction";
+import { buildChapterPlanPrompt, CHAPTER_PLAN_SYSTEM_PROMPT } from "@/prompts/chapter-plan";
+import {
+  buildChapterRewritePrompt,
+  CHAPTER_REWRITE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-rewrite";
+import { normalizeInteractiveStoryState } from "@/prompts/story-state";
 
 type GenerateChapterBody = {
   projectId?: unknown;
   chapterId?: unknown;
   chapterNumber?: unknown;
   intervention?: unknown;
+  qualityMode?: unknown;
   user_id?: unknown;
 };
 
@@ -63,6 +89,7 @@ type StoryConfigRow = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+  config_json: unknown;
 };
 
 type StoryConceptRow = {
@@ -113,6 +140,14 @@ const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_PLAN_MAX_TOKENS = 2600;
+const CHAPTER_QUALITY_PLAN_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS = 2500;
+const CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS = 2600;
+const CHAPTER_QUALITY_CRITIQUE_TEMPERATURE = 0.1;
+const CHAPTER_QUALITY_REWRITE_MAX_TOKENS = 7000;
+const CHAPTER_QUALITY_REWRITE_TEMPERATURE = 0.68;
 const RAW_OUTPUT_PREVIEW_LENGTH = 1000;
 const CHAPTER_SYSTEM_PROMPT = [
   "你只输出中文小说正文。",
@@ -133,6 +168,43 @@ type SummaryJsonParseFailure = {
   outputLength: number;
   finishReason: string | null;
   rawPreview: string;
+};
+
+type SummarySchemaValidationFailureLog = {
+  attempt: number;
+  validationError: string;
+  missingFields: string[];
+  extraFields: string[];
+  invalidFields: string[];
+  retryAttempt: number | null;
+  repairedFields: string[];
+  rawPreview: string;
+  summaryRepaired: boolean;
+};
+
+type SummaryRepairLog = {
+  summaryRepaired: true;
+  missingFields: string[];
+  repairedFields: string[];
+  rawPreview: string;
+};
+
+type ChapterGenerationQualityMode = "normal" | "quality";
+
+type ChapterDraftQualityMetadata = {
+  mode: "quality-v1";
+  status: ChapterQualityPipelineResult["status"];
+  plan?: ChapterWritingPlan;
+  characterDirection?: ChapterQualityPipelineResult["characterDirection"];
+  critique: {
+    overallScore: number;
+    scores: NonNullable<ChapterQualityPipelineResult["critique"]>["scores"];
+  };
+  rewriteApplied: boolean;
+  rewritePolicy: ChapterQualityPipelineResult["metadata"]["rewritePolicy"];
+  rewriteScoreThreshold: number;
+  promptVersions: ChapterQualityPipelineResult["metadata"]["promptVersions"];
+  steps: ChapterQualityPipelineResult["steps"];
 };
 
 function validationError(message: string) {
@@ -165,6 +237,20 @@ function cleanChapterBody(text: string) {
     .replace(/^```(?:text|markdown)?/i, "")
     .replace(/```$/i, "")
     .trim();
+}
+
+function normalizeQualityMode(
+  value: unknown,
+): { ok: true; qualityMode: ChapterGenerationQualityMode } | { ok: false; error: string } {
+  if (value === undefined) {
+    return { ok: true, qualityMode: "normal" };
+  }
+
+  if (value === "normal" || value === "quality") {
+    return { ok: true, qualityMode: value };
+  }
+
+  return { ok: false, error: "qualityMode 必须是 normal 或 quality。" };
 }
 
 function parseJsonObject(text: string) {
@@ -300,6 +386,41 @@ function formatSummaryJsonFailureLog(failures: SummaryJsonParseFailure[]) {
   ].join("\n");
 }
 
+function buildSummarySchemaValidationFailureLog(
+  attempt: number,
+  outputText: string,
+  validation: Extract<ReturnType<typeof validateChapterSummaryOutput>, { ok: false }>,
+  retryAttempt: number | null,
+): SummarySchemaValidationFailureLog {
+  return {
+    attempt,
+    validationError: validation.error,
+    missingFields: validation.missingFields,
+    extraFields: validation.extraFields,
+    invalidFields: validation.invalidFields,
+    retryAttempt,
+    repairedFields: [],
+    rawPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+    summaryRepaired: false,
+  };
+}
+
+function buildSummaryValidationLogOutput(
+  schemaFailures: SummarySchemaValidationFailureLog[],
+  parseFailures: SummaryJsonParseFailure[],
+  repairLog: SummaryRepairLog | null = null,
+) {
+  return {
+    summaryValidation: {
+      attempts: schemaFailures,
+      summaryRepaired: Boolean(repairLog),
+      missingFields: repairLog?.missingFields ?? [],
+      repairedFields: repairLog?.repairedFields ?? [],
+    },
+    summaryJsonParseFailures: parseFailures,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -401,6 +522,9 @@ function buildPromptInput(
   chapter: ChapterOutline,
   previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
   intervention: ChapterIntervention,
+  previousDecision: ChapterPromptInput["previousDecision"],
+  currentDecision: ChapterPromptInput["currentDecision"],
+  interactiveState: ChapterPromptInput["interactiveState"],
 ): ChapterPromptInput {
   return {
     project: {
@@ -408,15 +532,7 @@ function buildPromptInput(
       description: project.description,
     },
     config: {
-      theme: findPlotFilterLabel("themes", config.theme),
-      genre: findPlotFilterLabel("genres", config.genre),
-      background: findPlotFilterLabel("backgrounds", config.background),
-      worldSetting: findPlotFilterLabel("worldSettings", config.world_setting),
-      protagonist: findPlotFilterLabel("protagonists", config.protagonist),
-      coreConflict: findPlotFilterLabel("coreConflicts", config.core_conflict),
-      tone: findPlotFilterLabel("tones", config.tone),
-      serialStructure: findPlotFilterLabel("serialStructures", config.serial_structure),
-      extraIdeas: config.extra_ideas,
+      ...buildStoryConfigPromptData(config),
     },
     concept,
     bible,
@@ -425,7 +541,212 @@ function buildPromptInput(
     chapter,
     previousChapters,
     intervention,
+    previousDecision,
+    currentDecision,
+    interactiveState,
     wordTarget: chapter.estimatedWords || DEFAULT_CHAPTER_WORD_TARGET,
+  };
+}
+
+function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
+  return {
+    storyConfig: input.config,
+    storyConcept: input.concept,
+    storyBible: input.bible,
+    characters: input.characters,
+    volume: input.volume,
+    chapterOutline: input.chapter,
+    previousSummaries: input.previousChapters,
+    directorInstruction: input.intervention,
+    interactiveDecision: {
+      previousDecision: input.previousDecision ?? null,
+      currentDecision: input.currentDecision ?? null,
+    },
+    interactiveState: input.interactiveState ?? null,
+  };
+}
+
+function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
+  return {
+    async generatePlan(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_PLAN_SYSTEM_PROMPT,
+        userPrompt: buildChapterPlanPrompt(input),
+        maxTokens: CHAPTER_QUALITY_PLAN_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_PLAN_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek chapter plan response is empty.");
+      }
+
+      return parseSummaryJsonObject(result.outputText);
+    },
+    async generateCharacterDirection(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
+        userPrompt: buildChapterCharacterDirectionPrompt(input),
+        maxTokens: CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek character direction response is empty.");
+      }
+
+      return parseSummaryJsonObject(result.outputText);
+    },
+    async generateDraft(input) {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_SYSTEM_PROMPT,
+        userPrompt: buildChapterPrompt({
+          ...promptInput,
+          chapterPlan: input.chapterPlan ?? null,
+          chapterCharacterDirection: input.chapterCharacterDirection ?? null,
+        }),
+        maxTokens: CHAPTER_MAX_TOKENS,
+        temperature: CHAPTER_TEMPERATURE,
+      });
+
+      return cleanChapterBody(result.outputText);
+    },
+    async generateCritique(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_CRITIQUE_SYSTEM_PROMPT,
+        userPrompt: buildChapterCritiquePrompt(input),
+        maxTokens: CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_CRITIQUE_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek quality critique response is empty.");
+      }
+
+      return parseSummaryJsonObject(result.outputText);
+    },
+    async generateRewrite(input) {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_REWRITE_SYSTEM_PROMPT,
+        userPrompt: buildChapterRewritePrompt(input),
+        maxTokens: CHAPTER_QUALITY_REWRITE_MAX_TOKENS,
+        temperature: CHAPTER_QUALITY_REWRITE_TEMPERATURE,
+      });
+
+      return cleanChapterBody(result.outputText);
+    },
+  };
+}
+
+function buildQualityPromptVersions(pipelineResult: ChapterQualityPipelineResult) {
+  return pipelineResult.metadata.promptVersions;
+}
+
+function buildQualityMetadata(
+  pipelineResult: ChapterQualityPipelineResult,
+): ChapterDraftQualityMetadata | null {
+  if (!pipelineResult.critique) {
+    return null;
+  }
+
+  return {
+    mode: pipelineResult.metadata.mode,
+    status: pipelineResult.status,
+    ...(pipelineResult.plan ? { plan: pipelineResult.plan } : {}),
+    ...(pipelineResult.characterDirection
+      ? { characterDirection: pipelineResult.characterDirection }
+      : {}),
+    critique: {
+      overallScore: pipelineResult.critique.overallScore,
+      scores: pipelineResult.critique.scores,
+    },
+    rewriteApplied: pipelineResult.steps.rewrite === "success",
+    rewritePolicy: pipelineResult.metadata.rewritePolicy,
+    rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    promptVersions: buildQualityPromptVersions(pipelineResult),
+    steps: pipelineResult.steps,
+  };
+}
+
+function summarizeChapterPlan(plan: ChapterWritingPlan | undefined) {
+  if (!plan) {
+    return null;
+  }
+
+  return {
+    chapterGoal: plan.chapterGoal,
+    coreConflict: plan.coreConflict,
+    emotionalArc: plan.emotionalArc,
+    endingHook: plan.endingHook,
+    keySceneCount: plan.keyScenes.length,
+    characterBeatCount: plan.characterBeats.length,
+    suspenseAndHooks: plan.suspenseAndHooks.slice(0, 3),
+    mustAvoid: plan.mustAvoid.slice(0, 3),
+    continuityNotes: plan.continuityNotes.slice(0, 3),
+  };
+}
+
+function summarizeChapterCharacterDirection(
+  characterDirection: ChapterQualityPipelineResult["characterDirection"],
+) {
+  if (!characterDirection) {
+    return null;
+  }
+
+  return {
+    povGuidance: characterDirection.povGuidance,
+    focusCharacterCount: characterDirection.focusCharacters.length,
+    focusCharacters: characterDirection.focusCharacters.slice(0, 5).map((character) => ({
+      character: character.character,
+      activeDesire: character.activeDesire,
+      emotionalMask: character.emotionalMask,
+      dialogueVoice: character.dialogueVoice,
+      relationshipPressure: character.relationshipPressure,
+    })),
+    relationshipBeats: characterDirection.relationshipBeats.slice(0, 3),
+    dialogueRules: characterDirection.dialogueRules.slice(0, 3),
+    actionRules: characterDirection.actionRules.slice(0, 3),
+    hiddenInformation: characterDirection.hiddenInformation.slice(0, 3),
+    continuityGuards: characterDirection.continuityGuards.slice(0, 3),
+    mustInclude: characterDirection.mustInclude.slice(0, 3),
+    mustAvoid: characterDirection.mustAvoid.slice(0, 3),
+  };
+}
+
+function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineResult) {
+  return {
+    status: pipelineResult.status,
+    steps: pipelineResult.steps,
+    errors: pipelineResult.errors,
+    plan: summarizeChapterPlan(pipelineResult.plan),
+    characterDirection: summarizeChapterCharacterDirection(pipelineResult.characterDirection),
+    critique: pipelineResult.critique
+      ? {
+          overallScore: pipelineResult.critique.overallScore,
+          scores: pipelineResult.critique.scores,
+        }
+      : null,
+    rewriteApplied: pipelineResult.steps.rewrite === "success",
+    rewritePolicy: pipelineResult.metadata.rewritePolicy,
+    rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    promptVersions: buildQualityPromptVersions(pipelineResult),
+  };
+}
+
+function withQualityLogInput(
+  logInput: Record<string, unknown>,
+  qualityMode: ChapterGenerationQualityMode,
+  pipelineResult?: ChapterQualityPipelineResult | null,
+) {
+  if (qualityMode === "normal") {
+    return logInput;
+  }
+
+  return {
+    ...logInput,
+    qualityMode,
+    ...(pipelineResult
+      ? { qualityPipeline: summarizeQualityPipelineResult(pipelineResult) }
+      : {}),
   };
 }
 
@@ -449,6 +770,13 @@ export async function POST(request: Request) {
     return validationError("生成章节正文时不能从前端传 user_id。");
   }
 
+  const qualityModeValidation = normalizeQualityMode(body.qualityMode);
+
+  if (!qualityModeValidation.ok) {
+    return validationError(qualityModeValidation.error);
+  }
+
+  const { qualityMode } = qualityModeValidation;
   const interventionValidation = parseChapterIntervention(body.intervention);
 
   if (!interventionValidation.ok) {
@@ -495,6 +823,7 @@ export async function POST(request: Request) {
     error: string,
     input: Record<string, unknown>,
     targetId?: string,
+    output?: Record<string, unknown>,
   ) {
     await supabase.from("generation_logs").insert({
       project_id: visibleProject.id,
@@ -504,6 +833,7 @@ export async function POST(request: Request) {
       model,
       prompt_version: promptVersion,
       input,
+      ...(output ? { output } : {}),
       error,
     });
   }
@@ -522,6 +852,7 @@ export async function POST(request: Request) {
     error: string,
     input: Record<string, unknown>,
     targetId?: string,
+    output?: Record<string, unknown>,
   ) {
     await writeGenerationErrorLog(
       "generate_chapter_summary",
@@ -529,15 +860,16 @@ export async function POST(request: Request) {
       error,
       input,
       targetId,
+      output,
     );
   }
 
-  const baseLogInput = { project: visibleProject, intervention };
+  const baseLogInput = withQualityLogInput({ project: visibleProject, intervention }, qualityMode);
 
   const { data: config, error: configError } = await supabase
     .from("story_configs")
     .select(
-      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas",
+      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
     .maybeSingle<StoryConfigRow>();
@@ -681,6 +1013,32 @@ export async function POST(request: Request) {
       return outline ? buildPreviousChapterContext(outline, row.content) : null;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const projectMode = getProjectModeFromConfig(config.config_json);
+  const previousDecisionRow = (previousRows ?? []).find(
+    (row) => row.chapter_number === chapter.chapterNumber - 1,
+  );
+  const previousDecision =
+    projectMode === "interactive" && previousDecisionRow
+      ? normalizeChapterDecision(
+          isRecord(previousDecisionRow.content)
+            ? (previousDecisionRow.content as { decision?: unknown }).decision
+            : null,
+        )
+      : null;
+  const currentDecision =
+    projectMode === "interactive"
+      ? normalizeChapterDecision(
+          isRecord(chapterRow.content)
+            ? (chapterRow.content as { decision?: unknown }).decision
+            : null,
+        )
+      : null;
+  const interactiveState =
+    projectMode === "interactive" && isRecord(config.config_json)
+      ? normalizeInteractiveStoryState(
+          (config.config_json as { interactiveState?: unknown }).interactiveState,
+        )
+      : null;
 
   const promptInput = buildPromptInput(
     visibleProject,
@@ -692,6 +1050,9 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
+    previousDecision,
+    currentDecision,
+    interactiveState,
   );
   const logInput = {
     project: visibleProject,
@@ -703,37 +1064,80 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
     intervention,
+    previousDecision,
+    currentDecision,
+    interactiveState,
   };
-  const creditCheck = await requireGenerationCredits(supabase, "generate_chapter");
+  const creditOperation =
+    qualityMode === "quality" ? "generate_chapter_quality" : "generate_chapter";
+  const creditCheck = await requireGenerationCredits(supabase, creditOperation);
 
   if (!creditCheck.ok) {
     return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
   }
 
   let outputText = "";
+  let qualityPipelineResult: ChapterQualityPipelineResult | null = null;
+  let qualityMetadata: ChapterDraftQualityMetadata | null = null;
 
-  try {
-    const result = await generateDeepSeekText({
-      systemPrompt: CHAPTER_SYSTEM_PROMPT,
-      userPrompt: buildChapterPrompt(promptInput),
-      maxTokens: CHAPTER_MAX_TOKENS,
-      temperature: CHAPTER_TEMPERATURE,
-    });
+  if (qualityMode === "quality") {
+    const qualityPipelineInput = {
+      storyContext: buildChapterQualityContext(promptInput),
+      draftSource: "generate",
+      rewritePolicy: "score-threshold",
+      rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
+      enablePlanning: true,
+      enableCharacterDirection: true,
+    } satisfies Parameters<typeof runChapterQualityPipeline>[0];
 
-    outputText = cleanChapterBody(result.outputText);
-  } catch (error) {
-    const errorMessage = `DeepSeek 生成失败：${getErrorMessage(error).slice(0, 800)}`;
-    await writeErrorLog(errorMessage, logInput, chapterRow.id);
-    return serverError(errorMessage);
+    qualityPipelineResult = await runChapterQualityPipeline(
+      qualityPipelineInput,
+      createQualityPipelineModel(promptInput),
+    );
+    qualityMetadata = buildQualityMetadata(qualityPipelineResult);
+
+    if (qualityPipelineResult.status !== "success" || !qualityPipelineResult.finalText) {
+      const errorMessage =
+        qualityPipelineResult.errors.at(-1)?.message ||
+        "Quality pipeline failed before producing final chapter text.";
+      await writeErrorLog(
+        `高质量章节生成失败：${errorMessage.slice(0, 800)}`,
+        withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+        chapterRow.id,
+      );
+      return serverError(`高质量章节生成失败：${errorMessage.slice(0, 800)}`);
+    }
+
+    outputText = cleanChapterBody(qualityPipelineResult.finalText);
+  } else {
+    try {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_SYSTEM_PROMPT,
+        userPrompt: buildChapterPrompt(promptInput),
+        maxTokens: CHAPTER_MAX_TOKENS,
+        temperature: CHAPTER_TEMPERATURE,
+      });
+
+      outputText = cleanChapterBody(result.outputText);
+    } catch (error) {
+      const errorMessage = `DeepSeek 生成失败：${getErrorMessage(error).slice(0, 800)}`;
+      await writeErrorLog(errorMessage, logInput, chapterRow.id);
+      return serverError(errorMessage);
+    }
   }
 
   if (!outputText) {
     const error = "DeepSeek 响应缺少章节正文。";
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
-  const draft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
+  const baseDraft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
+  const draft = qualityMetadata ? { ...baseDraft, quality: qualityMetadata } : baseDraft;
   const summaryLogInput = {
     project: visibleProject,
     chapter,
@@ -741,6 +1145,14 @@ export async function POST(request: Request) {
     intervention,
     draft,
     body: outputText,
+    ...(qualityMode === "quality"
+      ? {
+          qualityMode,
+          qualityPipeline: qualityPipelineResult
+            ? summarizeQualityPipelineResult(qualityPipelineResult)
+            : null,
+        }
+      : {}),
   };
   const summaryUserPrompt = buildChapterSummaryPrompt({
     chapter,
@@ -751,8 +1163,12 @@ export async function POST(request: Request) {
     })),
   });
   const summaryParseFailures: SummaryJsonParseFailure[] = [];
+  const summarySchemaFailures: SummarySchemaValidationFailureLog[] = [];
   let parsedSummary: unknown;
-  let parsedSummarySuccessfully = false;
+  let parsedSummaryOutputText = "";
+  let summaryValidation: ReturnType<typeof validateChapterSummaryOutput> | null = null;
+  let summaryRepairLog: SummaryRepairLog | null = null;
+  let summaryPrompt = summaryUserPrompt;
 
   for (let attempt = 1; attempt <= CHAPTER_SUMMARY_GENERATION_ATTEMPTS; attempt += 1) {
     let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
@@ -760,18 +1176,23 @@ export async function POST(request: Request) {
     try {
       result = await generateDeepSeekJson({
         systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
-        userPrompt: summaryUserPrompt,
+        userPrompt: summaryPrompt,
         maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
         temperature: CHAPTER_SUMMARY_TEMPERATURE,
       });
     } catch (error) {
       const errorMessage = `DeepSeek 摘要生成失败（第 ${attempt} 次）：${getErrorMessage(error).slice(0, 800)}`;
       const logMessage =
-        summaryParseFailures.length > 0
+        summaryParseFailures.length > 0 || summarySchemaFailures.length > 0
           ? `${errorMessage}\n\n此前摘要 JSON 解析失败详情：\n${formatSummaryJsonFailureLog(summaryParseFailures)}`
           : errorMessage;
 
-      await writeSummaryErrorLog(logMessage, summaryLogInput, chapterRow.id);
+      await writeSummaryErrorLog(
+        logMessage,
+        summaryLogInput,
+        chapterRow.id,
+        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+      );
       return serverError(errorMessage);
     }
 
@@ -780,8 +1201,33 @@ export async function POST(request: Request) {
     } else {
       try {
         parsedSummary = parseSummaryJsonObject(result.outputText);
-        parsedSummarySuccessfully = true;
-        break;
+        parsedSummaryOutputText = result.outputText;
+
+        const validation = validateChapterSummaryOutput(parsedSummary);
+
+        if (validation.ok) {
+          summaryValidation = validation;
+          break;
+        }
+
+        summarySchemaFailures.push(
+          buildSummarySchemaValidationFailureLog(
+            attempt,
+            result.outputText,
+            validation,
+            attempt < CHAPTER_SUMMARY_GENERATION_ATTEMPTS ? attempt + 1 : null,
+          ),
+        );
+
+        if (attempt < CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
+          summaryPrompt = buildChapterSummaryRetryPrompt({
+            originalPrompt: summaryUserPrompt,
+            validationError: validation.error,
+            missingFields: validation.missingFields,
+            rawPreview: result.outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+          });
+          continue;
+        }
       } catch (error) {
         summaryParseFailures.push(
           buildSummaryJsonParseFailure(attempt, result.outputText, result.finishReason, error),
@@ -790,24 +1236,63 @@ export async function POST(request: Request) {
     }
 
     if (attempt === CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
-      const errorLog = formatSummaryJsonFailureLog(summaryParseFailures);
-      await writeSummaryErrorLog(errorLog, summaryLogInput, chapterRow.id);
-      return serverError("DeepSeek 摘要生成失败：AI 输出不是有效 JSON。");
+      break;
     }
   }
 
-  if (!parsedSummarySuccessfully) {
-    const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
-    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
-    return serverError(error);
-  }
+  if (!summaryValidation?.ok) {
+    const repair = repairChapterSummaryOutput(parsedSummary);
 
-  const summaryValidation = validateChapterSummaryOutput(parsedSummary);
+    if (repair.ok) {
+      summaryValidation = { ok: true, summary: repair.summary };
+      summaryRepairLog = {
+        summaryRepaired: true,
+        missingFields: repair.missingFields,
+        repairedFields: repair.repairedFields,
+        rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      };
 
-  if (!summaryValidation.ok) {
-    const error = `章节摘要 JSON 未通过 schema 校验：${summaryValidation.error}`;
-    await writeSummaryErrorLog(error, summaryLogInput, chapterRow.id);
-    return serverError(error);
+      if (summarySchemaFailures.length > 0) {
+        const lastFailure = summarySchemaFailures[summarySchemaFailures.length - 1];
+        summarySchemaFailures[summarySchemaFailures.length - 1] = {
+          ...lastFailure,
+          repairedFields: repair.repairedFields,
+          summaryRepaired: true,
+        };
+      }
+    } else if (summarySchemaFailures.length > 0) {
+      const lastFailure = summarySchemaFailures[summarySchemaFailures.length - 1];
+      const error = `章节摘要 JSON 未通过 schema 校验：${lastFailure.validationError}`;
+      await writeSummaryErrorLog(
+        error,
+        summaryLogInput,
+        chapterRow.id,
+        {
+          ...buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+          summaryRepairAttempt: {
+            ok: false,
+            error: repair.error,
+            missingFields: repair.missingFields,
+            repairedFields: repair.repairedFields,
+            rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+          },
+        },
+      );
+      return serverError(error);
+    } else {
+      const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
+      const errorLog =
+        summaryParseFailures.length > 0
+          ? formatSummaryJsonFailureLog(summaryParseFailures)
+          : error;
+      await writeSummaryErrorLog(
+        errorLog,
+        summaryLogInput,
+        chapterRow.id,
+        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+      );
+      return serverError(error);
+    }
   }
 
   const summary = buildChapterSummary(summaryValidation.summary, model);
@@ -823,7 +1308,11 @@ export async function POST(request: Request) {
 
   if (latestVersionError) {
     const error = `章节版本号读取失败：${latestVersionError.message}`;
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
@@ -845,7 +1334,11 @@ export async function POST(request: Request) {
 
   if (versionError || !savedVersion) {
     const error = versionError?.message || "章节版本保存失败。";
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
@@ -877,10 +1370,21 @@ export async function POST(request: Request) {
       .delete()
       .eq("id", savedVersion.id)
       .eq("user_id", user.id);
-    await writeErrorLog(error, logInput, chapterRow.id);
+    await writeErrorLog(
+      error,
+      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
+      chapterRow.id,
+    );
     return serverError(error);
   }
 
+  const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
+  const chapterLogOutput = {
+    chapter: chapterContent,
+    ...(qualityMode === "quality" && qualityPipelineResult
+      ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
+      : {}),
+  };
   const { data: generationLog, error: chapterLogError } = await supabase
     .from("generation_logs")
     .insert({
@@ -890,10 +1394,8 @@ export async function POST(request: Request) {
       target_id: savedChapter.id,
       model,
       prompt_version: CHAPTER_PROMPT_VERSION,
-      input: logInput,
-      output: {
-        chapter: chapterContent,
-      },
+      input: chapterLogInput,
+      output: chapterLogOutput,
     })
     .select("id")
     .single<GenerationLogIdRow>();
@@ -914,6 +1416,11 @@ export async function POST(request: Request) {
     input: summaryLogInput,
     output: {
       summary,
+      ...buildSummaryValidationLogOutput(
+        summarySchemaFailures,
+        summaryParseFailures,
+        summaryRepairLog,
+      ),
     },
   });
 
@@ -925,8 +1432,11 @@ export async function POST(request: Request) {
     supabase,
     projectId: visibleProject.id,
     generationLogId: generationLog.id,
-    operation: "generate_chapter",
-    reason: "生成章节正文和摘要",
+    operation: creditOperation,
+    reason:
+      qualityMode === "quality"
+        ? "精修生成章节正文和摘要"
+        : "生成章节正文和摘要",
   });
 
   if (!creditSpend.ok) {
@@ -936,8 +1446,11 @@ export async function POST(request: Request) {
   return NextResponse.json({
     chapterId: savedChapter.id,
     chapter: chapterContent,
+    ...(qualityMode === "quality" && qualityPipelineResult
+      ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
+      : {}),
     credits: {
-      cost: GENERATION_CREDIT_COSTS.generate_chapter,
+      cost: GENERATION_CREDIT_COSTS[creditOperation],
       balance: creditSpend.balanceAfter,
     },
   });

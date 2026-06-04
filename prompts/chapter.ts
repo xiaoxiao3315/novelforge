@@ -1,4 +1,18 @@
+import {
+  buildStoryConfigPromptLines,
+  type StoryConfigPromptData,
+} from "@/data/plot-filters";
+import type { ChapterCharacterDirection, ChapterWritingPlan } from "@/lib/quality/types";
+import {
+  normalizeChapterCharacterDirection,
+  normalizeChapterWritingPlan,
+} from "@/lib/quality/validators";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
+import {
+  formatSelectedChapterDecision,
+  normalizeChapterDecision,
+  type ChapterDecision,
+} from "@/prompts/chapter-decision";
 import { normalizeChapterSummary, type ChapterSummary } from "@/prompts/chapter-summary";
 import type { StoryConcept } from "@/prompts/concept";
 import {
@@ -6,9 +20,37 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import {
+  formatInteractiveStoryState,
+  hasStoryStateChanges,
+  normalizeStoryStateChanges,
+  type InteractiveStoryState,
+  type StoryStateChanges,
+} from "@/prompts/story-state";
 
 export const CHAPTER_PROMPT_VERSION = "chapter-v1";
 export const DEFAULT_CHAPTER_WORD_TARGET = 2500;
+
+export type ChapterDraftQuality = {
+  mode?: string;
+  status?: string;
+  critique?: {
+    overallScore?: number;
+    scores?: Record<string, number>;
+  };
+  rewriteApplied?: boolean;
+  rewritePolicy?: string;
+  rewriteScoreThreshold?: number;
+  promptVersions?: {
+    plan?: string;
+    characterDirection?: string;
+    critique?: string;
+    rewrite?: string;
+  };
+  steps?: Record<string, string>;
+  plan?: ChapterWritingPlan;
+  characterDirection?: ChapterCharacterDirection;
+};
 
 export type ChapterDraft = {
   versionId?: string;
@@ -18,6 +60,7 @@ export type ChapterDraft = {
   promptVersion: string;
   wordTarget: number;
   intervention?: ChapterIntervention;
+  quality?: ChapterDraftQuality;
 };
 
 export type ChapterIntervention = {
@@ -42,6 +85,8 @@ export type ChapterContent = ChapterOutline & {
   draft?: ChapterDraft;
   summary?: ChapterSummary;
   official?: ChapterOfficial;
+  decision?: ChapterDecision;
+  stateChanges?: StoryStateChanges;
   versionCount?: number;
 };
 
@@ -55,17 +100,7 @@ export type ChapterPromptInput = {
     title: string;
     description: string | null;
   };
-  config: {
-    theme: string;
-    genre: string;
-    background: string;
-    worldSetting: string;
-    protagonist: string;
-    coreConflict: string;
-    tone: string;
-    serialStructure: string;
-    extraIdeas: string | null;
-  };
+  config: StoryConfigPromptData;
   concept: StoryConcept;
   bible: StoryBible;
   characters: CharacterCard[];
@@ -73,6 +108,11 @@ export type ChapterPromptInput = {
   chapter: ChapterOutline;
   previousChapters: PreviousChapterContext[];
   intervention: ChapterIntervention;
+  previousDecision?: ChapterDecision | null;
+  currentDecision?: ChapterDecision | null;
+  interactiveState?: InteractiveStoryState | null;
+  chapterPlan?: ChapterWritingPlan | null;
+  chapterCharacterDirection?: ChapterCharacterDirection | null;
   wordTarget: number;
 };
 
@@ -102,6 +142,79 @@ function cleanText(value: unknown, maxLength = 200000) {
   }
 
   return value.trim().slice(0, maxLength);
+}
+
+function normalizeScore(value: unknown) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return Math.min(100, Math.max(0, Math.round(value)));
+}
+
+function normalizeNumberRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value)
+    .map(([key, score]) => [cleanText(key, 80), normalizeScore(score)] as const)
+    .filter((entry): entry is readonly [string, number] => Boolean(entry[0]) && entry[1] !== null);
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function normalizeStringRecord(value: unknown) {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const entries = Object.entries(value)
+    .map(([key, text]) => [cleanText(key, 80), cleanText(text, 80)] as const)
+    .filter(([key, text]) => Boolean(key && text));
+
+  return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQuality | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const mode = cleanText(value.mode, 80);
+  const status = cleanText(value.status, 80);
+  const critiqueValue = isRecord(value.critique) ? value.critique : null;
+  const overallScore = normalizeScore(critiqueValue?.overallScore);
+  const scores = normalizeNumberRecord(critiqueValue?.scores);
+  const rewritePolicy = cleanText(value.rewritePolicy, 80);
+  const rewriteScoreThreshold = normalizeScore(value.rewriteScoreThreshold);
+  const promptVersions = normalizeStringRecord(value.promptVersions);
+  const steps = normalizeStringRecord(value.steps);
+  const plan = normalizeChapterWritingPlan(value.plan);
+  const characterDirection = normalizeChapterCharacterDirection(value.characterDirection);
+  const quality: ChapterDraftQuality = {
+    ...(mode ? { mode } : {}),
+    ...(status ? { status } : {}),
+    ...(overallScore !== null || scores
+      ? {
+          critique: {
+            ...(overallScore !== null ? { overallScore } : {}),
+            ...(scores ? { scores } : {}),
+          },
+        }
+      : {}),
+    ...(typeof value.rewriteApplied === "boolean"
+      ? { rewriteApplied: value.rewriteApplied }
+      : {}),
+    ...(rewritePolicy ? { rewritePolicy } : {}),
+    ...(rewriteScoreThreshold !== null ? { rewriteScoreThreshold } : {}),
+    ...(promptVersions ? { promptVersions } : {}),
+    ...(steps ? { steps } : {}),
+    ...(plan ? { plan } : {}),
+    ...(characterDirection ? { characterDirection } : {}),
+  };
+
+  return Object.keys(quality).length > 0 ? quality : null;
 }
 
 export function normalizeChapterIntervention(value: unknown): ChapterIntervention | null {
@@ -148,6 +261,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   const model = cleanText(value.model, 120);
   const promptVersion = cleanText(value.promptVersion, 80);
   const intervention = normalizeChapterIntervention(value.intervention);
+  const quality = normalizeChapterDraftQuality(value.quality);
   const wordTarget = value.wordTarget;
 
   if (
@@ -170,6 +284,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
     promptVersion,
     wordTarget,
     ...(intervention ? { intervention } : {}),
+    ...(quality ? { quality } : {}),
   };
 }
 
@@ -223,6 +338,8 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   const draft = normalizeChapterDraft(value.draft);
   const summary = normalizeChapterSummary(value.summary);
   const official = normalizeChapterOfficial(value.official);
+  const decision = normalizeChapterDecision(value.decision);
+  const stateChanges = normalizeStoryStateChanges(value.stateChanges);
   const versionCount =
     typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
       ? Math.max(0, value.versionCount)
@@ -233,6 +350,8 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
     ...(draft ? { draft } : {}),
     ...(summary ? { summary } : {}),
     ...(official ? { official } : {}),
+    ...(decision ? { decision } : {}),
+    ...(hasStoryStateChanges(stateChanges) ? { stateChanges } : {}),
     versionCount,
   };
 }
@@ -375,6 +494,67 @@ function formatChapterIntervention(intervention: ChapterIntervention) {
   ].join("\n");
 }
 
+function formatChapterWritingPlan(plan: ChapterWritingPlan) {
+  return [
+    `- chapterGoal: ${plan.chapterGoal}`,
+    `- coreConflict: ${plan.coreConflict}`,
+    `- emotionalArc: ${plan.emotionalArc}`,
+    `- keyScenes: ${plan.keyScenes.join("；") || "未填写"}`,
+    `- characterBeats: ${
+      plan.characterBeats.length > 0
+        ? plan.characterBeats
+            .map(
+              (beat) =>
+                `${beat.character}（目标：${beat.goal}；变化：${beat.emotionalChange}；声线：${beat.dialogueTone}）`,
+            )
+            .join("；")
+        : "未填写"
+    }`,
+    `- suspenseAndHooks: ${plan.suspenseAndHooks.join("；") || "未填写"}`,
+    `- mustInclude: ${plan.mustInclude.join("；") || "未填写"}`,
+    `- mustAvoid: ${plan.mustAvoid.join("；") || "未填写"}`,
+    `- pacingPlan: ${plan.pacingPlan.join(" -> ") || "未填写"}`,
+    `- endingHook: ${plan.endingHook}`,
+    `- continuityNotes: ${plan.continuityNotes.join("；") || "未填写"}`,
+  ].join("\n");
+}
+
+function formatPromptList(items: string[]) {
+  return items.length > 0 ? items.join("；") : "未填写";
+}
+
+function formatChapterCharacterDirection(direction: ChapterCharacterDirection) {
+  const characterLines =
+    direction.focusCharacters.length > 0
+      ? direction.focusCharacters
+          .map((character) =>
+            [
+              `- character: ${character.character || "未填写"}`,
+              `  - activeDesire: ${character.activeDesire || "未填写"}`,
+              `  - emotionalMask: ${character.emotionalMask || "未填写"}`,
+              `  - dialogueVoice: ${character.dialogueVoice || "未填写"}`,
+              `  - actionPattern: ${character.actionPattern || "未填写"}`,
+              `  - relationshipPressure: ${character.relationshipPressure || "未填写"}`,
+              `  - mustNotDo: ${formatPromptList(character.mustNotDo)}`,
+            ].join("\n"),
+          )
+          .join("\n")
+      : "未填写";
+
+  return [
+    `- povGuidance: ${direction.povGuidance || "未填写"}`,
+    "角色执行指令：",
+    characterLines,
+    `- relationshipBeats: ${formatPromptList(direction.relationshipBeats)}`,
+    `- dialogueRules: ${formatPromptList(direction.dialogueRules)}`,
+    `- actionRules: ${formatPromptList(direction.actionRules)}`,
+    `- hiddenInformation: ${formatPromptList(direction.hiddenInformation)}`,
+    `- continuityGuards: ${formatPromptList(direction.continuityGuards)}`,
+    `- mustInclude: ${formatPromptList(direction.mustInclude)}`,
+    `- mustAvoid: ${formatPromptList(direction.mustAvoid)}`,
+  ].join("\n");
+}
+
 export function buildChapterPrompt(input: ChapterPromptInput) {
   return [
     "你是严谨的中文长篇网文单章正文作者。请基于已保存的项目设定、故事圣经、角色卡、第一卷信息、当前章节大纲和前文信息，只生成当前一章正文。",
@@ -387,6 +567,8 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "- 必须完成当前章节大纲中的事件、冲突、看点、伏笔和角色变化。",
     "- 不得违背 story_bible 的不可变规则、世界观、力量系统、角色卡和第一卷主线。",
     "- 本章导演指令 / 互动干预必须尽量吸收，但优先级低于 story_bible、characters、immutableRules、前文摘要和当前章节大纲。",
+    "- 如果存在上一章已确认的命运分歧，正文必须明显吸收该选择；如果不存在上一章选择，则按导演指令和章节大纲推进。",
+    "- 当前章自己的命运分歧主要用于读完本章后影响下一章；如果旧数据中当前章已有确认选择，只能作为辅助参考，不得优先于上一章选择。",
     "- 如果导演指令和故事圣经或不可变规则冲突，必须遵守故事圣经，并用不冲突的方式吸收用户意图。",
     "- 结尾必须保留明确的悬念或情绪钩子，但不能直接进入下一章正文。",
     "- 文风必须符合项目 tone / genre，内容必须是中文小说正文。",
@@ -394,15 +576,7 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "已保存 story_config：",
     `- 作品名：${input.project.title}`,
     `- 一句话简介：${input.project.description || "未填写"}`,
-    `- 主题：${input.config.theme}`,
-    `- 类型：${input.config.genre}`,
-    `- 背景：${input.config.background}`,
-    `- 世界设定：${input.config.worldSetting}`,
-    `- 主角方向：${input.config.protagonist}`,
-    `- 核心冲突：${input.config.coreConflict}`,
-    `- 基调：${input.config.tone}`,
-    `- 连载结构：${input.config.serialStructure}`,
-    `- 补充想法：${input.config.extraIdeas || "未填写"}`,
+    ...buildStoryConfigPromptLines(input.config),
     "",
     "已保存 story_concept：",
     `- workTitle：${input.concept.workTitle}`,
@@ -457,6 +631,31 @@ export function buildChapterPrompt(input: ChapterPromptInput) {
     "",
     "本章导演指令 / 互动干预：",
     formatChapterIntervention(input.intervention),
+    ...(input.chapterPlan
+      ? [
+          "",
+          "高质量章节写作计划（仅 quality 模式存在）：",
+          "正文必须明显执行以下章节目标、核心冲突、情绪弧、关键场景、角色节拍和结尾钩子；但计划不得覆盖 story_bible、characters、前文摘要、互动状态和当前章节大纲。",
+          formatChapterWritingPlan(input.chapterPlan),
+        ]
+      : []),
+    ...(input.chapterCharacterDirection
+      ? [
+          "",
+          "高质量角色导演指令（仅 quality 模式存在）：",
+          "正文必须执行以下角色声线、主动欲望、情绪遮罩、关系压力、动作约束、对白约束和 must avoid；但角色导演不得覆盖 story_bible、characters、前文摘要、互动状态、当前章节大纲和 chapter plan。若发生冲突，以上层信息为准。",
+          formatChapterCharacterDirection(input.chapterCharacterDirection),
+        ]
+      : []),
+    "",
+    "当前互动状态（仅 interactive 模式存在）：",
+    formatInteractiveStoryState(input.interactiveState),
+    "",
+    "上一章命运分歧（优先影响当前章）：",
+    formatSelectedChapterDecision(input.previousDecision),
+    "",
+    "当前章旧有命运分歧（仅兼容旧数据，辅助参考）：",
+    formatSelectedChapterDecision(input.currentDecision),
     "",
     "现在只输出当前章中文小说正文。",
   ].join("\n");

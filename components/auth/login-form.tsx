@@ -47,11 +47,11 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
   return (
     <form className="surface p-6" onSubmit={handleSubmit}>
       <div className="mb-6">
-        <h2 className="text-2xl font-black text-[var(--ink)]">
-          {mode === "sign-in" ? "登录账号" : "注册账号"}
+        <h2 className="font-serif text-2xl font-black text-[var(--ink)]">
+          {mode === "sign-in" ? "进入故事" : "创建故事账号"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-          使用 Supabase Auth 邮箱密码登录。正式生产环境请在 Supabase 控制台配置站点 URL 和邮件模板。
+          使用邮箱和密码回到你的故事书房。
         </p>
       </div>
 
@@ -87,7 +87,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
       ) : null}
 
       <button className="button-primary w-full" disabled={isSubmitting} type="submit">
-        {isSubmitting ? "处理中..." : mode === "sign-in" ? "登录" : "注册"}
+        {isSubmitting ? "正在打开书房..." : mode === "sign-in" ? "进入故事" : "创建账号"}
       </button>
 
       <button

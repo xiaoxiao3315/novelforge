@@ -1,3 +1,8 @@
+import {
+  buildStoryConfigPromptLines,
+  type StoryConfigPromptData,
+} from "@/data/plot-filters";
+
 export const CONCEPT_PROMPT_VERSION = "concept-v1";
 
 export type StoryConcept = {
@@ -21,17 +26,7 @@ export type ConceptPromptInput = {
     title: string;
     description: string | null;
   };
-  config: {
-    theme: string;
-    genre: string;
-    background: string;
-    worldSetting: string;
-    protagonist: string;
-    coreConflict: string;
-    tone: string;
-    serialStructure: string;
-    extraIdeas: string | null;
-  };
+  config: StoryConfigPromptData;
 };
 
 const textFields = [
@@ -276,15 +271,7 @@ export function buildConceptPrompt(input: ConceptPromptInput) {
     "已保存输入：",
     `- 作品名：${input.project.title}`,
     `- 一句话简介：${input.project.description || "未填写"}`,
-    `- 主题：${input.config.theme}`,
-    `- 类型：${input.config.genre}`,
-    `- 背景：${input.config.background}`,
-    `- 世界设定：${input.config.worldSetting}`,
-    `- 主角方向：${input.config.protagonist}`,
-    `- 核心冲突：${input.config.coreConflict}`,
-    `- 基调：${input.config.tone}`,
-    `- 连载结构：${input.config.serialStructure}`,
-    `- 补充想法：${input.config.extraIdeas || "未填写"}`,
+    ...buildStoryConfigPromptLines(input.config),
     "",
     "字段写作要求：",
     "- workTitle 使用或微调用户作品名。",

@@ -1,15 +1,9 @@
 import { notFound, redirect } from "next/navigation";
 import { AppNav } from "@/components/app/app-nav";
-import { BibleGenerator } from "@/components/project/bible-generator";
-import { ConceptGenerator } from "@/components/project/concept-generator";
 import { OutlineGenerator } from "@/components/project/outline-generator";
-import {
-  ProjectWorkbenchLayout,
-  type ConfigDisplayItem,
-} from "@/components/project/project-workbench";
-import { PaperPanel } from "@/components/ui/book";
-import { findPlotFilterLabel, type PlotFilterKey } from "@/data/plot-filters";
+import { ProjectWorkbenchLayout } from "@/components/project/project-workbench";
 import { ensureCreditAccount } from "@/lib/credits";
+import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -20,6 +14,7 @@ import {
 import { normalizeChapterContent, type ChapterContent } from "@/prompts/chapter";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 import { normalizeVolumeOutline, type VolumeOutline } from "@/prompts/outline";
+import { normalizeInteractiveStoryState } from "@/prompts/story-state";
 
 type StoryConfig = {
   theme: string | null;
@@ -31,6 +26,7 @@ type StoryConfig = {
   tone: string | null;
   serial_structure: string | null;
   extra_ideas: string | null;
+  config_json: unknown;
 };
 
 type StoryConceptRow = {
@@ -63,40 +59,22 @@ type ChapterVersionRow = {
   chapter_id: string;
 };
 
-const configRows: Array<{
-  key: keyof StoryConfig;
-  filterKey?: PlotFilterKey;
-  label: string;
-}> = [
-  { key: "theme", filterKey: "themes", label: "主题" },
-  { key: "genre", filterKey: "genres", label: "类型" },
-  { key: "background", filterKey: "backgrounds", label: "背景" },
-  { key: "world_setting", filterKey: "worldSettings", label: "世界设定" },
-  { key: "protagonist", filterKey: "protagonists", label: "主角" },
-  { key: "core_conflict", filterKey: "coreConflicts", label: "核心冲突" },
-  { key: "tone", filterKey: "tones", label: "基调" },
-  { key: "serial_structure", filterKey: "serialStructures", label: "连载结构" },
-];
-
-function buildConfigItems(config: StoryConfig | null): ConfigDisplayItem[] {
-  if (!config) {
-    return [];
-  }
-
-  return configRows.map((row) => ({
-    label: row.label,
-    value: row.filterKey
-      ? findPlotFilterLabel(row.filterKey, config[row.key])
-      : config[row.key] || "未填写",
-  }));
-}
-
 export default async function ProjectDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ projectId: string }>;
+  searchParams?: Promise<{ chapter?: string | string[] }>;
 }) {
   const { projectId } = await params;
+  const resolvedSearchParams = await searchParams;
+  const rawChapterParam = Array.isArray(resolvedSearchParams?.chapter)
+    ? resolvedSearchParams?.chapter[0]
+    : resolvedSearchParams?.chapter;
+  const parsedChapterNumber = Number.parseInt(rawChapterParam ?? "", 10);
+  const currentChapterNumber = Number.isFinite(parsedChapterNumber)
+    ? parsedChapterNumber
+    : null;
   const supabase = await createClient();
   const {
     data: { user },
@@ -122,10 +100,17 @@ export default async function ProjectDetailPage({
   const { data: config } = await supabase
     .from("story_configs")
     .select(
-      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas",
+      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
     )
     .eq("project_id", projectId)
     .maybeSingle<StoryConfig>();
+  const projectMode = getProjectModeFromConfig(config?.config_json);
+  const interactiveState =
+    projectMode === "interactive"
+      ? normalizeInteractiveStoryState(
+          (config?.config_json as { interactiveState?: unknown } | undefined)?.interactiveState,
+        )
+      : null;
 
   const { data: storyConcept } = await supabase
     .from("story_concepts")
@@ -196,50 +181,61 @@ export default async function ProjectDetailPage({
   }
 
   chapters.sort((left, right) => left.chapterNumber - right.chapterNumber);
+  const defaultChapterNumber =
+    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body)?.chapterNumber ??
+    chapters[0]?.chapterNumber ??
+    null;
+  const visibleChapterNumber =
+    currentChapterNumber && chapters.some((chapter) => chapter.chapterNumber === currentChapterNumber)
+      ? currentChapterNumber
+      : defaultChapterNumber;
 
-  const directorSlot = config ? (
-    <>
-      <ConceptGenerator
-        creditBalance={creditBalance}
-        initialConcept={concept}
-        projectId={projectId}
-      />
-      <BibleGenerator
-        creditBalance={creditBalance}
-        hasConcept={Boolean(concept)}
-        initialBible={bible}
-        initialCharacters={characters}
-        projectId={projectId}
-      />
-      <OutlineGenerator
-        creditBalance={creditBalance}
-        hasPrerequisites={Boolean(concept && bible && characters.length > 0)}
-        initialChapters={chapters}
-        initialVolume={volume}
-        projectId={projectId}
-      />
-    </>
-  ) : (
-    <PaperPanel className="p-5">
-      <h2 className="font-serif text-2xl font-black text-[var(--ink)]">作品设定</h2>
-      <p className="mt-2 leading-7 text-[var(--muted)]">
-        缺少 story_config，不能生成作品设定。
-      </p>
-    </PaperPanel>
-  );
+  const hasOutlinePrerequisites = Boolean(concept && bible && characters.length > 0);
+  const setupStatus = {
+    hasBible: Boolean(bible),
+    hasCharacters: characters.length > 0,
+    hasConcept: Boolean(concept),
+  };
+  const outlineSlot = config ? (
+    <OutlineGenerator
+      creditBalance={creditBalance}
+      currentChapterNumber={visibleChapterNumber}
+      hasPrerequisites={hasOutlinePrerequisites}
+      initialChapters={chapters}
+      initialVolume={volume}
+      projectId={projectId}
+      projectMode={projectMode}
+      setupStatus={setupStatus}
+      variant="readerSidebar"
+    />
+  ) : null;
+
+  const chapterGenerationSlot =
+    outlineSlot ?? (
+      <div className="reader-sidebar-outline">
+        <p className="text-sm font-bold leading-6 text-[var(--muted)]">
+          缺少作品设定，暂时无法铺开章节。
+        </p>
+      </div>
+    );
 
   return (
     <main className="app-shell py-8">
-      <AppNav isAuthed creditBalance={creditBalance} />
+      <AppNav
+        creditBadgeLabel={projectMode === "interactive" ? "星火" : "额度"}
+        creditBalance={creditBalance}
+        creditLinkLabel={projectMode === "interactive" ? "星火补给" : "创作补给"}
+        isAuthed
+      />
 
       <ProjectWorkbenchLayout
+        chapterGenerationSlot={chapterGenerationSlot}
         chapters={chapters}
-        configItems={buildConfigItems(config)}
         creditBalance={creditBalance}
-        directorSlot={directorSlot}
-        extraIdeas={config?.extra_ideas ?? null}
-        hasConfig={Boolean(config)}
+        currentChapterNumber={visibleChapterNumber}
+        interactiveState={interactiveState}
         project={project}
+        projectMode={projectMode}
         volume={volume}
       />
     </main>
