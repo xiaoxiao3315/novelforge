@@ -18,9 +18,9 @@ const chapterQualityModeOptions: Array<{
   },
   {
     mode: "quality",
-    label: "高质量生成",
+    label: "\u6781\u901f\u7cbe\u4fee",
     cost: GENERATION_CREDIT_COSTS.generate_chapter_quality,
-    description: "先策划角色，再审稿评分并按需修订，耗时更久。",
+    description: "\u5feb\u901f\u5b8c\u6210\u7b56\u5212\u3001\u5ba1\u7a3f\u548c\u5fc5\u8981\u4fee\u8ba2\uff0c\u9002\u5408\u6b63\u5f0f\u7ae0\u8282\u3002",
   },
 ];
 

@@ -10,6 +10,12 @@ export const CHAPTER_DECISION_PROMPT_VERSION = "chapter-decision-v1";
 export const CHAPTER_DECISION_OPTION_IDS = ["A", "B", "C"] as const;
 export const CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT = 500;
 
+export const CHAPTER_DECISION_SYSTEM_PROMPT = [
+  "你只输出一个可被 JSON.parse 解析的 JSON object。",
+  "不要 Markdown，不要代码块，不要解释，不要输出 JSON 前后的多余文本。",
+  "所有字符串字段必须是单行短句，不要在 JSON string 中输出裸换行、制表符或控制字符。",
+].join(" ");
+
 export type ChapterDecisionOptionId = (typeof CHAPTER_DECISION_OPTION_IDS)[number];
 
 export type ChapterDecisionOption = {
@@ -25,6 +31,14 @@ export type ChapterDecision = {
   selectedOptionId: ChapterDecisionOptionId | null;
   customChoice: string;
   selectedAt: string | null;
+};
+
+export type ChapterDecisionGeneration = {
+  status: "success" | "failed";
+  source: "auto-chapter-generation" | "manual-regeneration";
+  promptVersion: string;
+  generatedAt: string;
+  error?: string;
 };
 
 export type ChapterDecisionPreviousContext = ChapterOutline & {
@@ -43,6 +57,7 @@ export type ChapterDecisionPromptInput = {
   volume: VolumeOutline;
   chapter: ChapterOutline;
   previousChapters: ChapterDecisionPreviousContext[];
+  currentChapterBody?: string | null;
 };
 
 type ValidationResult =
@@ -223,6 +238,24 @@ function formatPreviousChapters(previousChapters: ChapterDecisionPreviousContext
     .join("\n\n");
 }
 
+function formatCurrentChapterBody(value: string | null | undefined) {
+  const body = typeof value === "string" ? value.trim() : "";
+
+  if (!body) {
+    return "暂无当前章节正文。请严格基于当前章节大纲生成命运分歧。";
+  }
+
+  if (body.length <= 3600) {
+    return body;
+  }
+
+  return [
+    body.slice(0, 1200),
+    "...",
+    body.slice(-2400),
+  ].join("\n");
+}
+
 export function buildChapterDecisionPrompt(input: ChapterDecisionPromptInput) {
   return [
     "你是互动小说剧情设计师。请基于当前项目上下文，为当前章节生成 3 个读完本章后出现的命运分歧。",
@@ -293,6 +326,9 @@ export function buildChapterDecisionPrompt(input: ChapterDecisionPromptInput) {
     "",
     "前文：",
     formatPreviousChapters(input.previousChapters),
+    "",
+    "当前章节最终正文摘录（命运分歧必须贴合这段正文，尤其是章末局势）：",
+    formatCurrentChapterBody(input.currentChapterBody),
     "",
     "当前章节大纲：",
     `- 第 ${input.chapter.chapterNumber} 章《${input.chapter.title}》`,

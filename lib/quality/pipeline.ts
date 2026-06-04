@@ -1,6 +1,7 @@
 import type {
   ChapterCharacterDirection,
   ChapterCharacterDirectionInput,
+  ChapterFastGuidanceInput,
   ChapterPlanInput,
   ChapterCritiqueInput,
   ChapterQualityCritique,
@@ -9,18 +10,22 @@ import type {
   ChapterWritingPlan,
 } from "@/lib/quality/types";
 import {
+  normalizeChapterFastGuidance,
   normalizeChapterCharacterDirection,
   normalizeChapterQualityCritique,
   normalizeChapterWritingPlan,
   validateChapterCharacterDirection,
 } from "@/lib/quality/validators";
 import { CHAPTER_CHARACTER_DIRECTION_PROMPT_VERSION } from "@/prompts/chapter-character-direction";
+import { CHAPTER_FAST_GUIDANCE_PROMPT_VERSION } from "@/prompts/chapter-fast-guidance";
 import { CHAPTER_PLAN_PROMPT_VERSION } from "@/prompts/chapter-plan";
 import { CHAPTER_CRITIQUE_PROMPT_VERSION } from "@/prompts/chapter-critique";
 import { CHAPTER_REWRITE_PROMPT_VERSION } from "@/prompts/chapter-rewrite";
 
 export const CHAPTER_QUALITY_PIPELINE_MODE = "quality-v1";
 export const DEFAULT_REWRITE_SCORE_THRESHOLD = 82;
+export const DEFAULT_FAST_REWRITE_SCORE_THRESHOLD = 76;
+export const DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD = 72;
 
 export type ChapterQualityDraftSource = "generate" | "existing";
 export type ChapterQualityRewritePolicy = "always" | "score-threshold" | "never";
@@ -40,6 +45,7 @@ export type ChapterQualityDraftInput = {
 };
 
 export type QualityPipelineModel = {
+  generateGuidance?(input: ChapterFastGuidanceInput): Promise<unknown>;
   generatePlan?(input: ChapterPlanInput): Promise<unknown>;
   generateCharacterDirection?(input: ChapterCharacterDirectionInput): Promise<unknown>;
   generateDraft(input: ChapterQualityDraftInput): Promise<string>;
@@ -53,8 +59,10 @@ export type ChapterQualityPipelineInput = {
   existingDraft?: string;
   rewritePolicy?: ChapterQualityRewritePolicy;
   rewriteScoreThreshold?: number;
+  criticalRewriteScoreThreshold?: number;
   enablePlanning?: boolean;
   enableCharacterDirection?: boolean;
+  enableFastGuidance?: boolean;
 };
 
 export type ChapterQualityPipelineResult = {
@@ -72,6 +80,7 @@ export type ChapterQualityPipelineResult = {
   }>;
   metadata: {
     promptVersions: {
+      guidance?: string;
       plan?: string;
       characterDirection?: string;
       critique: string;
@@ -82,6 +91,8 @@ export type ChapterQualityPipelineResult = {
     draftSource: ChapterQualityDraftSource;
     rewritePolicy: ChapterQualityRewritePolicy;
     rewriteScoreThreshold: number;
+    criticalRewriteScoreThreshold: number;
+    rewriteDecisionReason?: string;
   };
 };
 
@@ -101,14 +112,18 @@ function createInitialResult({
   draftSource,
   rewritePolicy,
   rewriteScoreThreshold,
+  criticalRewriteScoreThreshold,
   enablePlanning,
   enableCharacterDirection,
+  enableFastGuidance,
 }: {
   draftSource: ChapterQualityDraftSource;
   rewritePolicy: ChapterQualityRewritePolicy;
   rewriteScoreThreshold: number;
+  criticalRewriteScoreThreshold: number;
   enablePlanning: boolean;
   enableCharacterDirection: boolean;
+  enableFastGuidance: boolean;
 }): ChapterQualityPipelineResult {
   return {
     status: "failed",
@@ -122,6 +137,7 @@ function createInitialResult({
     errors: [],
     metadata: {
       promptVersions: {
+        ...(enableFastGuidance ? { guidance: CHAPTER_FAST_GUIDANCE_PROMPT_VERSION } : {}),
         ...(enablePlanning ? { plan: CHAPTER_PLAN_PROMPT_VERSION } : {}),
         ...(enableCharacterDirection
           ? { characterDirection: CHAPTER_CHARACTER_DIRECTION_PROMPT_VERSION }
@@ -134,28 +150,55 @@ function createInitialResult({
       draftSource,
       rewritePolicy,
       rewriteScoreThreshold,
+      criticalRewriteScoreThreshold,
     },
   };
 }
 
-function shouldRewrite({
+function getRewriteDecision({
   critique,
   rewritePolicy,
   rewriteScoreThreshold,
+  criticalRewriteScoreThreshold,
 }: {
   critique: ChapterQualityCritique;
   rewritePolicy: ChapterQualityRewritePolicy;
   rewriteScoreThreshold: number;
+  criticalRewriteScoreThreshold: number;
 }) {
   if (rewritePolicy === "always") {
-    return true;
+    return { shouldRewrite: true, reason: "rewritePolicy=always" };
   }
 
   if (rewritePolicy === "never") {
-    return false;
+    return { shouldRewrite: false, reason: "rewritePolicy=never" };
   }
 
-  return critique.overallScore < rewriteScoreThreshold;
+  if (critique.overallScore < rewriteScoreThreshold) {
+    return {
+      shouldRewrite: true,
+      reason: `overallScore ${critique.overallScore} < ${rewriteScoreThreshold}`,
+    };
+  }
+
+  const criticalScores = [
+    ["characterConsistency", critique.scores.characterConsistency],
+    ["worldConsistency", critique.scores.worldConsistency],
+    ["hookStrength", critique.scores.hookStrength],
+  ] as const;
+  const weakCriticalScore = criticalScores.find(([, score]) => score < criticalRewriteScoreThreshold);
+
+  if (weakCriticalScore) {
+    return {
+      shouldRewrite: true,
+      reason: `${weakCriticalScore[0]} ${weakCriticalScore[1]} < ${criticalRewriteScoreThreshold}`,
+    };
+  }
+
+  return {
+    shouldRewrite: false,
+    reason: "draft score is acceptable for fast quality mode",
+  };
 }
 
 export async function runChapterQualityPipeline(
@@ -168,21 +211,65 @@ export async function runChapterQualityPipeline(
     typeof input.rewriteScoreThreshold === "number"
       ? input.rewriteScoreThreshold
       : DEFAULT_REWRITE_SCORE_THRESHOLD;
+  const criticalRewriteScoreThreshold =
+    typeof input.criticalRewriteScoreThreshold === "number"
+      ? input.criticalRewriteScoreThreshold
+      : DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD;
   const enableCharacterDirection = input.enableCharacterDirection ?? false;
   const enablePlanning = (input.enablePlanning ?? false) || enableCharacterDirection;
+  const enableFastGuidance = input.enableFastGuidance ?? false;
   const result = createInitialResult({
     draftSource,
     rewritePolicy,
     rewriteScoreThreshold,
+    criticalRewriteScoreThreshold,
     enablePlanning,
     enableCharacterDirection,
+    enableFastGuidance,
   });
 
   let chapterPlan: ChapterWritingPlan | null = null;
   let chapterCharacterDirection: ChapterCharacterDirection | null =
     input.storyContext.chapterCharacterDirection ?? null;
 
-  if (enablePlanning) {
+  if (enableFastGuidance) {
+    if (!model.generateGuidance) {
+      result.steps.plan = "failed";
+      result.steps.characterDirection = "failed";
+      result.errors.push({
+        step: "plan",
+        message: "generateGuidance callback is required when fast guidance is enabled.",
+      });
+      return result;
+    }
+
+    try {
+      const guidanceOutput = await model.generateGuidance({ storyContext: input.storyContext });
+      const normalizedGuidance = normalizeChapterFastGuidance(guidanceOutput);
+
+      if (!normalizedGuidance) {
+        result.steps.plan = "failed";
+        result.steps.characterDirection = "failed";
+        result.errors.push({
+          step: "plan",
+          message: "fast guidance output failed validation.",
+        });
+        return result;
+      }
+
+      chapterPlan = normalizedGuidance.plan;
+      chapterCharacterDirection = normalizedGuidance.characterDirection;
+      result.plan = normalizedGuidance.plan;
+      result.characterDirection = normalizedGuidance.characterDirection;
+      result.steps.plan = "success";
+      result.steps.characterDirection = "success";
+    } catch (error) {
+      result.steps.plan = "failed";
+      result.steps.characterDirection = "failed";
+      result.errors.push({ step: "plan", message: getErrorMessage(error) });
+      return result;
+    }
+  } else if (enablePlanning) {
     if (!model.generatePlan) {
       result.steps.plan = "failed";
       result.errors.push({
@@ -222,7 +309,7 @@ export async function runChapterQualityPipeline(
       }
     : input.storyContext;
 
-  if (enableCharacterDirection) {
+  if (!enableFastGuidance && enableCharacterDirection) {
     if (!chapterPlan) {
       result.steps.characterDirection = "failed";
       result.errors.push({
@@ -352,7 +439,15 @@ export async function runChapterQualityPipeline(
   result.steps.critique = "success";
   result.critique = critique;
 
-  if (!shouldRewrite({ critique, rewritePolicy, rewriteScoreThreshold })) {
+  const rewriteDecision = getRewriteDecision({
+    critique,
+    rewritePolicy,
+    rewriteScoreThreshold,
+    criticalRewriteScoreThreshold,
+  });
+  result.metadata.rewriteDecisionReason = rewriteDecision.reason;
+
+  if (!rewriteDecision.shouldRewrite) {
     result.steps.rewrite = "skipped";
     result.finalText = draft;
     result.status = "success";

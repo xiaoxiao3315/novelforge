@@ -334,9 +334,11 @@ function ChapterReaderPreview({
             chapterNumber={chapter.chapterNumber}
             creditBalance={creditBalance ?? null}
             hasNextChapter={hasNextChapter}
+            initialDecisionGeneration={chapter.decisionGeneration ?? null}
             initialDecision={chapter.decision ?? null}
             initialInteractiveState={interactiveState}
             initialStateChanges={chapter.stateChanges ?? null}
+            key={chapter.id}
             nextChapterNumber={nextChapterNumber}
             projectId={projectId}
           />

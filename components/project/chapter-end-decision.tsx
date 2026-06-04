@@ -14,6 +14,7 @@ import {
   CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT,
   hasSelectedChapterDecision,
   type ChapterDecision,
+  type ChapterDecisionGeneration,
   type ChapterDecisionOptionId,
 } from "@/prompts/chapter-decision";
 import {
@@ -24,6 +25,7 @@ import {
 type DecisionResponse = {
   chapterId?: string;
   decision?: ChapterDecision;
+  decisionGeneration?: ChapterDecisionGeneration;
   interactiveState?: InteractiveStoryState;
   stateChanges?: StoryStateChanges;
   error?: string;
@@ -42,6 +44,7 @@ type ChapterEndDecisionProps = {
   creditBalance: number | null;
   hasNextChapter: boolean;
   initialDecision?: ChapterDecision | null;
+  initialDecisionGeneration?: ChapterDecisionGeneration | null;
   initialInteractiveState?: InteractiveStoryState | null;
   initialStateChanges?: StoryStateChanges | null;
   nextChapterNumber?: number | null;
@@ -71,12 +74,16 @@ export function ChapterEndDecision({
   creditBalance,
   hasNextChapter,
   initialDecision,
+  initialDecisionGeneration,
   initialInteractiveState,
   initialStateChanges,
   nextChapterNumber,
   projectId,
 }: ChapterEndDecisionProps) {
   const [decision, setDecision] = useState(initialDecision ?? null);
+  const [decisionGeneration, setDecisionGeneration] = useState(
+    initialDecisionGeneration ?? null,
+  );
   const [interactiveState, setInteractiveState] = useState(initialInteractiveState ?? null);
   const [stateChanges, setStateChanges] = useState(initialStateChanges ?? null);
   const [selectedOptionId, setSelectedOptionId] = useState<ChapterDecisionOptionId | "">(
@@ -149,6 +156,7 @@ export function ChapterEndDecision({
     }
 
     setDecision(payload.decision);
+    setDecisionGeneration(payload.decisionGeneration ?? null);
     setStateChanges(payload.stateChanges ?? null);
     setSelectedOptionId(payload.decision.selectedOptionId ?? "");
     setCustomChoice(payload.decision.customChoice ?? "");
@@ -413,7 +421,9 @@ export function ChapterEndDecision({
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">
-          还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。
+          {decisionGeneration?.status === "failed"
+            ? "命运分歧自动生成失败。可以点击上方按钮重试，本章正文不会被改写。"
+            : "还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。"}
         </div>
       )}
     </PaperPanel>

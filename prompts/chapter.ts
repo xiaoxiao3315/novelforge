@@ -12,6 +12,7 @@ import {
   formatSelectedChapterDecision,
   normalizeChapterDecision,
   type ChapterDecision,
+  type ChapterDecisionGeneration,
 } from "@/prompts/chapter-decision";
 import { normalizeChapterSummary, type ChapterSummary } from "@/prompts/chapter-summary";
 import type { StoryConcept } from "@/prompts/concept";
@@ -42,11 +43,15 @@ export type ChapterDraftQuality = {
   rewritePolicy?: string;
   rewriteScoreThreshold?: number;
   promptVersions?: {
+    guidance?: string;
     plan?: string;
     characterDirection?: string;
     critique?: string;
     rewrite?: string;
   };
+  qualityStrategy?: string;
+  criticalRewriteScoreThreshold?: number;
+  rewriteDecisionReason?: string;
   steps?: Record<string, string>;
   plan?: ChapterWritingPlan;
   characterDirection?: ChapterCharacterDirection;
@@ -86,6 +91,7 @@ export type ChapterContent = ChapterOutline & {
   summary?: ChapterSummary;
   official?: ChapterOfficial;
   decision?: ChapterDecision;
+  decisionGeneration?: ChapterDecisionGeneration;
   stateChanges?: StoryStateChanges;
   versionCount?: number;
 };
@@ -183,11 +189,14 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
 
   const mode = cleanText(value.mode, 80);
   const status = cleanText(value.status, 80);
+  const qualityStrategy = cleanText(value.qualityStrategy, 80);
   const critiqueValue = isRecord(value.critique) ? value.critique : null;
   const overallScore = normalizeScore(critiqueValue?.overallScore);
   const scores = normalizeNumberRecord(critiqueValue?.scores);
   const rewritePolicy = cleanText(value.rewritePolicy, 80);
   const rewriteScoreThreshold = normalizeScore(value.rewriteScoreThreshold);
+  const criticalRewriteScoreThreshold = normalizeScore(value.criticalRewriteScoreThreshold);
+  const rewriteDecisionReason = cleanText(value.rewriteDecisionReason, 240);
   const promptVersions = normalizeStringRecord(value.promptVersions);
   const steps = normalizeStringRecord(value.steps);
   const plan = normalizeChapterWritingPlan(value.plan);
@@ -195,6 +204,7 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
   const quality: ChapterDraftQuality = {
     ...(mode ? { mode } : {}),
     ...(status ? { status } : {}),
+    ...(qualityStrategy ? { qualityStrategy } : {}),
     ...(overallScore !== null || scores
       ? {
           critique: {
@@ -208,6 +218,8 @@ export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQualit
       : {}),
     ...(rewritePolicy ? { rewritePolicy } : {}),
     ...(rewriteScoreThreshold !== null ? { rewriteScoreThreshold } : {}),
+    ...(criticalRewriteScoreThreshold !== null ? { criticalRewriteScoreThreshold } : {}),
+    ...(rewriteDecisionReason ? { rewriteDecisionReason } : {}),
     ...(promptVersions ? { promptVersions } : {}),
     ...(steps ? { steps } : {}),
     ...(plan ? { plan } : {}),
@@ -324,6 +336,37 @@ export function normalizeChapterOfficial(value: unknown): ChapterOfficial | null
   };
 }
 
+export function normalizeChapterDecisionGeneration(
+  value: unknown,
+): ChapterDecisionGeneration | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const status = value.status;
+  const source = value.source;
+  const promptVersion = cleanText(value.promptVersion, 80);
+  const generatedAt = cleanText(value.generatedAt, 80);
+  const error = cleanText(value.error, 300);
+
+  if (
+    (status !== "success" && status !== "failed") ||
+    (source !== "auto-chapter-generation" && source !== "manual-regeneration") ||
+    !promptVersion ||
+    !generatedAt
+  ) {
+    return null;
+  }
+
+  return {
+    status,
+    source,
+    promptVersion,
+    generatedAt,
+    ...(error ? { error } : {}),
+  };
+}
+
 export function normalizeChapterContent(value: unknown): ChapterContent | null {
   if (!isRecord(value)) {
     return null;
@@ -339,6 +382,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   const summary = normalizeChapterSummary(value.summary);
   const official = normalizeChapterOfficial(value.official);
   const decision = normalizeChapterDecision(value.decision);
+  const decisionGeneration = normalizeChapterDecisionGeneration(value.decisionGeneration);
   const stateChanges = normalizeStoryStateChanges(value.stateChanges);
   const versionCount =
     typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
@@ -351,6 +395,7 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
     ...(summary ? { summary } : {}),
     ...(official ? { official } : {}),
     ...(decision ? { decision } : {}),
+    ...(decisionGeneration ? { decisionGeneration } : {}),
     ...(hasStoryStateChanges(stateChanges) ? { stateChanges } : {}),
     versionCount,
   };

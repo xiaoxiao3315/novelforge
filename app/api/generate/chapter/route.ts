@@ -8,12 +8,20 @@ import {
 } from "@/lib/credits";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import {
-  DEFAULT_REWRITE_SCORE_THRESHOLD,
+  DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
+  DEFAULT_FAST_REWRITE_SCORE_THRESHOLD,
   runChapterQualityPipeline,
   type ChapterQualityPipelineResult,
   type QualityPipelineModel,
 } from "@/lib/quality/pipeline";
 import type { ChapterQualityPromptContext, ChapterWritingPlan } from "@/lib/quality/types";
+import {
+  buildChapterDecisionGenerationLogError,
+  buildChapterDecisionGenerationMetadata,
+  generateChapterDecision,
+  summarizeChapterDecisionGenerationFailures,
+  type ChapterDecisionGenerationResult,
+} from "@/lib/interactive/chapter-decision-generation";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -31,9 +39,14 @@ import {
   DEFAULT_CHAPTER_WORD_TARGET,
   EMPTY_CHAPTER_INTERVENTION,
   type ChapterIntervention,
+  type ChapterContent,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
-import { normalizeChapterDecision } from "@/prompts/chapter-decision";
+import {
+  CHAPTER_DECISION_PROMPT_VERSION,
+  normalizeChapterDecision,
+  type ChapterDecisionPromptInput,
+} from "@/prompts/chapter-decision";
 import {
   buildChapterSummary,
   buildChapterSummaryPrompt,
@@ -57,6 +70,10 @@ import {
   buildChapterCharacterDirectionPrompt,
   CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
 } from "@/prompts/chapter-character-direction";
+import {
+  buildChapterFastGuidancePrompt,
+  CHAPTER_FAST_GUIDANCE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-fast-guidance";
 import { buildChapterPlanPrompt, CHAPTER_PLAN_SYSTEM_PROMPT } from "@/prompts/chapter-plan";
 import {
   buildChapterRewritePrompt,
@@ -140,6 +157,8 @@ const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const CHAPTER_FAST_GUIDANCE_MAX_TOKENS = 3400;
+const CHAPTER_FAST_GUIDANCE_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_PLAN_MAX_TOKENS = 2600;
 const CHAPTER_QUALITY_PLAN_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS = 2500;
@@ -194,6 +213,7 @@ type ChapterGenerationQualityMode = "normal" | "quality";
 type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
   status: ChapterQualityPipelineResult["status"];
+  qualityStrategy?: string;
   plan?: ChapterWritingPlan;
   characterDirection?: ChapterQualityPipelineResult["characterDirection"];
   critique: {
@@ -203,6 +223,8 @@ type ChapterDraftQualityMetadata = {
   rewriteApplied: boolean;
   rewritePolicy: ChapterQualityPipelineResult["metadata"]["rewritePolicy"];
   rewriteScoreThreshold: number;
+  criticalRewriteScoreThreshold?: number;
+  rewriteDecisionReason?: string;
   promptVersions: ChapterQualityPipelineResult["metadata"]["promptVersions"];
   steps: ChapterQualityPipelineResult["steps"];
 };
@@ -548,6 +570,120 @@ function buildPromptInput(
   };
 }
 
+function formatDecisionSummaryText(chapter: ReturnType<typeof buildPreviousChapterContext>) {
+  if (chapter.summary) {
+    return [
+      ...chapter.summary.keyEvents,
+      ...chapter.summary.characterStateChanges,
+      ...chapter.summary.unresolvedQuestions,
+    ].join("；");
+  }
+
+  return chapter.draftExcerpt;
+}
+
+function buildDecisionPreviousChapters(
+  previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
+): ChapterDecisionPromptInput["previousChapters"] {
+  return previousChapters.map((chapter) => ({
+    ...chapter,
+    summaryText: formatDecisionSummaryText(chapter),
+  }));
+}
+
+function buildDecisionPromptInput({
+  bible,
+  chapter,
+  characters,
+  config,
+  concept,
+  currentChapterBody,
+  previousChapters,
+  project,
+  volume,
+}: {
+  bible: StoryBible;
+  chapter: ChapterOutline;
+  characters: CharacterCard[];
+  config: StoryConfigRow;
+  concept: StoryConcept;
+  currentChapterBody?: string | null;
+  previousChapters: ReturnType<typeof buildPreviousChapterContext>[];
+  project: ProjectRow;
+  volume: VolumeOutline;
+}): ChapterDecisionPromptInput {
+  return {
+    project: {
+      title: project.title,
+      description: project.description,
+    },
+    config: buildStoryConfigPromptData(config),
+    concept,
+    bible,
+    characters,
+    volume,
+    chapter,
+    previousChapters: buildDecisionPreviousChapters(previousChapters),
+    currentChapterBody: currentChapterBody ?? null,
+  };
+}
+
+function buildDecisionGenerationSummary(result: ChapterDecisionGenerationResult | null) {
+  if (!result) {
+    return null;
+  }
+
+  if (result.ok) {
+    return {
+      status: "success" as const,
+      question: result.decision.question,
+      optionLabels: result.decision.options.map((option) => `${option.id}. ${option.label}`),
+      failedAttempts: result.failures.length,
+    };
+  }
+
+  return {
+    status: "failed" as const,
+    error: result.error,
+    failures: summarizeChapterDecisionGenerationFailures(result.failures),
+  };
+}
+
+function withFreshInteractiveDecisionContent({
+  baseContent,
+  decisionResult,
+}: {
+  baseContent: ChapterContent;
+  decisionResult: ChapterDecisionGenerationResult | null;
+}): ChapterContent {
+  const contentWithoutOldDecision = { ...baseContent };
+  delete contentWithoutOldDecision.decision;
+  delete contentWithoutOldDecision.decisionGeneration;
+  delete contentWithoutOldDecision.stateChanges;
+
+  if (!decisionResult) {
+    return contentWithoutOldDecision;
+  }
+
+  if (decisionResult.ok) {
+    return {
+      ...contentWithoutOldDecision,
+      decision: decisionResult.decision,
+      decisionGeneration: buildChapterDecisionGenerationMetadata({
+        source: "auto-chapter-generation",
+      }),
+    };
+  }
+
+  return {
+    ...contentWithoutOldDecision,
+    decisionGeneration: buildChapterDecisionGenerationMetadata({
+      error: decisionResult.error,
+      source: "auto-chapter-generation",
+    }),
+  };
+}
+
 function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
   return {
     storyConfig: input.config,
@@ -568,6 +704,20 @@ function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPr
 
 function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
   return {
+    async generateGuidance(input) {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_FAST_GUIDANCE_SYSTEM_PROMPT,
+        userPrompt: buildChapterFastGuidancePrompt(input),
+        maxTokens: CHAPTER_FAST_GUIDANCE_MAX_TOKENS,
+        temperature: CHAPTER_FAST_GUIDANCE_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        throw new Error("DeepSeek fast chapter guidance response is empty.");
+      }
+
+      return parseSummaryJsonObject(result.outputText);
+    },
     async generatePlan(input) {
       const result = await generateDeepSeekJson({
         systemPrompt: CHAPTER_PLAN_SYSTEM_PROMPT,
@@ -651,6 +801,9 @@ function buildQualityMetadata(
   return {
     mode: pipelineResult.metadata.mode,
     status: pipelineResult.status,
+    qualityStrategy: pipelineResult.metadata.promptVersions.guidance
+      ? "fast-guidance-v1"
+      : "multi-agent-v1",
     ...(pipelineResult.plan ? { plan: pipelineResult.plan } : {}),
     ...(pipelineResult.characterDirection
       ? { characterDirection: pipelineResult.characterDirection }
@@ -662,6 +815,10 @@ function buildQualityMetadata(
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    criticalRewriteScoreThreshold: pipelineResult.metadata.criticalRewriteScoreThreshold,
+    ...(pipelineResult.metadata.rewriteDecisionReason
+      ? { rewriteDecisionReason: pipelineResult.metadata.rewriteDecisionReason }
+      : {}),
     promptVersions: buildQualityPromptVersions(pipelineResult),
     steps: pipelineResult.steps,
   };
@@ -728,6 +885,8 @@ function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineRe
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    criticalRewriteScoreThreshold: pipelineResult.metadata.criticalRewriteScoreThreshold,
+    rewriteDecisionReason: pipelineResult.metadata.rewriteDecisionReason ?? null,
     promptVersions: buildQualityPromptVersions(pipelineResult),
   };
 }
@@ -1025,14 +1184,7 @@ export async function POST(request: Request) {
             : null,
         )
       : null;
-  const currentDecision =
-    projectMode === "interactive"
-      ? normalizeChapterDecision(
-          isRecord(chapterRow.content)
-            ? (chapterRow.content as { decision?: unknown }).decision
-            : null,
-        )
-      : null;
+  const currentDecision = null;
   const interactiveState =
     projectMode === "interactive" && isRecord(config.config_json)
       ? normalizeInteractiveStoryState(
@@ -1085,9 +1237,9 @@ export async function POST(request: Request) {
       storyContext: buildChapterQualityContext(promptInput),
       draftSource: "generate",
       rewritePolicy: "score-threshold",
-      rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
-      enablePlanning: true,
-      enableCharacterDirection: true,
+      rewriteScoreThreshold: DEFAULT_FAST_REWRITE_SCORE_THRESHOLD,
+      criticalRewriteScoreThreshold: DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
+      enableFastGuidance: true,
     } satisfies Parameters<typeof runChapterQualityPipeline>[0];
 
     qualityPipelineResult = await runChapterQualityPipeline(
@@ -1154,6 +1306,22 @@ export async function POST(request: Request) {
         }
       : {}),
   };
+  const autoDecisionPromise =
+    projectMode === "interactive"
+      ? generateChapterDecision(
+          buildDecisionPromptInput({
+            bible,
+            chapter,
+            characters,
+            config,
+            concept,
+            currentChapterBody: outputText,
+            previousChapters,
+            project: visibleProject,
+            volume,
+          }),
+        )
+      : null;
   const summaryUserPrompt = buildChapterSummaryPrompt({
     chapter,
     body: outputText,
@@ -1193,6 +1361,7 @@ export async function POST(request: Request) {
         chapterRow.id,
         buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(errorMessage);
     }
 
@@ -1278,6 +1447,7 @@ export async function POST(request: Request) {
           },
         },
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(error);
     } else {
       const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
@@ -1291,11 +1461,14 @@ export async function POST(request: Request) {
         chapterRow.id,
         buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(error);
     }
   }
 
   const summary = buildChapterSummary(summaryValidation.summary, model);
+  const autoDecisionResult = autoDecisionPromise ? await autoDecisionPromise : null;
+  const autoDecisionSummary = buildDecisionGenerationSummary(autoDecisionResult);
   const { data: latestVersionRow, error: latestVersionError } = await supabase
     .from("chapter_versions")
     .select("version_number")
@@ -1346,13 +1519,20 @@ export async function POST(request: Request) {
     ...draft,
     versionId: savedVersion.id,
   };
-  const chapterContent = buildChapterContent(
+  const baseChapterContent = buildChapterContent(
     chapter,
     versionedDraft,
     summary,
     chapterRow.content,
     savedVersion.version_number,
   );
+  const chapterContent =
+    projectMode === "interactive"
+      ? withFreshInteractiveDecisionContent({
+          baseContent: baseChapterContent,
+          decisionResult: autoDecisionResult,
+        })
+      : baseChapterContent;
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -1381,6 +1561,7 @@ export async function POST(request: Request) {
   const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
   const chapterLogOutput = {
     chapter: chapterContent,
+    ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),
@@ -1404,6 +1585,33 @@ export async function POST(request: Request) {
     return serverError(
       `章节正文和摘要已保存，但生成日志写入失败：${chapterLogError?.message || "未知错误"}`,
     );
+  }
+
+  if (autoDecisionResult) {
+    await supabase.from("generation_logs").insert({
+      project_id: visibleProject.id,
+      operation: "generate_chapter_decision",
+      target_type: "chapter",
+      target_id: savedChapter.id,
+      model,
+      prompt_version: CHAPTER_DECISION_PROMPT_VERSION,
+      input: {
+        project: visibleProject,
+        chapter,
+        previousChapters: buildDecisionPreviousChapters(previousChapters),
+        source: "auto-chapter-generation",
+        currentChapterBodyPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      },
+      ...(autoDecisionResult.ok
+        ? { output: { decision: autoDecisionResult.decision, source: "auto-chapter-generation" } }
+        : {
+            output: {
+              decisionGeneration: buildDecisionGenerationSummary(autoDecisionResult),
+              source: "auto-chapter-generation",
+            },
+            error: buildChapterDecisionGenerationLogError(autoDecisionResult),
+          }),
+    });
   }
 
   const { error: summaryLogError } = await supabase.from("generation_logs").insert({
@@ -1446,6 +1654,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     chapterId: savedChapter.id,
     chapter: chapterContent,
+    ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),

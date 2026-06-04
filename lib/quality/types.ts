@@ -65,6 +65,11 @@ export type ChapterCharacterDirection = {
   mustAvoid: string[];
 };
 
+export type ChapterFastGuidance = {
+  plan: ChapterWritingPlan;
+  characterDirection: ChapterCharacterDirection;
+};
+
 export type ChapterQualityPromptContext = {
   storyConfig: unknown;
   storyConcept: unknown;
@@ -81,6 +86,10 @@ export type ChapterQualityPromptContext = {
 };
 
 export type ChapterPlanInput = {
+  storyContext: ChapterQualityPromptContext;
+};
+
+export type ChapterFastGuidanceInput = {
   storyContext: ChapterQualityPromptContext;
 };
 

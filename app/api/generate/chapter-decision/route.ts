@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
-import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { getDeepSeekModel } from "@/lib/ai/deepseek";
+import {
+  buildChapterDecisionGenerationLogError,
+  buildChapterDecisionGenerationMetadata,
+  generateChapterDecision,
+} from "@/lib/interactive/chapter-decision-generation";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -10,10 +15,7 @@ import {
   type StoryBible,
 } from "@/prompts/bible";
 import {
-  buildChapterDecisionPrompt,
   CHAPTER_DECISION_PROMPT_VERSION,
-  validateChapterDecisionOutput,
-  type ChapterDecision,
   type ChapterDecisionPreviousContext,
   type ChapterDecisionPromptInput,
 } from "@/prompts/chapter-decision";
@@ -82,48 +84,12 @@ type ChapterRow = {
   estimated_words: number;
 };
 
-const DECISION_SYSTEM_PROMPT = [
-  "你只输出一个可被 JSON.parse 解析的 JSON object。",
-  "不要 Markdown，不要代码块，不要解释，不要输出 JSON 前后的多余文本。",
-  "所有字符串字段必须是单行短句，不要在 JSON string 中输出裸换行、制表符或控制字符。",
-].join(" ");
-const DECISION_ATTEMPTS = 2;
-const DECISION_MAX_TOKENS = 1600;
-const DECISION_TEMPERATURE = 0.2;
-const RAW_PREVIEW_LENGTH = 1000;
-
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
 function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
-}
-
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function getErrorType(error: unknown) {
-  if (error instanceof SyntaxError) {
-    return "json_parse";
-  }
-
-  if (error instanceof Error) {
-    return error.name || "error";
-  }
-
-  return "unknown_error";
-}
-
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  return JSON.parse(trimmed) as unknown;
 }
 
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
@@ -367,69 +333,47 @@ export async function POST(request: Request) {
     chapter,
     previousChapters,
   );
+  const currentChapterContext = buildPreviousChapterContext(chapter, chapterRow.content);
+  const promptInputWithBody = {
+    ...promptInput,
+    currentChapterBody: currentChapterContext.draftExcerpt,
+  };
   const logInput = {
     project: visibleProject,
-    storyConfig: promptInput.config,
+    storyConfig: promptInputWithBody.config,
     storyConcept: concept,
     storyBible: bible,
     characters,
     volume,
     chapter,
     previousChapters,
+    currentChapterBodyPreview: currentChapterContext.draftExcerpt,
   };
-  const failures: string[] = [];
-  let decision: ChapterDecision | null = null;
 
-  for (let attempt = 1; attempt <= DECISION_ATTEMPTS; attempt += 1) {
-    let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
+  const decisionResult = await generateChapterDecision(promptInputWithBody);
 
-    try {
-      result = await generateDeepSeekJson({
-        systemPrompt: DECISION_SYSTEM_PROMPT,
-        userPrompt: buildChapterDecisionPrompt(promptInput),
-        maxTokens: DECISION_MAX_TOKENS,
-        temperature: DECISION_TEMPERATURE,
-      });
-    } catch (error) {
-      failures.push(
-        `attempt=${attempt}; errorType=${getErrorType(error)}; message=${getErrorMessage(error).slice(0, 800)}`,
-      );
-      continue;
-    }
-
-    let parsed: unknown;
-
-    try {
-      parsed = parseJsonObject(result.outputText);
-    } catch (error) {
-      failures.push(
-        `attempt=${attempt}; errorType=${getErrorType(error)}; message=${getErrorMessage(error).slice(0, 800)}; outputLength=${result.outputText.length}; finishReason=${result.finishReason ?? "unknown"}; rawPreview=${result.outputText.slice(0, RAW_PREVIEW_LENGTH)}`,
-      );
-      continue;
-    }
-
-    const validation = validateChapterDecisionOutput(parsed);
-
-    if (validation.ok) {
-      decision = validation.decision;
-      break;
-    }
-
-    failures.push(
-      `attempt=${attempt}; errorType=schema_validation; message=${validation.error}; outputLength=${result.outputText.length}; finishReason=${result.finishReason ?? "unknown"}; rawPreview=${result.outputText.slice(0, RAW_PREVIEW_LENGTH)}`,
-    );
-  }
-
-  if (!decision) {
-    const error = `DeepSeek 剧情选择生成失败：AI 输出不是有效 JSON 或未通过 schema。\n${failures.join("\n")}`;
+  if (!decisionResult.ok) {
+    const error = buildChapterDecisionGenerationLogError(decisionResult);
     await writeDecisionErrorLog(error, logInput, chapterRow.id);
-    return serverError("DeepSeek 剧情选择生成失败：AI 输出不是有效 JSON。");
+    return serverError(decisionResult.error);
   }
 
+  const decision = decisionResult.decision;
+  const existingContentRecord =
+    typeof chapterRow.content === "object" && chapterRow.content
+      ? (chapterRow.content as Record<string, unknown>)
+      : {};
+  const existingContent = { ...existingContentRecord };
+  delete existingContent.decision;
+  delete existingContent.decisionGeneration;
+  delete existingContent.stateChanges;
   const chapterContent = {
-    ...(typeof chapterRow.content === "object" && chapterRow.content ? chapterRow.content : {}),
+    ...existingContent,
     ...chapter,
     decision,
+    decisionGeneration: buildChapterDecisionGenerationMetadata({
+      source: "manual-regeneration",
+    }),
   };
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -452,11 +396,12 @@ export async function POST(request: Request) {
     model,
     prompt_version: CHAPTER_DECISION_PROMPT_VERSION,
     input: logInput,
-    output: { decision },
+    output: { decision, source: "manual-regeneration" },
   });
 
   return NextResponse.json({
     chapterId: savedChapter.id,
     decision,
+    decisionGeneration: chapterContent.decisionGeneration,
   });
 }
