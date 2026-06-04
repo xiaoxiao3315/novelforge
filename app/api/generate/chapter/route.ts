@@ -16,6 +16,12 @@ import {
 } from "@/lib/quality/pipeline";
 import type { ChapterQualityPromptContext, ChapterWritingPlan } from "@/lib/quality/types";
 import {
+  validateChapterCharacterDirection,
+  validateChapterFastGuidance,
+  validateChapterQualityCritique,
+  validateChapterWritingPlan,
+} from "@/lib/quality/validators";
+import {
   buildChapterDecisionGenerationLogError,
   buildChapterDecisionGenerationMetadata,
   generateChapterDecision,
@@ -161,6 +167,7 @@ type GenerationLogIdRow = {
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
+const CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
 const CHAPTER_FAST_GUIDANCE_MAX_TOKENS = 3400;
@@ -470,6 +477,101 @@ function parseSummaryJsonObject(text: string) {
 
     return JSON.parse(escapeControlCharactersInJsonStrings(trimmed)) as unknown;
   }
+}
+
+type QualityJsonValidationResult = { ok: true } | { ok: false; error: string };
+
+type QualityJsonValidator = (value: unknown) => QualityJsonValidationResult;
+
+function buildQualityJsonRetryPrompt({
+  label,
+  originalPrompt,
+  validationError,
+  rawPreview,
+}: {
+  label: string;
+  originalPrompt: string;
+  validationError: string;
+  rawPreview: string;
+}) {
+  return [
+    `The previous ${label} response was not valid JSON for this schema.`,
+    `Error: ${validationError}`,
+    "",
+    `Previous raw output preview:`,
+    rawPreview,
+    "",
+    "Regenerate the same result now.",
+    "Return only one valid JSON object.",
+    "Do not use Markdown or code fences.",
+    "Do not add explanations before or after the JSON.",
+    "Ensure every array item is separated by a comma and all strings are properly escaped.",
+    "",
+    "Original task:",
+    originalPrompt,
+  ].join("\n");
+}
+
+async function generateQualityJsonWithRetry({
+  label,
+  systemPrompt,
+  userPrompt,
+  maxTokens,
+  temperature,
+  validate,
+}: {
+  label: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxTokens: number;
+  temperature: number;
+  validate?: QualityJsonValidator;
+}) {
+  let prompt = userPrompt;
+  let lastError = "";
+  let lastRawPreview = "";
+
+  for (let attempt = 1; attempt <= CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS; attempt += 1) {
+    const result = await generateDeepSeekJson({
+      systemPrompt,
+      userPrompt: prompt,
+      maxTokens,
+      temperature,
+    });
+
+    if (!result.outputText) {
+      lastError = `DeepSeek ${label} response is empty.`;
+      lastRawPreview = "";
+    } else {
+      lastRawPreview = result.outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH);
+
+      try {
+        const parsed = parseSummaryJsonObject(result.outputText);
+        const validation = validate?.(parsed);
+
+        if (!validation || validation.ok) {
+          return parsed;
+        }
+
+        lastError = validation.error;
+      } catch (error) {
+        lastError = getErrorMessage(error);
+      }
+    }
+
+    if (attempt < CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS) {
+      prompt = buildQualityJsonRetryPrompt({
+        label,
+        originalPrompt: userPrompt,
+        validationError: lastError,
+        rawPreview: lastRawPreview,
+      });
+    }
+  }
+
+  throw new Error(
+    `DeepSeek ${label} JSON failed after ${CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS} attempts: ${lastError}`,
+  );
 }
 
 function buildSummaryJsonParseFailure(
@@ -826,46 +928,34 @@ function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPr
 function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
   return {
     async generateGuidance(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "fast chapter guidance",
         systemPrompt: CHAPTER_FAST_GUIDANCE_SYSTEM_PROMPT,
         userPrompt: buildChapterFastGuidancePrompt(input),
         maxTokens: CHAPTER_FAST_GUIDANCE_MAX_TOKENS,
         temperature: CHAPTER_FAST_GUIDANCE_TEMPERATURE,
+        validate: validateChapterFastGuidance,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek fast chapter guidance response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generatePlan(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "chapter plan",
         systemPrompt: CHAPTER_PLAN_SYSTEM_PROMPT,
         userPrompt: buildChapterPlanPrompt(input),
         maxTokens: CHAPTER_QUALITY_PLAN_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_PLAN_TEMPERATURE,
+        validate: validateChapterWritingPlan,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek chapter plan response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateCharacterDirection(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "character direction",
         systemPrompt: CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
         userPrompt: buildChapterCharacterDirectionPrompt(input),
         maxTokens: CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE,
+        validate: validateChapterCharacterDirection,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek character direction response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateDraft(input) {
       const result = await generateDeepSeekText({
@@ -882,18 +972,14 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
       return cleanChapterBody(result.outputText);
     },
     async generateCritique(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "quality critique",
         systemPrompt: CHAPTER_CRITIQUE_SYSTEM_PROMPT,
         userPrompt: buildChapterCritiquePrompt(input),
         maxTokens: CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_CRITIQUE_TEMPERATURE,
+        validate: validateChapterQualityCritique,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek quality critique response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateRewrite(input) {
       const result = await generateDeepSeekText({
