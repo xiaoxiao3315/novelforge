@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChapterQualityModeSelector,
@@ -97,6 +97,7 @@ export function ChapterEndDecision({
   const [isSaving, setIsSaving] = useState(false);
   const [nextChapterQualityMode, setNextChapterQualityMode] =
     useState<ChapterQualityMode>("normal");
+  const openPanelRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const nextChapterCost = getChapterQualityModeCost(nextChapterQualityMode);
   const hasSavedDecision = decision ? hasSelectedChapterDecision(decision) : false;
@@ -137,6 +138,24 @@ export function ChapterEndDecision({
       ? "继续选择"
       : "生成选择";
   const dockStatusLabel = hasSavedDecision ? "已选择" : decision ? "已生成" : "待生成";
+
+  useEffect(() => {
+    if (!isOpen || typeof window === "undefined") {
+      return;
+    }
+
+    const shouldScrollToInlinePanel = window.matchMedia(
+      "(min-width: 981px) and (max-width: 2019px)",
+    ).matches;
+
+    if (!shouldScrollToInlinePanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      openPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [isOpen]);
 
   async function generateDecision() {
     setIsOpen(true);
@@ -283,7 +302,7 @@ export function ChapterEndDecision({
   }
 
   return (
-    <div className="chapter-decision-dock chapter-decision-dock-open">
+    <div className="chapter-decision-dock chapter-decision-dock-open" ref={openPanelRef}>
       <PaperPanel className="chapter-decision-panel chapter-decision-floating-panel mt-0 p-0">
         <div className="decision-panel-header">
           <div>

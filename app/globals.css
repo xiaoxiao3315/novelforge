@@ -1013,6 +1013,10 @@ button:disabled {
 
 .decision-option-effects {
   opacity: 0.86;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .custom-choice-details {
@@ -1375,20 +1379,30 @@ button:disabled {
   white-space: nowrap;
 }
 
-@media (min-width: 1800px) {
+@media (min-width: 2020px) {
   .chapter-decision-dock-open {
     right: max(18px, calc((100vw - 1160px) / 2 - 420px - 16px));
   }
 }
 
-@media (max-width: 1480px) and (min-width: 981px) {
+@media (max-width: 2019px) and (min-width: 981px) {
   .chapter-decision-dock-open {
-    right: 12px;
-    width: min(440px, calc(100vw - 32px));
+    position: static;
+    width: 100%;
+    margin-top: 16px;
   }
 
   .chapter-decision-floating-panel {
-    max-height: calc(100dvh - 124px);
+    max-height: none;
+    overflow: visible;
+  }
+
+  .chapter-decision-dock-open .decision-panel-header {
+    align-items: center;
+  }
+
+  .chapter-decision-dock-open .decision-panel-title {
+    font-size: 1.3rem;
   }
 }
 
