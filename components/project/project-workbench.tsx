@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ChapterContinueAction } from "@/components/project/chapter-continue-action";
 import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
+import { ChapterRegenerateAction } from "@/components/project/chapter-regenerate-action";
 import {
   BookBadge,
   CreditBadge,
@@ -25,6 +26,8 @@ export type WorkbenchProject = {
 
 export type WorkbenchChapter = ChapterContent & {
   id: string;
+  needsRegeneration?: boolean;
+  stale?: boolean;
   versionCount: number;
 };
 
@@ -55,6 +58,18 @@ const qualityScoreLabels = [
 ] as const;
 
 type WorkbenchQualityMetadata = NonNullable<NonNullable<WorkbenchChapter["draft"]>["quality"]>;
+
+function chapterNeedsRegeneration(chapter: WorkbenchChapter | null | undefined) {
+  return Boolean(chapter?.needsRegeneration || chapter?.stale);
+}
+
+function hasReadableChapterBody(chapter: WorkbenchChapter | null | undefined) {
+  return Boolean(
+    chapter &&
+      !chapterNeedsRegeneration(chapter) &&
+      (chapter.official?.body || chapter.draft?.body),
+  );
+}
 
 function getQualityScoreItems(chapter: WorkbenchChapter | null) {
   const scores = chapter?.draft?.quality?.critique?.scores;
@@ -103,6 +118,10 @@ function formatRewriteStatus(quality: WorkbenchQualityMetadata) {
 }
 
 function getChapterStatus(chapter: WorkbenchChapter) {
+  if (chapterNeedsRegeneration(chapter)) {
+    return "需重生";
+  }
+
   if (chapter.official) {
     return "正式稿";
   }
@@ -115,6 +134,10 @@ function getChapterStatus(chapter: WorkbenchChapter) {
 }
 
 function getChapterDisplayStatus(chapter: WorkbenchChapter, projectMode: ProjectMode) {
+  if (chapterNeedsRegeneration(chapter)) {
+    return "需重生";
+  }
+
   if (projectMode !== "interactive") {
     return getChapterStatus(chapter);
   }
@@ -137,6 +160,13 @@ function getReaderBody(chapter: WorkbenchChapter | null, projectMode: ProjectMod
     return {
       body: "一键准备后，第 1 章会自动生成并出现在这里。",
       source: "等待章节",
+    };
+  }
+
+  if (chapterNeedsRegeneration(chapter)) {
+    return {
+      body: "需按新命运重生本章",
+      source: "需重生",
     };
   }
 
@@ -280,9 +310,18 @@ function ChapterReaderPreview({
 }) {
   const isInteractive = projectMode === "interactive";
   const reader = getReaderBody(chapter, projectMode);
-  const hasReadableBody = Boolean(chapter?.official?.body || chapter?.draft?.body);
+  const needsRegeneration = chapterNeedsRegeneration(chapter);
+  const hasReadableBody = hasReadableChapterBody(chapter);
   const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
   const readerSourceLabel = "阅读页";
+  const creditUnit = isInteractive ? "星火" : "额度";
+  const badgeTone = needsRegeneration
+    ? "warning"
+    : chapter?.official
+      ? "success"
+      : chapter?.draft
+        ? "gold"
+        : "paper";
 
   return (
     <div className="grid gap-5" id="chapter-reader">
@@ -304,7 +343,7 @@ function ChapterReaderPreview({
                 {chapter ? `第 ${chapter.chapterNumber} 章 ${chapter.title}` : "准备开始阅读"}
               </h2>
             </div>
-            <BookBadge tone={chapter?.official ? "success" : chapter?.draft ? "gold" : "paper"}>
+            <BookBadge tone={badgeTone}>
               {chapter ? getChapterDisplayStatus(chapter, projectMode) : "待开启"}
             </BookBadge>
           </div>
@@ -323,26 +362,25 @@ function ChapterReaderPreview({
               <p className="reader-empty-kicker">
                 {chapter ? `第 ${chapter.chapterNumber} 章` : "阅读准备"}
               </p>
-              <h3>{chapter ? "这一章尚未生成" : "准备开始阅读"}</h3>
+              <h3>
+                {chapter
+                  ? needsRegeneration
+                    ? "需按新命运重生本章"
+                    : "这一章尚未生成"
+                  : "准备开始阅读"}
+              </h3>
               <p>{reader.body}</p>
+              {needsRegeneration && chapter ? (
+                <ChapterRegenerateAction
+                  chapterNumber={chapter.chapterNumber}
+                  creditBalance={creditBalance ?? null}
+                  creditUnit={creditUnit}
+                  projectId={projectId}
+                />
+              ) : null}
             </div>
           )}
         </div>
-        {isInteractive && chapter && hasReadableBody ? (
-          <ChapterEndDecision
-            chapterId={chapter.id}
-            chapterNumber={chapter.chapterNumber}
-            creditBalance={creditBalance ?? null}
-            hasNextChapter={hasNextChapter}
-            initialDecisionGeneration={chapter.decisionGeneration ?? null}
-            initialDecision={chapter.decision ?? null}
-            initialInteractiveState={interactiveState}
-            initialStateChanges={chapter.stateChanges ?? null}
-            key={chapter.id}
-            nextChapterNumber={nextChapterNumber}
-            projectId={projectId}
-          />
-        ) : null}
         {!isInteractive && chapter && hasReadableBody ? (
           <ChapterContinueAction
             creditBalance={creditBalance ?? null}
@@ -352,6 +390,21 @@ function ChapterReaderPreview({
           />
         ) : null}
       </ReaderPage>
+      {isInteractive && chapter && hasReadableBody ? (
+        <ChapterEndDecision
+          chapterId={chapter.id}
+          chapterNumber={chapter.chapterNumber}
+          creditBalance={creditBalance ?? null}
+          hasNextChapter={hasNextChapter}
+          initialDecisionGeneration={chapter.decisionGeneration ?? null}
+          initialDecision={chapter.decision ?? null}
+          initialInteractiveState={interactiveState}
+          initialStateChanges={chapter.stateChanges ?? null}
+          key={chapter.id}
+          nextChapterNumber={nextChapterNumber}
+          projectId={projectId}
+        />
+      ) : null}
 
       {showBackmatter ? <ChapterBackmatter chapter={chapter} readerSource={reader.source} summary={summary} /> : null}
     </div>
@@ -506,7 +559,7 @@ export function ProjectWorkbenchLayout({
       : null;
   const currentChapter =
     requestedChapter ??
-    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body) ??
+    chapters.find((chapter) => hasReadableChapterBody(chapter)) ??
     chapters[0] ??
     null;
   return (

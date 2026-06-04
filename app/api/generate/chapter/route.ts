@@ -87,6 +87,11 @@ type GenerateChapterBody = {
   chapterNumber?: unknown;
   intervention?: unknown;
   qualityMode?: unknown;
+  generationSource?: unknown;
+  batchRunId?: unknown;
+  routeMode?: unknown;
+  routeRevision?: unknown;
+  routeSnapshotHash?: unknown;
   user_id?: unknown;
 };
 
@@ -127,6 +132,7 @@ type VolumeRow = {
 
 type ChapterRow = {
   id: string;
+  volume_id: string | null;
   content: unknown;
   chapter_number: number;
   title: string;
@@ -210,6 +216,16 @@ type SummaryRepairLog = {
 
 type ChapterGenerationQualityMode = "normal" | "quality";
 
+type BatchChapterRouteMetadata = {
+  generationSource: "batch-20";
+  batchRunId?: string;
+  routeMode: "default";
+  routeRevision?: string;
+  routeSnapshotHash?: string;
+  qualityMode: "normal";
+  isDefaultRoute: true;
+};
+
 type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
   status: ChapterQualityPipelineResult["status"];
@@ -273,6 +289,101 @@ function normalizeQualityMode(
   }
 
   return { ok: false, error: "qualityMode 必须是 normal 或 quality。" };
+}
+
+function readOptionalMetadataString(
+  value: unknown,
+  field: keyof Pick<
+    GenerateChapterBody,
+    "batchRunId" | "routeRevision" | "routeSnapshotHash"
+  >,
+  maxLength: number,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  if (value === undefined || value === null) {
+    return { ok: true };
+  }
+
+  if (typeof value !== "string") {
+    return { ok: false, error: `${field} must be a string.` };
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return { ok: true };
+  }
+
+  if (trimmed.length > maxLength) {
+    return { ok: false, error: `${field} cannot exceed ${maxLength} characters.` };
+  }
+
+  return { ok: true, value: trimmed };
+}
+
+function parseBatchRouteMetadata(
+  body: GenerateChapterBody,
+): { ok: true; metadata: BatchChapterRouteMetadata | null } | { ok: false; error: string } {
+  const hasBatchMetadata =
+    body.generationSource !== undefined ||
+    body.batchRunId !== undefined ||
+    body.routeMode !== undefined ||
+    body.routeRevision !== undefined ||
+    body.routeSnapshotHash !== undefined;
+
+  if (!hasBatchMetadata) {
+    return { ok: true, metadata: null };
+  }
+
+  if (body.generationSource !== "batch-20") {
+    return { ok: false, error: "batch metadata requires generationSource=batch-20." };
+  }
+
+  if (body.qualityMode !== "normal") {
+    return { ok: false, error: "batch-20 chapter generation requires qualityMode=normal." };
+  }
+
+  if (
+    body.routeMode !== undefined &&
+    body.routeMode !== null &&
+    body.routeMode !== "default"
+  ) {
+    return { ok: false, error: "routeMode must be default." };
+  }
+
+  const batchRunId = readOptionalMetadataString(body.batchRunId, "batchRunId", 120);
+
+  if (!batchRunId.ok) {
+    return batchRunId;
+  }
+
+  const routeRevision = readOptionalMetadataString(body.routeRevision, "routeRevision", 120);
+
+  if (!routeRevision.ok) {
+    return routeRevision;
+  }
+
+  const routeSnapshotHash = readOptionalMetadataString(
+    body.routeSnapshotHash,
+    "routeSnapshotHash",
+    160,
+  );
+
+  if (!routeSnapshotHash.ok) {
+    return routeSnapshotHash;
+  }
+
+  return {
+    ok: true,
+    metadata: {
+      generationSource: "batch-20",
+      ...(batchRunId.value ? { batchRunId: batchRunId.value } : {}),
+      routeMode: "default",
+      ...(routeRevision.value ? { routeRevision: routeRevision.value } : {}),
+      ...(routeSnapshotHash.value ? { routeSnapshotHash: routeSnapshotHash.value } : {}),
+      qualityMode: "normal",
+      isDefaultRoute: true,
+    },
+  };
 }
 
 function parseJsonObject(text: string) {
@@ -684,6 +795,16 @@ function withFreshInteractiveDecisionContent({
   };
 }
 
+function withoutStaleRouteMetadata(content: ChapterContent): ChapterContent {
+  const nextContent = { ...content };
+
+  delete nextContent.routeMetadata;
+  delete nextContent.needsRegeneration;
+  delete nextContent.stale;
+
+  return nextContent;
+}
+
 function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
   return {
     storyConfig: input.config,
@@ -929,6 +1050,13 @@ export async function POST(request: Request) {
     return validationError("生成章节正文时不能从前端传 user_id。");
   }
 
+  const batchRouteMetadataValidation = parseBatchRouteMetadata(body);
+
+  if (!batchRouteMetadataValidation.ok) {
+    return validationError(batchRouteMetadataValidation.error);
+  }
+
+  const batchRouteMetadata = batchRouteMetadataValidation.metadata;
   const qualityModeValidation = normalizeQualityMode(body.qualityMode);
 
   if (!qualityModeValidation.ok) {
@@ -1023,7 +1151,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const baseLogInput = withQualityLogInput({ project: visibleProject, intervention }, qualityMode);
+  const baseLogInput = withQualityLogInput(
+    {
+      project: visibleProject,
+      intervention,
+      ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+    },
+    qualityMode,
+  );
 
   const { data: config, error: configError } = await supabase
     .from("story_configs")
@@ -1102,31 +1237,10 @@ export async function POST(request: Request) {
     return validationError(error);
   }
 
-  const { data: volumeRow, error: volumeError } = await supabase
-    .from("volumes")
-    .select("content")
-    .eq("project_id", projectId)
-    .order("volume_number", { ascending: true })
-    .limit(1)
-    .maybeSingle<VolumeRow>();
-
-  if (volumeError) {
-    await writeErrorLog(volumeError.message, baseLogInput);
-    return serverError(volumeError.message);
-  }
-
-  const volume = normalizeVolumeOutline(volumeRow?.content);
-
-  if (!volume) {
-    const error = "缺少 volume。";
-    await writeErrorLog(error, baseLogInput);
-    return validationError(error);
-  }
-
   let chapterQuery = supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId);
 
@@ -1151,10 +1265,36 @@ export async function POST(request: Request) {
     return validationError(error);
   }
 
+  if (!chapterRow.volume_id) {
+    const error = "缺少 chapter volume。";
+    await writeErrorLog(error, baseLogInput, chapterRow.id);
+    return validationError(error);
+  }
+
+  const { data: volumeRow, error: volumeError } = await supabase
+    .from("volumes")
+    .select("content")
+    .eq("project_id", projectId)
+    .eq("id", chapterRow.volume_id)
+    .maybeSingle<VolumeRow>();
+
+  if (volumeError) {
+    await writeErrorLog(volumeError.message, baseLogInput, chapterRow.id);
+    return serverError(volumeError.message);
+  }
+
+  const volume = normalizeVolumeOutline(volumeRow?.content);
+
+  if (!volume) {
+    const error = "缺少 volume。";
+    await writeErrorLog(error, baseLogInput, chapterRow.id);
+    return validationError(error);
+  }
+
   const { data: previousRows, error: previousError } = await supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId)
     .lt("chapter_number", chapter.chapterNumber)
@@ -1219,6 +1359,7 @@ export async function POST(request: Request) {
     previousDecision,
     currentDecision,
     interactiveState,
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
   };
   const creditOperation =
     qualityMode === "quality" ? "generate_chapter_quality" : "generate_chapter";
@@ -1289,7 +1430,11 @@ export async function POST(request: Request) {
   }
 
   const baseDraft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
-  const draft = qualityMetadata ? { ...baseDraft, quality: qualityMetadata } : baseDraft;
+  const draft = {
+    ...baseDraft,
+    ...(qualityMetadata ? { quality: qualityMetadata } : {}),
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+  };
   const summaryLogInput = {
     project: visibleProject,
     chapter,
@@ -1297,6 +1442,7 @@ export async function POST(request: Request) {
     intervention,
     draft,
     body: outputText,
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
     ...(qualityMode === "quality"
       ? {
           qualityMode,
@@ -1306,8 +1452,9 @@ export async function POST(request: Request) {
         }
       : {}),
   };
+  const shouldGenerateAutoDecision = false;
   const autoDecisionPromise =
-    projectMode === "interactive"
+    shouldGenerateAutoDecision
       ? generateChapterDecision(
           buildDecisionPromptInput({
             bible,
@@ -1526,13 +1673,22 @@ export async function POST(request: Request) {
     chapterRow.content,
     savedVersion.version_number,
   );
-  const chapterContent =
+  const routedBaseChapterContent = batchRouteMetadata
+    ? baseChapterContent
+    : withoutStaleRouteMetadata(baseChapterContent);
+  const decisionChapterContent =
     projectMode === "interactive"
       ? withFreshInteractiveDecisionContent({
-          baseContent: baseChapterContent,
+          baseContent: routedBaseChapterContent,
           decisionResult: autoDecisionResult,
         })
-      : baseChapterContent;
+      : routedBaseChapterContent;
+  const chapterContent = batchRouteMetadata
+    ? {
+        ...decisionChapterContent,
+        routeMetadata: batchRouteMetadata,
+      }
+    : decisionChapterContent;
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")

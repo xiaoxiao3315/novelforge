@@ -72,6 +72,7 @@ type VolumeRow = {
 
 type ChapterRow = {
   id: string;
+  volume_id: string | null;
   content: unknown;
   chapter_number: number;
   title: string;
@@ -254,23 +255,10 @@ export async function POST(request: Request) {
     return validationError("缺少 characters。");
   }
 
-  const { data: volumeRow } = await supabase
-    .from("volumes")
-    .select("content")
-    .eq("project_id", projectId)
-    .order("volume_number", { ascending: true })
-    .limit(1)
-    .maybeSingle<VolumeRow>();
-  const volume = normalizeVolumeOutline(volumeRow?.content);
-
-  if (!volume) {
-    return validationError("缺少 volume。");
-  }
-
   let chapterQuery = supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId);
 
@@ -292,10 +280,26 @@ export async function POST(request: Request) {
     return validationError("缺少 chapter outline。");
   }
 
+  if (!chapterRow.volume_id) {
+    return validationError("缺少 chapter volume。");
+  }
+
+  const { data: volumeRow } = await supabase
+    .from("volumes")
+    .select("content")
+    .eq("project_id", projectId)
+    .eq("id", chapterRow.volume_id)
+    .maybeSingle<VolumeRow>();
+  const volume = normalizeVolumeOutline(volumeRow?.content);
+
+  if (!volume) {
+    return validationError("缺少 volume。");
+  }
+
   const { data: previousRows } = await supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId)
     .lt("chapter_number", chapter.chapterNumber)

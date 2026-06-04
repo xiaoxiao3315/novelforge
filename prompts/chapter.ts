@@ -57,6 +57,20 @@ export type ChapterDraftQuality = {
   characterDirection?: ChapterCharacterDirection;
 };
 
+export type ChapterRouteMetadata = {
+  generationSource?: string;
+  batchRunId?: string;
+  routeMode?: string;
+  routeRevision?: string;
+  routeSnapshotHash?: string;
+  qualityMode?: string;
+  isDefaultRoute?: boolean;
+  needsRegeneration?: boolean;
+  staleReason?: string;
+  staleFromChapterNumber?: number;
+  staleAt?: string;
+};
+
 export type ChapterDraft = {
   versionId?: string;
   body: string;
@@ -66,6 +80,7 @@ export type ChapterDraft = {
   wordTarget: number;
   intervention?: ChapterIntervention;
   quality?: ChapterDraftQuality;
+  routeMetadata?: ChapterRouteMetadata;
 };
 
 export type ChapterIntervention = {
@@ -92,6 +107,9 @@ export type ChapterContent = ChapterOutline & {
   official?: ChapterOfficial;
   decision?: ChapterDecision;
   decisionGeneration?: ChapterDecisionGeneration;
+  routeMetadata?: ChapterRouteMetadata;
+  needsRegeneration?: boolean;
+  stale?: boolean;
   stateChanges?: StoryStateChanges;
   versionCount?: number;
 };
@@ -180,6 +198,46 @@ function normalizeStringRecord(value: unknown) {
     .filter(([key, text]) => Boolean(key && text));
 
   return entries.length > 0 ? Object.fromEntries(entries) : null;
+}
+
+function normalizeRouteMetadata(value: unknown): ChapterRouteMetadata | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const generationSource = cleanText(value.generationSource, 80);
+  const batchRunId = cleanText(value.batchRunId, 160);
+  const routeMode = cleanText(value.routeMode, 80);
+  const routeRevision = cleanText(value.routeRevision, 160);
+  const routeSnapshotHash = cleanText(value.routeSnapshotHash, 200);
+  const qualityMode = cleanText(value.qualityMode, 80);
+  const staleReason = cleanText(value.staleReason, 160);
+  const staleAt = cleanText(value.staleAt, 80);
+  const staleFromChapterNumber =
+    typeof value.staleFromChapterNumber === "number" &&
+    Number.isInteger(value.staleFromChapterNumber) &&
+    value.staleFromChapterNumber > 0
+      ? value.staleFromChapterNumber
+      : null;
+  const metadata: ChapterRouteMetadata = {
+    ...(generationSource ? { generationSource } : {}),
+    ...(batchRunId ? { batchRunId } : {}),
+    ...(routeMode ? { routeMode } : {}),
+    ...(routeRevision ? { routeRevision } : {}),
+    ...(routeSnapshotHash ? { routeSnapshotHash } : {}),
+    ...(qualityMode ? { qualityMode } : {}),
+    ...(typeof value.isDefaultRoute === "boolean"
+      ? { isDefaultRoute: value.isDefaultRoute }
+      : {}),
+    ...(typeof value.needsRegeneration === "boolean"
+      ? { needsRegeneration: value.needsRegeneration }
+      : {}),
+    ...(staleReason ? { staleReason } : {}),
+    ...(staleFromChapterNumber ? { staleFromChapterNumber } : {}),
+    ...(staleAt ? { staleAt } : {}),
+  };
+
+  return Object.keys(metadata).length > 0 ? metadata : null;
 }
 
 export function normalizeChapterDraftQuality(value: unknown): ChapterDraftQuality | null {
@@ -274,6 +332,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
   const promptVersion = cleanText(value.promptVersion, 80);
   const intervention = normalizeChapterIntervention(value.intervention);
   const quality = normalizeChapterDraftQuality(value.quality);
+  const routeMetadata = normalizeRouteMetadata(value.routeMetadata ?? value.route);
   const wordTarget = value.wordTarget;
 
   if (
@@ -297,6 +356,7 @@ export function normalizeChapterDraft(value: unknown): ChapterDraft | null {
     wordTarget,
     ...(intervention ? { intervention } : {}),
     ...(quality ? { quality } : {}),
+    ...(routeMetadata ? { routeMetadata } : {}),
   };
 }
 
@@ -383,7 +443,14 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
   const official = normalizeChapterOfficial(value.official);
   const decision = normalizeChapterDecision(value.decision);
   const decisionGeneration = normalizeChapterDecisionGeneration(value.decisionGeneration);
+  const routeMetadata = normalizeRouteMetadata(value.routeMetadata ?? value.route);
   const stateChanges = normalizeStoryStateChanges(value.stateChanges);
+  const needsRegeneration = Boolean(
+    value.needsRegeneration ||
+      value.stale ||
+      routeMetadata?.needsRegeneration ||
+      draft?.routeMetadata?.needsRegeneration,
+  );
   const versionCount =
     typeof value.versionCount === "number" && Number.isInteger(value.versionCount)
       ? Math.max(0, value.versionCount)
@@ -396,6 +463,8 @@ export function normalizeChapterContent(value: unknown): ChapterContent | null {
     ...(official ? { official } : {}),
     ...(decision ? { decision } : {}),
     ...(decisionGeneration ? { decisionGeneration } : {}),
+    ...(routeMetadata ? { routeMetadata } : {}),
+    ...(needsRegeneration ? { needsRegeneration: true, stale: true } : {}),
     ...(hasStoryStateChanges(stateChanges) ? { stateChanges } : {}),
     versionCount,
   };

@@ -91,6 +91,7 @@ export function ChapterEndDecision({
   );
   const [customChoice, setCustomChoice] = useState(initialDecision?.customChoice ?? "");
   const [error, setError] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNextChapter, setIsGeneratingNextChapter] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -130,8 +131,14 @@ export function ChapterEndDecision({
         cost: nextChapterCost,
         unit: "星火",
       });
+  const dockButtonTitle = hasSavedDecision
+    ? "查看命运"
+    : decision
+      ? "继续选择"
+      : "生成选择";
 
   async function generateDecision() {
+    setIsOpen(true);
     setError("");
     setIsGenerating(true);
 
@@ -161,6 +168,14 @@ export function ChapterEndDecision({
     setSelectedOptionId(payload.decision.selectedOptionId ?? "");
     setCustomChoice(payload.decision.customChoice ?? "");
     router.refresh();
+  }
+
+  async function openDecisionDock() {
+    setIsOpen(true);
+
+    if (!decision && !isGenerating) {
+      await generateDecision();
+    }
   }
 
   async function saveDecision() {
@@ -250,31 +265,59 @@ export function ChapterEndDecision({
     router.refresh();
   }
 
-  return (
-    <PaperPanel className="chapter-decision-panel mt-0 p-0">
-      <div className="decision-panel-header">
-        <div>
-          <BookBadge tone="warning">命运分歧</BookBadge>
-          <h3 className="mt-3 font-serif text-2xl font-black text-[var(--ink)]">
-            读完之后，选一条路
-          </h3>
-          <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
-            做出选择后，下一章会沿用这次选择和当前故事状态继续推进。
-          </p>
-        </div>
+  if (!isOpen) {
+    return (
+      <div className="chapter-decision-dock">
         <button
-          className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="chapter-decision-fab disabled:cursor-not-allowed disabled:opacity-70"
           disabled={isGenerating || isSaving || isGeneratingNextChapter}
-          onClick={generateDecision}
+          onClick={openDecisionDock}
           type="button"
         >
-          {isGenerating
-            ? "命运分歧生成中..."
-            : decision
-              ? "重新生成命运分歧"
-              : "开启命运分歧"}
+          <span>命运分歧</span>
+          <strong>{isGenerating ? "生成中..." : dockButtonTitle}</strong>
         </button>
       </div>
+    );
+  }
+
+  return (
+    <div className="chapter-decision-dock chapter-decision-dock-open">
+      <PaperPanel className="chapter-decision-panel chapter-decision-floating-panel mt-0 p-0">
+        <div className="decision-panel-header">
+          <div>
+            <BookBadge tone="warning">命运分歧</BookBadge>
+            <h3 className="mt-3 font-serif text-2xl font-black text-[var(--ink)]">
+              读完之后，选一条路
+            </h3>
+            <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+              做出选择后，下一章会沿用这次选择和当前故事状态继续推进。
+            </p>
+          </div>
+          <div className="decision-panel-actions">
+            <button
+              aria-label="收起命运分歧"
+              className="chapter-decision-close"
+              disabled={isGenerating || isSaving || isGeneratingNextChapter}
+              onClick={() => setIsOpen(false)}
+              type="button"
+            >
+              ×
+            </button>
+            <button
+              className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isGenerating || isSaving || isGeneratingNextChapter}
+              onClick={generateDecision}
+              type="button"
+            >
+              {isGenerating
+                ? "命运分歧生成中..."
+                : decision
+                  ? "重新生成命运分歧"
+                  : "开启命运分歧"}
+            </button>
+          </div>
+        </div>
 
       {error ? (
         <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
@@ -426,6 +469,7 @@ export function ChapterEndDecision({
             : "还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。"}
         </div>
       )}
-    </PaperPanel>
+      </PaperPanel>
+    </div>
   );
 }

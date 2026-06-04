@@ -42,16 +42,19 @@ type CharacterRow = {
 };
 
 type VolumeRow = {
+  id: string;
   content: VolumeOutline | null;
 };
 
 type ChapterRow = {
   id: string;
+  volume_id: string | null;
   content: ChapterContent | null;
 };
 
 type ChapterDisplay = ChapterContent & {
   id: string;
+  volumeId?: string;
   versionCount: number;
 };
 
@@ -136,17 +139,16 @@ export default async function ProjectDetailPage({
   const bible = normalizeStoryBible(storyBible?.content);
   const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
 
-  const { data: volumeRow } = await supabase
+  const { data: volumeRows } = await supabase
     .from("volumes")
-    .select("content")
+    .select("id,content")
     .eq("project_id", projectId)
     .order("volume_number", { ascending: true })
-    .limit(1)
-    .maybeSingle<VolumeRow>();
+    .returns<VolumeRow[]>();
 
   const { data: chapterRows } = await supabase
     .from("chapters")
-    .select("id,content")
+    .select("id,volume_id,content")
     .eq("project_id", projectId)
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();
@@ -163,7 +165,20 @@ export default async function ProjectDetailPage({
     chapterVersionCounts.set(row.chapter_id, (chapterVersionCounts.get(row.chapter_id) ?? 0) + 1);
   }
 
-  const volume = normalizeVolumeOutline(volumeRow?.content);
+  const volumes = new Map<string, VolumeOutline>();
+  let firstVolume: VolumeOutline | null = null;
+
+  for (const row of volumeRows ?? []) {
+    const normalizedVolume = normalizeVolumeOutline(row.content);
+
+    if (!normalizedVolume) {
+      continue;
+    }
+
+    volumes.set(row.id, normalizedVolume);
+    firstVolume ??= normalizedVolume;
+  }
+
   const chapters: ChapterDisplay[] = [];
 
   for (const row of chapterRows ?? []) {
@@ -176,6 +191,7 @@ export default async function ProjectDetailPage({
     chapters.push({
       ...content,
       id: row.id,
+      ...(row.volume_id ? { volumeId: row.volume_id } : {}),
       versionCount: chapterVersionCounts.get(row.id) ?? content.versionCount ?? 0,
     });
   }
@@ -189,6 +205,10 @@ export default async function ProjectDetailPage({
     currentChapterNumber && chapters.some((chapter) => chapter.chapterNumber === currentChapterNumber)
       ? currentChapterNumber
       : defaultChapterNumber;
+  const visibleChapter = chapters.find((chapter) => chapter.chapterNumber === visibleChapterNumber);
+  const volume = visibleChapter?.volumeId
+    ? volumes.get(visibleChapter.volumeId) ?? firstVolume
+    : firstVolume;
 
   const hasOutlinePrerequisites = Boolean(concept && bible && characters.length > 0);
   const setupStatus = {
