@@ -313,6 +313,8 @@ button:disabled {
 }
 
 .reader-page {
+  width: 100%;
+  min-width: 0;
   max-width: 760px;
   border: 1px solid rgba(75, 46, 29, 0.18);
   border-radius: 8px;
@@ -341,10 +343,12 @@ button:disabled {
 }
 
 .reader-page-body {
+  min-width: 0;
   padding: 28px;
   font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", "Songti SC", serif;
   font-size: 1.06rem;
   line-height: 2;
+  overflow-wrap: anywhere;
 }
 
 .section-tabs {
@@ -1421,6 +1425,7 @@ button:disabled {
   }
 
   .interactive-reader-main .reader-page {
+    width: 100%;
     max-width: none;
   }
 
