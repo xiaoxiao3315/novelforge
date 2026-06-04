@@ -136,6 +136,7 @@ export function ChapterEndDecision({
     : decision
       ? "继续选择"
       : "生成选择";
+  const dockStatusLabel = hasSavedDecision ? "已选择" : decision ? "已生成" : "待生成";
 
   async function generateDecision() {
     setIsOpen(true);
@@ -274,7 +275,7 @@ export function ChapterEndDecision({
           onClick={openDecisionDock}
           type="button"
         >
-          <span>命运分歧</span>
+          <span>命运分歧 · {dockStatusLabel}</span>
           <strong>{isGenerating ? "生成中..." : dockButtonTitle}</strong>
         </button>
       </div>
@@ -287,7 +288,7 @@ export function ChapterEndDecision({
         <div className="decision-panel-header">
           <div>
             <BookBadge tone="warning">命运分歧</BookBadge>
-            <h3 className="mt-3 font-serif text-2xl font-black text-[var(--ink)]">
+            <h3 className="decision-panel-title mt-3 font-serif text-2xl font-black text-[var(--ink)]">
               读完之后，选一条路
             </h3>
             <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
@@ -360,7 +361,7 @@ export function ChapterEndDecision({
                   <span className="block text-sm leading-6 text-[var(--muted)]">
                     {option.description}
                   </span>
-                  <span className="block text-xs leading-5 text-[var(--muted)]">
+                  <span className="decision-option-effects block text-xs leading-5 text-[var(--muted)]">
                     回声：{option.expectedEffects.join("；")}
                   </span>
                 </span>
