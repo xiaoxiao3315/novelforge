@@ -491,8 +491,24 @@ function ProjectReaderShellLayout({
 
   return (
     <section className="interactive-reader-shell">
-      <aside className="interactive-reader-sidebar">
+      <div className="reader-mobile-topbar">
+        <div className="reader-mobile-current">
+          <span>{modeLabel}</span>
+          <strong>
+            {currentChapter
+              ? `第 ${currentChapter.chapterNumber} 章 · ${currentChapter.title}`
+              : "章节尚未铺开"}
+          </strong>
+        </div>
+        <a className="reader-mobile-directory-button" href="#chapter-directory">
+          章节目录
+        </a>
+      </div>
+      <aside className="interactive-reader-sidebar" id="chapter-directory">
         <PaperPanel className="reader-sidebar-panel reader-sidebar-unified p-4">
+          <div className="reader-sidebar-mobile-close">
+            <a href="#chapter-reader">回到正文</a>
+          </div>
           <div className="reader-sidebar-project">
             <div className="flex items-start gap-3">
               <div className="reader-sidebar-cover" aria-hidden="true">

@@ -139,6 +139,101 @@ export function ChapterEndDecision({
       : "生成选择";
   const dockStatusLabel = hasSavedDecision ? "已选择" : decision ? "已生成" : "待生成";
 
+  const nextChapterActionDisabled =
+    isGeneratingNextChapter ||
+    isSaving ||
+    !hasNextChapter ||
+    !nextChapterNumber ||
+    !hasEnoughNextChapterCredits ||
+    hasPendingChoice;
+  const chapterEndTitle = hasSavedDecision
+    ? "命运已落定"
+    : decision
+      ? "先选择命运"
+      : "章末继续阅读";
+  const chapterEndBody = hasSavedDecision
+    ? "可以沿着这条命运进入下一章。"
+    : decision
+      ? "选定一个方向并点击“做出选择”，下一章才会沿这条路推进。"
+      : "可以先生成本章命运分歧，也可以按默认路线直接进入下一章。";
+  const nextChapterButtonLabel = isGeneratingNextChapter
+    ? nextChapterQualityMode === "quality"
+      ? "精修生成中..."
+      : "下一章生成中..."
+    : hasPendingChoice
+      ? "先确认新的选择"
+      : !decision
+        ? `按默认路线进入下一章 · ${nextChapterCost} 星火`
+      : `消耗 ${nextChapterCost} 星火进入下一章`;
+
+  function renderChapterEndContinuePanel() {
+    return (
+      <PaperPanel className="chapter-decision-continue-panel">
+        <div className="chapter-decision-continue-copy">
+          <BookBadge tone={hasSavedDecision ? "success" : decision ? "warning" : "paper"}>
+            {hasSavedDecision ? "可继续" : decision ? "待选择" : "可直接继续"}
+          </BookBadge>
+          <h3>{chapterEndTitle}</h3>
+          <p>{chapterEndBody}</p>
+        </div>
+
+        {hasNextChapter && nextChapterNumber ? (
+          <div className="chapter-decision-continue-controls">
+            <ChapterQualityModeSelector
+              creditUnit="星火"
+              disabled={isGeneratingNextChapter || isSaving}
+              mode={nextChapterQualityMode}
+              onChange={setNextChapterQualityMode}
+            />
+            <div className="chapter-decision-continue-actions">
+              {!decision ? (
+                <button
+                  className="button-secondary min-h-11 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isGenerating || isSaving || isGeneratingNextChapter}
+                  onClick={generateDecision}
+                  type="button"
+                >
+                  {isGenerating ? "分歧生成中..." : "生成命运分歧"}
+                </button>
+              ) : null}
+              {!hasSavedDecision && decision ? (
+                <button
+                  className="button-primary min-h-11 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isGenerating || isSaving || isGeneratingNextChapter}
+                  onClick={() => setIsOpen(true)}
+                  type="button"
+                >
+                  先选择命运
+                </button>
+              ) : (
+                <button
+                  className="button-primary min-h-11 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={nextChapterActionDisabled}
+                  onClick={generateNextChapter}
+                  type="button"
+                >
+                  {nextChapterButtonLabel}
+                </button>
+              )}
+            </div>
+            {!decision ? (
+              <p className="chapter-decision-default-route-note">
+                按默认路线进入下一章会跳过本次手动命运选择，后续仍可回本章生成分歧。
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="chapter-decision-next-missing">需要先铺开后续章节。</p>
+        )}
+
+        {nextChapterCreditShortfallMessage ? (
+          <p className="chapter-decision-credit-warning">{nextChapterCreditShortfallMessage}</p>
+        ) : null}
+        {error ? <p className="chapter-decision-inline-error">{error}</p> : null}
+      </PaperPanel>
+    );
+  }
+
   useEffect(() => {
     if (!isOpen || typeof window === "undefined") {
       return;
@@ -287,7 +382,8 @@ export function ChapterEndDecision({
 
   if (!isOpen) {
     return (
-      <div className="chapter-decision-dock">
+      <>
+        <div className="chapter-decision-dock">
         <button
           className="chapter-decision-fab disabled:cursor-not-allowed disabled:opacity-70"
           disabled={isGenerating || isSaving || isGeneratingNextChapter}
@@ -297,13 +393,16 @@ export function ChapterEndDecision({
           <span>命运分歧 · {dockStatusLabel}</span>
           <strong>{isGenerating ? "生成中..." : dockButtonTitle}</strong>
         </button>
-      </div>
+        </div>
+        {renderChapterEndContinuePanel()}
+      </>
     );
   }
 
   return (
-    <div className="chapter-decision-dock chapter-decision-dock-open" ref={openPanelRef}>
-      <PaperPanel className="chapter-decision-panel chapter-decision-floating-panel mt-0 p-0">
+    <>
+      <div className="chapter-decision-dock chapter-decision-dock-open" ref={openPanelRef}>
+        <PaperPanel className="chapter-decision-panel chapter-decision-floating-panel mt-0 p-0">
         <div className="decision-panel-header">
           <div>
             <BookBadge tone="warning">命运分歧</BookBadge>
@@ -489,7 +588,9 @@ export function ChapterEndDecision({
             : "还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。"}
         </div>
       )}
-      </PaperPanel>
-    </div>
+        </PaperPanel>
+      </div>
+      {renderChapterEndContinuePanel()}
+    </>
   );
 }

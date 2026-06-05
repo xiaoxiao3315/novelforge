@@ -961,6 +961,73 @@ button:disabled {
   gap: 8px;
 }
 
+.chapter-decision-continue-panel {
+  display: grid;
+  gap: 16px;
+  margin-top: 18px;
+  border-color: rgba(73, 106, 66, 0.22);
+  background:
+    linear-gradient(90deg, rgba(73, 106, 66, 0.08), transparent 34px),
+    rgba(255, 253, 248, 0.94);
+  box-shadow: 0 14px 32px rgba(45, 27, 18, 0.08);
+  padding: 18px;
+}
+
+.chapter-decision-continue-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.chapter-decision-continue-copy h3 {
+  margin: 0;
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", serif;
+  font-size: 1.3rem;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.chapter-decision-continue-copy p,
+.chapter-decision-default-route-note,
+.chapter-decision-next-missing,
+.chapter-decision-credit-warning,
+.chapter-decision-inline-error {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 750;
+  line-height: 1.75;
+}
+
+.chapter-decision-continue-copy p,
+.chapter-decision-default-route-note,
+.chapter-decision-next-missing {
+  color: var(--muted);
+}
+
+.chapter-decision-continue-controls {
+  display: grid;
+  gap: 12px;
+}
+
+.chapter-decision-continue-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chapter-decision-continue-actions > button:only-child {
+  grid-column: 1 / -1;
+}
+
+.chapter-decision-credit-warning,
+.chapter-decision-inline-error {
+  border: 1px solid rgba(226, 182, 166, 0.86);
+  border-radius: 6px;
+  background: #fff4ef;
+  color: #7f2f1d;
+  padding: 9px 11px;
+}
+
 .interactive-reader-page .chapter-decision-panel .button-primary,
 .interactive-reader-page .chapter-decision-panel .button-secondary,
 .interactive-reader-page .chapter-continue-panel .button-primary,
@@ -1106,6 +1173,11 @@ button:disabled {
   gap: 28px;
   align-items: start;
   padding: 24px 0 56px;
+}
+
+.reader-mobile-topbar,
+.reader-sidebar-mobile-close {
+  display: none;
 }
 
 .interactive-reader-sidebar {
@@ -1418,10 +1490,96 @@ button:disabled {
     padding-top: 18px;
   }
 
+  .reader-mobile-topbar {
+    position: sticky;
+    top: 10px;
+    z-index: 18;
+    order: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 1px solid rgba(75, 46, 29, 0.12);
+    border-radius: 8px;
+    background: rgba(255, 253, 248, 0.94);
+    box-shadow: 0 10px 24px rgba(45, 27, 18, 0.08);
+    padding: 10px 12px;
+  }
+
+  .reader-mobile-current {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+  }
+
+  .reader-mobile-current span {
+    color: var(--gold-strong);
+    font-size: 0.72rem;
+    font-weight: 900;
+  }
+
+  .reader-mobile-current strong {
+    overflow: hidden;
+    color: var(--ink);
+    font-size: 0.92rem;
+    font-weight: 900;
+    line-height: 1.35;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-mobile-directory-button,
+  .reader-sidebar-mobile-close a {
+    display: inline-flex;
+    min-height: 38px;
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgba(184, 138, 61, 0.5);
+    border-radius: 6px;
+    background: rgba(255, 248, 234, 0.92);
+    color: var(--brown);
+    padding: 0 12px;
+    font-size: 0.82rem;
+    font-weight: 900;
+    text-decoration: none;
+  }
+
+  .interactive-reader-main {
+    order: 2;
+  }
+
   .interactive-reader-sidebar {
-    position: static;
-    max-height: none;
-    overflow: visible;
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    z-index: 50;
+    order: 3;
+    display: none;
+    max-height: min(78dvh, 680px);
+    overflow-y: auto;
+    padding: 0;
+    scrollbar-gutter: stable;
+    box-shadow: 0 24px 60px rgba(45, 27, 18, 0.2);
+  }
+
+  .interactive-reader-sidebar:target {
+    display: grid;
+  }
+
+  .interactive-reader-sidebar .reader-sidebar-panel {
+    max-height: inherit;
+    background: rgba(255, 253, 248, 0.98);
+    background-color: rgba(255, 253, 248, 0.98);
+    overflow-y: auto;
+  }
+
+  .reader-sidebar-mobile-close {
+    display: flex;
+    justify-content: flex-end;
+    border-bottom: 1px solid rgba(75, 46, 29, 0.1);
+    padding-bottom: 10px;
   }
 
   .interactive-reader-main .reader-page {
@@ -1458,6 +1616,10 @@ button:disabled {
 
   .decision-panel-actions {
     justify-content: flex-start;
+  }
+
+  .chapter-decision-continue-actions {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -1799,9 +1961,12 @@ button:disabled {
   }
 
   .interactive-reader-sidebar {
-    position: static;
-    max-height: none;
-    overflow: visible;
+    position: fixed;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    max-height: 76dvh;
+    overflow-y: auto;
     padding-right: 0;
   }
 
