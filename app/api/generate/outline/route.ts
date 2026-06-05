@@ -16,9 +16,11 @@ import {
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 import {
   buildOutlinePrompt,
+  normalizeOutlineGenerationOptions,
   OUTLINE_PROMPT_VERSION,
   validateOutlineGenerationSchema,
   type ChapterOutline,
+  type NormalizedOutlineGenerationOptions,
   type OutlinePromptInput,
   type VolumeOutline,
 } from "@/prompts/outline";
@@ -26,6 +28,10 @@ import {
 type GenerateOutlineBody = {
   projectId?: unknown;
   user_id?: unknown;
+  startChapterNumber?: unknown;
+  volumeNumber?: unknown;
+  chapterCount?: unknown;
+  maxChapterNumber?: unknown;
 };
 
 type ProjectRow = {
@@ -76,7 +82,7 @@ const OUTLINE_SYSTEM_PROMPT = [
   "不要 Markdown。不要代码块。不要解释。不要任何 JSON 前后的多余文本。",
   "首字符必须是 {，末字符必须是 }。",
   "严格匹配用户提供的目标 JSON 结构：顶层只能包含 volume 和 chapters。",
-  "只生成第一卷章节大纲，不得生成章节正文、TipTap、改写、续写、收费、社区或排行榜内容。",
+  "只生成用户指定卷和章节范围的章节大纲，不得生成章节正文、TipTap、改写、续写、收费、社区或排行榜内容。",
 ].join(" ");
 
 type JsonParseFailure = {
@@ -245,6 +251,19 @@ export async function POST(request: Request) {
     return validationError("缺少 project。");
   }
 
+  const outlineOptionsResult = normalizeOutlineGenerationOptions({
+    startChapterNumber: body.startChapterNumber,
+    volumeNumber: body.volumeNumber,
+    chapterCount: body.chapterCount,
+    maxChapterNumber: body.maxChapterNumber,
+  });
+
+  if (!outlineOptionsResult.ok) {
+    return validationError(outlineOptionsResult.error);
+  }
+
+  const outlineOptions: NormalizedOutlineGenerationOptions = outlineOptionsResult.options;
+
   const { data: project, error: projectError } = await supabase
     .from("projects")
     .select("id,title,description")
@@ -336,6 +355,7 @@ export async function POST(request: Request) {
 
   const logInput = {
     project: visibleProject,
+    outlineOptions,
     storyConfig: promptInput.config,
     storyConcept: concept,
     storyBible: bible,
@@ -354,7 +374,7 @@ export async function POST(request: Request) {
     });
   }
 
-  const userPrompt = buildOutlinePrompt(promptInput);
+  const userPrompt = buildOutlinePrompt(promptInput, outlineOptions);
   const parseFailures: JsonParseFailure[] = [];
   let parsed: unknown;
   let parsedSuccessfully = false;
@@ -407,7 +427,7 @@ export async function POST(request: Request) {
     return serverError(error);
   }
 
-  const validation = validateOutlineGenerationSchema(parsed);
+  const validation = validateOutlineGenerationSchema(parsed, outlineOptions);
 
   if (!validation.ok) {
     const error = `AI 输出 JSON 未通过章节大纲 schema 校验：${validation.error}`;
@@ -480,6 +500,7 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     volumeId: savedVolume.id,
+    outlineOptions,
     volume,
     chapters,
     credits: {

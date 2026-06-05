@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ChapterQualityModeSelector,
@@ -14,6 +14,7 @@ import {
   CHAPTER_DECISION_CUSTOM_CHOICE_LIMIT,
   hasSelectedChapterDecision,
   type ChapterDecision,
+  type ChapterDecisionGeneration,
   type ChapterDecisionOptionId,
 } from "@/prompts/chapter-decision";
 import {
@@ -24,6 +25,7 @@ import {
 type DecisionResponse = {
   chapterId?: string;
   decision?: ChapterDecision;
+  decisionGeneration?: ChapterDecisionGeneration;
   interactiveState?: InteractiveStoryState;
   stateChanges?: StoryStateChanges;
   error?: string;
@@ -42,6 +44,7 @@ type ChapterEndDecisionProps = {
   creditBalance: number | null;
   hasNextChapter: boolean;
   initialDecision?: ChapterDecision | null;
+  initialDecisionGeneration?: ChapterDecisionGeneration | null;
   initialInteractiveState?: InteractiveStoryState | null;
   initialStateChanges?: StoryStateChanges | null;
   nextChapterNumber?: number | null;
@@ -71,12 +74,16 @@ export function ChapterEndDecision({
   creditBalance,
   hasNextChapter,
   initialDecision,
+  initialDecisionGeneration,
   initialInteractiveState,
   initialStateChanges,
   nextChapterNumber,
   projectId,
 }: ChapterEndDecisionProps) {
   const [decision, setDecision] = useState(initialDecision ?? null);
+  const [decisionGeneration, setDecisionGeneration] = useState(
+    initialDecisionGeneration ?? null,
+  );
   const [interactiveState, setInteractiveState] = useState(initialInteractiveState ?? null);
   const [stateChanges, setStateChanges] = useState(initialStateChanges ?? null);
   const [selectedOptionId, setSelectedOptionId] = useState<ChapterDecisionOptionId | "">(
@@ -84,11 +91,13 @@ export function ChapterEndDecision({
   );
   const [customChoice, setCustomChoice] = useState(initialDecision?.customChoice ?? "");
   const [error, setError] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingNextChapter, setIsGeneratingNextChapter] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [nextChapterQualityMode, setNextChapterQualityMode] =
     useState<ChapterQualityMode>("normal");
+  const openPanelRef = useRef<HTMLDivElement | null>(null);
   const router = useRouter();
   const nextChapterCost = getChapterQualityModeCost(nextChapterQualityMode);
   const hasSavedDecision = decision ? hasSelectedChapterDecision(decision) : false;
@@ -123,8 +132,33 @@ export function ChapterEndDecision({
         cost: nextChapterCost,
         unit: "星火",
       });
+  const dockButtonTitle = hasSavedDecision
+    ? "查看命运"
+    : decision
+      ? "继续选择"
+      : "生成选择";
+  const dockStatusLabel = hasSavedDecision ? "已选择" : decision ? "已生成" : "待生成";
+
+  useEffect(() => {
+    if (!isOpen || typeof window === "undefined") {
+      return;
+    }
+
+    const shouldScrollToInlinePanel = window.matchMedia(
+      "(min-width: 981px) and (max-width: 2019px)",
+    ).matches;
+
+    if (!shouldScrollToInlinePanel) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      openPanelRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, [isOpen]);
 
   async function generateDecision() {
+    setIsOpen(true);
     setError("");
     setIsGenerating(true);
 
@@ -149,10 +183,19 @@ export function ChapterEndDecision({
     }
 
     setDecision(payload.decision);
+    setDecisionGeneration(payload.decisionGeneration ?? null);
     setStateChanges(payload.stateChanges ?? null);
     setSelectedOptionId(payload.decision.selectedOptionId ?? "");
     setCustomChoice(payload.decision.customChoice ?? "");
     router.refresh();
+  }
+
+  async function openDecisionDock() {
+    setIsOpen(true);
+
+    if (!decision && !isGenerating) {
+      await generateDecision();
+    }
   }
 
   async function saveDecision() {
@@ -242,31 +285,59 @@ export function ChapterEndDecision({
     router.refresh();
   }
 
-  return (
-    <PaperPanel className="chapter-decision-panel mt-0 p-0">
-      <div className="decision-panel-header">
-        <div>
-          <BookBadge tone="warning">命运分歧</BookBadge>
-          <h3 className="mt-3 font-serif text-2xl font-black text-[var(--ink)]">
-            读完之后，选一条路
-          </h3>
-          <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
-            做出选择后，下一章会沿用这次选择和当前故事状态继续推进。
-          </p>
-        </div>
+  if (!isOpen) {
+    return (
+      <div className="chapter-decision-dock">
         <button
-          className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+          className="chapter-decision-fab disabled:cursor-not-allowed disabled:opacity-70"
           disabled={isGenerating || isSaving || isGeneratingNextChapter}
-          onClick={generateDecision}
+          onClick={openDecisionDock}
           type="button"
         >
-          {isGenerating
-            ? "命运分歧生成中..."
-            : decision
-              ? "重新生成命运分歧"
-              : "开启命运分歧"}
+          <span>命运分歧 · {dockStatusLabel}</span>
+          <strong>{isGenerating ? "生成中..." : dockButtonTitle}</strong>
         </button>
       </div>
+    );
+  }
+
+  return (
+    <div className="chapter-decision-dock chapter-decision-dock-open" ref={openPanelRef}>
+      <PaperPanel className="chapter-decision-panel chapter-decision-floating-panel mt-0 p-0">
+        <div className="decision-panel-header">
+          <div>
+            <BookBadge tone="warning">命运分歧</BookBadge>
+            <h3 className="decision-panel-title mt-3 font-serif text-2xl font-black text-[var(--ink)]">
+              读完之后，选一条路
+            </h3>
+            <p className="mt-2 text-sm leading-7 text-[var(--muted)]">
+              做出选择后，下一章会沿用这次选择和当前故事状态继续推进。
+            </p>
+          </div>
+          <div className="decision-panel-actions">
+            <button
+              aria-label="收起命运分歧"
+              className="chapter-decision-close"
+              disabled={isGenerating || isSaving || isGeneratingNextChapter}
+              onClick={() => setIsOpen(false)}
+              type="button"
+            >
+              ×
+            </button>
+            <button
+              className="button-secondary decision-quiet-button min-h-10 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={isGenerating || isSaving || isGeneratingNextChapter}
+              onClick={generateDecision}
+              type="button"
+            >
+              {isGenerating
+                ? "命运分歧生成中..."
+                : decision
+                  ? "重新生成命运分歧"
+                  : "开启命运分歧"}
+            </button>
+          </div>
+        </div>
 
       {error ? (
         <p className="mt-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
@@ -309,7 +380,7 @@ export function ChapterEndDecision({
                   <span className="block text-sm leading-6 text-[var(--muted)]">
                     {option.description}
                   </span>
-                  <span className="block text-xs leading-5 text-[var(--muted)]">
+                  <span className="decision-option-effects block text-xs leading-5 text-[var(--muted)]">
                     回声：{option.expectedEffects.join("；")}
                   </span>
                 </span>
@@ -413,9 +484,12 @@ export function ChapterEndDecision({
         </div>
       ) : (
         <div className="mt-5 rounded-md border border-dashed border-[var(--line)] bg-[rgba(255,248,234,0.68)] p-4 text-sm leading-7 text-[var(--muted)]">
-          还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。
+          {decisionGeneration?.status === "failed"
+            ? "命运分歧自动生成失败。可以点击上方按钮重试，本章正文不会被改写。"
+            : "还没有命运分歧。读完正文后点击“开启命运分歧”，会出现 A/B/C 三个方向，也可以写下自定义命运。"}
         </div>
       )}
-    </PaperPanel>
+      </PaperPanel>
+    </div>
   );
 }

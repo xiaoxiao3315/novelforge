@@ -8,12 +8,26 @@ import {
 } from "@/lib/credits";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import {
-  DEFAULT_REWRITE_SCORE_THRESHOLD,
+  DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
+  DEFAULT_FAST_REWRITE_SCORE_THRESHOLD,
   runChapterQualityPipeline,
   type ChapterQualityPipelineResult,
   type QualityPipelineModel,
 } from "@/lib/quality/pipeline";
 import type { ChapterQualityPromptContext, ChapterWritingPlan } from "@/lib/quality/types";
+import {
+  validateChapterCharacterDirection,
+  validateChapterFastGuidance,
+  validateChapterQualityCritique,
+  validateChapterWritingPlan,
+} from "@/lib/quality/validators";
+import {
+  buildChapterDecisionGenerationLogError,
+  buildChapterDecisionGenerationMetadata,
+  generateChapterDecision,
+  summarizeChapterDecisionGenerationFailures,
+  type ChapterDecisionGenerationResult,
+} from "@/lib/interactive/chapter-decision-generation";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -31,9 +45,14 @@ import {
   DEFAULT_CHAPTER_WORD_TARGET,
   EMPTY_CHAPTER_INTERVENTION,
   type ChapterIntervention,
+  type ChapterContent,
   type ChapterPromptInput,
 } from "@/prompts/chapter";
-import { normalizeChapterDecision } from "@/prompts/chapter-decision";
+import {
+  CHAPTER_DECISION_PROMPT_VERSION,
+  normalizeChapterDecision,
+  type ChapterDecisionPromptInput,
+} from "@/prompts/chapter-decision";
 import {
   buildChapterSummary,
   buildChapterSummaryPrompt,
@@ -57,6 +76,10 @@ import {
   buildChapterCharacterDirectionPrompt,
   CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
 } from "@/prompts/chapter-character-direction";
+import {
+  buildChapterFastGuidancePrompt,
+  CHAPTER_FAST_GUIDANCE_SYSTEM_PROMPT,
+} from "@/prompts/chapter-fast-guidance";
 import { buildChapterPlanPrompt, CHAPTER_PLAN_SYSTEM_PROMPT } from "@/prompts/chapter-plan";
 import {
   buildChapterRewritePrompt,
@@ -70,6 +93,11 @@ type GenerateChapterBody = {
   chapterNumber?: unknown;
   intervention?: unknown;
   qualityMode?: unknown;
+  generationSource?: unknown;
+  batchRunId?: unknown;
+  routeMode?: unknown;
+  routeRevision?: unknown;
+  routeSnapshotHash?: unknown;
   user_id?: unknown;
 };
 
@@ -110,6 +138,7 @@ type VolumeRow = {
 
 type ChapterRow = {
   id: string;
+  volume_id: string | null;
   content: unknown;
   chapter_number: number;
   title: string;
@@ -138,8 +167,11 @@ type GenerationLogIdRow = {
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
+const CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
 const CHAPTER_SUMMARY_TEMPERATURE = 0.1;
+const CHAPTER_FAST_GUIDANCE_MAX_TOKENS = 3400;
+const CHAPTER_FAST_GUIDANCE_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_PLAN_MAX_TOKENS = 2600;
 const CHAPTER_QUALITY_PLAN_TEMPERATURE = 0.1;
 const CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS = 2500;
@@ -191,9 +223,20 @@ type SummaryRepairLog = {
 
 type ChapterGenerationQualityMode = "normal" | "quality";
 
+type BatchChapterRouteMetadata = {
+  generationSource: "batch-20";
+  batchRunId?: string;
+  routeMode: "default";
+  routeRevision?: string;
+  routeSnapshotHash?: string;
+  qualityMode: "normal";
+  isDefaultRoute: true;
+};
+
 type ChapterDraftQualityMetadata = {
   mode: "quality-v1";
   status: ChapterQualityPipelineResult["status"];
+  qualityStrategy?: string;
   plan?: ChapterWritingPlan;
   characterDirection?: ChapterQualityPipelineResult["characterDirection"];
   critique: {
@@ -203,6 +246,8 @@ type ChapterDraftQualityMetadata = {
   rewriteApplied: boolean;
   rewritePolicy: ChapterQualityPipelineResult["metadata"]["rewritePolicy"];
   rewriteScoreThreshold: number;
+  criticalRewriteScoreThreshold?: number;
+  rewriteDecisionReason?: string;
   promptVersions: ChapterQualityPipelineResult["metadata"]["promptVersions"];
   steps: ChapterQualityPipelineResult["steps"];
 };
@@ -251,6 +296,101 @@ function normalizeQualityMode(
   }
 
   return { ok: false, error: "qualityMode 必须是 normal 或 quality。" };
+}
+
+function readOptionalMetadataString(
+  value: unknown,
+  field: keyof Pick<
+    GenerateChapterBody,
+    "batchRunId" | "routeRevision" | "routeSnapshotHash"
+  >,
+  maxLength: number,
+): { ok: true; value?: string } | { ok: false; error: string } {
+  if (value === undefined || value === null) {
+    return { ok: true };
+  }
+
+  if (typeof value !== "string") {
+    return { ok: false, error: `${field} must be a string.` };
+  }
+
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return { ok: true };
+  }
+
+  if (trimmed.length > maxLength) {
+    return { ok: false, error: `${field} cannot exceed ${maxLength} characters.` };
+  }
+
+  return { ok: true, value: trimmed };
+}
+
+function parseBatchRouteMetadata(
+  body: GenerateChapterBody,
+): { ok: true; metadata: BatchChapterRouteMetadata | null } | { ok: false; error: string } {
+  const hasBatchMetadata =
+    body.generationSource !== undefined ||
+    body.batchRunId !== undefined ||
+    body.routeMode !== undefined ||
+    body.routeRevision !== undefined ||
+    body.routeSnapshotHash !== undefined;
+
+  if (!hasBatchMetadata) {
+    return { ok: true, metadata: null };
+  }
+
+  if (body.generationSource !== "batch-20") {
+    return { ok: false, error: "batch metadata requires generationSource=batch-20." };
+  }
+
+  if (body.qualityMode !== "normal") {
+    return { ok: false, error: "batch-20 chapter generation requires qualityMode=normal." };
+  }
+
+  if (
+    body.routeMode !== undefined &&
+    body.routeMode !== null &&
+    body.routeMode !== "default"
+  ) {
+    return { ok: false, error: "routeMode must be default." };
+  }
+
+  const batchRunId = readOptionalMetadataString(body.batchRunId, "batchRunId", 120);
+
+  if (!batchRunId.ok) {
+    return batchRunId;
+  }
+
+  const routeRevision = readOptionalMetadataString(body.routeRevision, "routeRevision", 120);
+
+  if (!routeRevision.ok) {
+    return routeRevision;
+  }
+
+  const routeSnapshotHash = readOptionalMetadataString(
+    body.routeSnapshotHash,
+    "routeSnapshotHash",
+    160,
+  );
+
+  if (!routeSnapshotHash.ok) {
+    return routeSnapshotHash;
+  }
+
+  return {
+    ok: true,
+    metadata: {
+      generationSource: "batch-20",
+      ...(batchRunId.value ? { batchRunId: batchRunId.value } : {}),
+      routeMode: "default",
+      ...(routeRevision.value ? { routeRevision: routeRevision.value } : {}),
+      ...(routeSnapshotHash.value ? { routeSnapshotHash: routeSnapshotHash.value } : {}),
+      qualityMode: "normal",
+      isDefaultRoute: true,
+    },
+  };
 }
 
 function parseJsonObject(text: string) {
@@ -337,6 +477,101 @@ function parseSummaryJsonObject(text: string) {
 
     return JSON.parse(escapeControlCharactersInJsonStrings(trimmed)) as unknown;
   }
+}
+
+type QualityJsonValidationResult = { ok: true } | { ok: false; error: string };
+
+type QualityJsonValidator = (value: unknown) => QualityJsonValidationResult;
+
+function buildQualityJsonRetryPrompt({
+  label,
+  originalPrompt,
+  validationError,
+  rawPreview,
+}: {
+  label: string;
+  originalPrompt: string;
+  validationError: string;
+  rawPreview: string;
+}) {
+  return [
+    `The previous ${label} response was not valid JSON for this schema.`,
+    `Error: ${validationError}`,
+    "",
+    `Previous raw output preview:`,
+    rawPreview,
+    "",
+    "Regenerate the same result now.",
+    "Return only one valid JSON object.",
+    "Do not use Markdown or code fences.",
+    "Do not add explanations before or after the JSON.",
+    "Ensure every array item is separated by a comma and all strings are properly escaped.",
+    "",
+    "Original task:",
+    originalPrompt,
+  ].join("\n");
+}
+
+async function generateQualityJsonWithRetry({
+  label,
+  systemPrompt,
+  userPrompt,
+  maxTokens,
+  temperature,
+  validate,
+}: {
+  label: string;
+  systemPrompt: string;
+  userPrompt: string;
+  maxTokens: number;
+  temperature: number;
+  validate?: QualityJsonValidator;
+}) {
+  let prompt = userPrompt;
+  let lastError = "";
+  let lastRawPreview = "";
+
+  for (let attempt = 1; attempt <= CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS; attempt += 1) {
+    const result = await generateDeepSeekJson({
+      systemPrompt,
+      userPrompt: prompt,
+      maxTokens,
+      temperature,
+    });
+
+    if (!result.outputText) {
+      lastError = `DeepSeek ${label} response is empty.`;
+      lastRawPreview = "";
+    } else {
+      lastRawPreview = result.outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH);
+
+      try {
+        const parsed = parseSummaryJsonObject(result.outputText);
+        const validation = validate?.(parsed);
+
+        if (!validation || validation.ok) {
+          return parsed;
+        }
+
+        lastError = validation.error;
+      } catch (error) {
+        lastError = getErrorMessage(error);
+      }
+    }
+
+    if (attempt < CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS) {
+      prompt = buildQualityJsonRetryPrompt({
+        label,
+        originalPrompt: userPrompt,
+        validationError: lastError,
+        rawPreview: lastRawPreview,
+      });
+    }
+  }
+
+  throw new Error(
+    `DeepSeek ${label} JSON failed after ${CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS} attempts: ${lastError}`,
+  );
 }
 
 function buildSummaryJsonParseFailure(
@@ -548,6 +783,130 @@ function buildPromptInput(
   };
 }
 
+function formatDecisionSummaryText(chapter: ReturnType<typeof buildPreviousChapterContext>) {
+  if (chapter.summary) {
+    return [
+      ...chapter.summary.keyEvents,
+      ...chapter.summary.characterStateChanges,
+      ...chapter.summary.unresolvedQuestions,
+    ].join("；");
+  }
+
+  return chapter.draftExcerpt;
+}
+
+function buildDecisionPreviousChapters(
+  previousChapters: ReturnType<typeof buildPreviousChapterContext>[],
+): ChapterDecisionPromptInput["previousChapters"] {
+  return previousChapters.map((chapter) => ({
+    ...chapter,
+    summaryText: formatDecisionSummaryText(chapter),
+  }));
+}
+
+function buildDecisionPromptInput({
+  bible,
+  chapter,
+  characters,
+  config,
+  concept,
+  currentChapterBody,
+  previousChapters,
+  project,
+  volume,
+}: {
+  bible: StoryBible;
+  chapter: ChapterOutline;
+  characters: CharacterCard[];
+  config: StoryConfigRow;
+  concept: StoryConcept;
+  currentChapterBody?: string | null;
+  previousChapters: ReturnType<typeof buildPreviousChapterContext>[];
+  project: ProjectRow;
+  volume: VolumeOutline;
+}): ChapterDecisionPromptInput {
+  return {
+    project: {
+      title: project.title,
+      description: project.description,
+    },
+    config: buildStoryConfigPromptData(config),
+    concept,
+    bible,
+    characters,
+    volume,
+    chapter,
+    previousChapters: buildDecisionPreviousChapters(previousChapters),
+    currentChapterBody: currentChapterBody ?? null,
+  };
+}
+
+function buildDecisionGenerationSummary(result: ChapterDecisionGenerationResult | null) {
+  if (!result) {
+    return null;
+  }
+
+  if (result.ok) {
+    return {
+      status: "success" as const,
+      question: result.decision.question,
+      optionLabels: result.decision.options.map((option) => `${option.id}. ${option.label}`),
+      failedAttempts: result.failures.length,
+    };
+  }
+
+  return {
+    status: "failed" as const,
+    error: result.error,
+    failures: summarizeChapterDecisionGenerationFailures(result.failures),
+  };
+}
+
+function withFreshInteractiveDecisionContent({
+  baseContent,
+  decisionResult,
+}: {
+  baseContent: ChapterContent;
+  decisionResult: ChapterDecisionGenerationResult | null;
+}): ChapterContent {
+  const contentWithoutOldDecision = { ...baseContent };
+  delete contentWithoutOldDecision.decision;
+  delete contentWithoutOldDecision.decisionGeneration;
+  delete contentWithoutOldDecision.stateChanges;
+
+  if (!decisionResult) {
+    return contentWithoutOldDecision;
+  }
+
+  if (decisionResult.ok) {
+    return {
+      ...contentWithoutOldDecision,
+      decision: decisionResult.decision,
+      decisionGeneration: buildChapterDecisionGenerationMetadata({
+        source: "auto-chapter-generation",
+      }),
+    };
+  }
+
+  return {
+    ...contentWithoutOldDecision,
+    decisionGeneration: buildChapterDecisionGenerationMetadata({
+      error: decisionResult.error,
+      source: "auto-chapter-generation",
+    }),
+  };
+}
+
+function withoutStaleRouteMetadata(content: ChapterContent): ChapterContent {
+  const nextContent = { ...content };
+
+  delete nextContent.routeMetadata;
+  delete nextContent.needsRegeneration;
+  delete nextContent.stale;
+
+  return nextContent;
+}
+
 function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
   return {
     storyConfig: input.config,
@@ -568,33 +927,35 @@ function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPr
 
 function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPipelineModel {
   return {
+    async generateGuidance(input) {
+      return generateQualityJsonWithRetry({
+        label: "fast chapter guidance",
+        systemPrompt: CHAPTER_FAST_GUIDANCE_SYSTEM_PROMPT,
+        userPrompt: buildChapterFastGuidancePrompt(input),
+        maxTokens: CHAPTER_FAST_GUIDANCE_MAX_TOKENS,
+        temperature: CHAPTER_FAST_GUIDANCE_TEMPERATURE,
+        validate: validateChapterFastGuidance,
+      });
+    },
     async generatePlan(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "chapter plan",
         systemPrompt: CHAPTER_PLAN_SYSTEM_PROMPT,
         userPrompt: buildChapterPlanPrompt(input),
         maxTokens: CHAPTER_QUALITY_PLAN_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_PLAN_TEMPERATURE,
+        validate: validateChapterWritingPlan,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek chapter plan response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateCharacterDirection(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "character direction",
         systemPrompt: CHAPTER_CHARACTER_DIRECTION_SYSTEM_PROMPT,
         userPrompt: buildChapterCharacterDirectionPrompt(input),
         maxTokens: CHAPTER_QUALITY_CHARACTER_DIRECTION_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_CHARACTER_DIRECTION_TEMPERATURE,
+        validate: validateChapterCharacterDirection,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek character direction response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateDraft(input) {
       const result = await generateDeepSeekText({
@@ -611,18 +972,14 @@ function createQualityPipelineModel(promptInput: ChapterPromptInput): QualityPip
       return cleanChapterBody(result.outputText);
     },
     async generateCritique(input) {
-      const result = await generateDeepSeekJson({
+      return generateQualityJsonWithRetry({
+        label: "quality critique",
         systemPrompt: CHAPTER_CRITIQUE_SYSTEM_PROMPT,
         userPrompt: buildChapterCritiquePrompt(input),
         maxTokens: CHAPTER_QUALITY_CRITIQUE_MAX_TOKENS,
         temperature: CHAPTER_QUALITY_CRITIQUE_TEMPERATURE,
+        validate: validateChapterQualityCritique,
       });
-
-      if (!result.outputText) {
-        throw new Error("DeepSeek quality critique response is empty.");
-      }
-
-      return parseSummaryJsonObject(result.outputText);
     },
     async generateRewrite(input) {
       const result = await generateDeepSeekText({
@@ -651,6 +1008,9 @@ function buildQualityMetadata(
   return {
     mode: pipelineResult.metadata.mode,
     status: pipelineResult.status,
+    qualityStrategy: pipelineResult.metadata.promptVersions.guidance
+      ? "fast-guidance-v1"
+      : "multi-agent-v1",
     ...(pipelineResult.plan ? { plan: pipelineResult.plan } : {}),
     ...(pipelineResult.characterDirection
       ? { characterDirection: pipelineResult.characterDirection }
@@ -662,6 +1022,10 @@ function buildQualityMetadata(
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    criticalRewriteScoreThreshold: pipelineResult.metadata.criticalRewriteScoreThreshold,
+    ...(pipelineResult.metadata.rewriteDecisionReason
+      ? { rewriteDecisionReason: pipelineResult.metadata.rewriteDecisionReason }
+      : {}),
     promptVersions: buildQualityPromptVersions(pipelineResult),
     steps: pipelineResult.steps,
   };
@@ -728,6 +1092,8 @@ function summarizeQualityPipelineResult(pipelineResult: ChapterQualityPipelineRe
     rewriteApplied: pipelineResult.steps.rewrite === "success",
     rewritePolicy: pipelineResult.metadata.rewritePolicy,
     rewriteScoreThreshold: pipelineResult.metadata.rewriteScoreThreshold,
+    criticalRewriteScoreThreshold: pipelineResult.metadata.criticalRewriteScoreThreshold,
+    rewriteDecisionReason: pipelineResult.metadata.rewriteDecisionReason ?? null,
     promptVersions: buildQualityPromptVersions(pipelineResult),
   };
 }
@@ -770,6 +1136,13 @@ export async function POST(request: Request) {
     return validationError("生成章节正文时不能从前端传 user_id。");
   }
 
+  const batchRouteMetadataValidation = parseBatchRouteMetadata(body);
+
+  if (!batchRouteMetadataValidation.ok) {
+    return validationError(batchRouteMetadataValidation.error);
+  }
+
+  const batchRouteMetadata = batchRouteMetadataValidation.metadata;
   const qualityModeValidation = normalizeQualityMode(body.qualityMode);
 
   if (!qualityModeValidation.ok) {
@@ -864,7 +1237,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const baseLogInput = withQualityLogInput({ project: visibleProject, intervention }, qualityMode);
+  const baseLogInput = withQualityLogInput(
+    {
+      project: visibleProject,
+      intervention,
+      ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+    },
+    qualityMode,
+  );
 
   const { data: config, error: configError } = await supabase
     .from("story_configs")
@@ -943,31 +1323,10 @@ export async function POST(request: Request) {
     return validationError(error);
   }
 
-  const { data: volumeRow, error: volumeError } = await supabase
-    .from("volumes")
-    .select("content")
-    .eq("project_id", projectId)
-    .order("volume_number", { ascending: true })
-    .limit(1)
-    .maybeSingle<VolumeRow>();
-
-  if (volumeError) {
-    await writeErrorLog(volumeError.message, baseLogInput);
-    return serverError(volumeError.message);
-  }
-
-  const volume = normalizeVolumeOutline(volumeRow?.content);
-
-  if (!volume) {
-    const error = "缺少 volume。";
-    await writeErrorLog(error, baseLogInput);
-    return validationError(error);
-  }
-
   let chapterQuery = supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId);
 
@@ -992,10 +1351,36 @@ export async function POST(request: Request) {
     return validationError(error);
   }
 
+  if (!chapterRow.volume_id) {
+    const error = "缺少 chapter volume。";
+    await writeErrorLog(error, baseLogInput, chapterRow.id);
+    return validationError(error);
+  }
+
+  const { data: volumeRow, error: volumeError } = await supabase
+    .from("volumes")
+    .select("content")
+    .eq("project_id", projectId)
+    .eq("id", chapterRow.volume_id)
+    .maybeSingle<VolumeRow>();
+
+  if (volumeError) {
+    await writeErrorLog(volumeError.message, baseLogInput, chapterRow.id);
+    return serverError(volumeError.message);
+  }
+
+  const volume = normalizeVolumeOutline(volumeRow?.content);
+
+  if (!volume) {
+    const error = "缺少 volume。";
+    await writeErrorLog(error, baseLogInput, chapterRow.id);
+    return validationError(error);
+  }
+
   const { data: previousRows, error: previousError } = await supabase
     .from("chapters")
     .select(
-      "id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
+      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
     )
     .eq("project_id", projectId)
     .lt("chapter_number", chapter.chapterNumber)
@@ -1025,14 +1410,7 @@ export async function POST(request: Request) {
             : null,
         )
       : null;
-  const currentDecision =
-    projectMode === "interactive"
-      ? normalizeChapterDecision(
-          isRecord(chapterRow.content)
-            ? (chapterRow.content as { decision?: unknown }).decision
-            : null,
-        )
-      : null;
+  const currentDecision = null;
   const interactiveState =
     projectMode === "interactive" && isRecord(config.config_json)
       ? normalizeInteractiveStoryState(
@@ -1067,6 +1445,7 @@ export async function POST(request: Request) {
     previousDecision,
     currentDecision,
     interactiveState,
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
   };
   const creditOperation =
     qualityMode === "quality" ? "generate_chapter_quality" : "generate_chapter";
@@ -1085,9 +1464,9 @@ export async function POST(request: Request) {
       storyContext: buildChapterQualityContext(promptInput),
       draftSource: "generate",
       rewritePolicy: "score-threshold",
-      rewriteScoreThreshold: DEFAULT_REWRITE_SCORE_THRESHOLD,
-      enablePlanning: true,
-      enableCharacterDirection: true,
+      rewriteScoreThreshold: DEFAULT_FAST_REWRITE_SCORE_THRESHOLD,
+      criticalRewriteScoreThreshold: DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
+      enableFastGuidance: true,
     } satisfies Parameters<typeof runChapterQualityPipeline>[0];
 
     qualityPipelineResult = await runChapterQualityPipeline(
@@ -1137,7 +1516,11 @@ export async function POST(request: Request) {
   }
 
   const baseDraft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
-  const draft = qualityMetadata ? { ...baseDraft, quality: qualityMetadata } : baseDraft;
+  const draft = {
+    ...baseDraft,
+    ...(qualityMetadata ? { quality: qualityMetadata } : {}),
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+  };
   const summaryLogInput = {
     project: visibleProject,
     chapter,
@@ -1145,6 +1528,7 @@ export async function POST(request: Request) {
     intervention,
     draft,
     body: outputText,
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
     ...(qualityMode === "quality"
       ? {
           qualityMode,
@@ -1154,6 +1538,23 @@ export async function POST(request: Request) {
         }
       : {}),
   };
+  const shouldGenerateAutoDecision = false;
+  const autoDecisionPromise =
+    shouldGenerateAutoDecision
+      ? generateChapterDecision(
+          buildDecisionPromptInput({
+            bible,
+            chapter,
+            characters,
+            config,
+            concept,
+            currentChapterBody: outputText,
+            previousChapters,
+            project: visibleProject,
+            volume,
+          }),
+        )
+      : null;
   const summaryUserPrompt = buildChapterSummaryPrompt({
     chapter,
     body: outputText,
@@ -1193,6 +1594,7 @@ export async function POST(request: Request) {
         chapterRow.id,
         buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(errorMessage);
     }
 
@@ -1278,6 +1680,7 @@ export async function POST(request: Request) {
           },
         },
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(error);
     } else {
       const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
@@ -1291,11 +1694,14 @@ export async function POST(request: Request) {
         chapterRow.id,
         buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
       );
+      await autoDecisionPromise?.catch(() => null);
       return serverError(error);
     }
   }
 
   const summary = buildChapterSummary(summaryValidation.summary, model);
+  const autoDecisionResult = autoDecisionPromise ? await autoDecisionPromise : null;
+  const autoDecisionSummary = buildDecisionGenerationSummary(autoDecisionResult);
   const { data: latestVersionRow, error: latestVersionError } = await supabase
     .from("chapter_versions")
     .select("version_number")
@@ -1346,13 +1752,29 @@ export async function POST(request: Request) {
     ...draft,
     versionId: savedVersion.id,
   };
-  const chapterContent = buildChapterContent(
+  const baseChapterContent = buildChapterContent(
     chapter,
     versionedDraft,
     summary,
     chapterRow.content,
     savedVersion.version_number,
   );
+  const routedBaseChapterContent = batchRouteMetadata
+    ? baseChapterContent
+    : withoutStaleRouteMetadata(baseChapterContent);
+  const decisionChapterContent =
+    projectMode === "interactive"
+      ? withFreshInteractiveDecisionContent({
+          baseContent: routedBaseChapterContent,
+          decisionResult: autoDecisionResult,
+        })
+      : routedBaseChapterContent;
+  const chapterContent = batchRouteMetadata
+    ? {
+        ...decisionChapterContent,
+        routeMetadata: batchRouteMetadata,
+      }
+    : decisionChapterContent;
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
@@ -1381,6 +1803,7 @@ export async function POST(request: Request) {
   const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
   const chapterLogOutput = {
     chapter: chapterContent,
+    ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),
@@ -1404,6 +1827,33 @@ export async function POST(request: Request) {
     return serverError(
       `章节正文和摘要已保存，但生成日志写入失败：${chapterLogError?.message || "未知错误"}`,
     );
+  }
+
+  if (autoDecisionResult) {
+    await supabase.from("generation_logs").insert({
+      project_id: visibleProject.id,
+      operation: "generate_chapter_decision",
+      target_type: "chapter",
+      target_id: savedChapter.id,
+      model,
+      prompt_version: CHAPTER_DECISION_PROMPT_VERSION,
+      input: {
+        project: visibleProject,
+        chapter,
+        previousChapters: buildDecisionPreviousChapters(previousChapters),
+        source: "auto-chapter-generation",
+        currentChapterBodyPreview: outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      },
+      ...(autoDecisionResult.ok
+        ? { output: { decision: autoDecisionResult.decision, source: "auto-chapter-generation" } }
+        : {
+            output: {
+              decisionGeneration: buildDecisionGenerationSummary(autoDecisionResult),
+              source: "auto-chapter-generation",
+            },
+            error: buildChapterDecisionGenerationLogError(autoDecisionResult),
+          }),
+    });
   }
 
   const { error: summaryLogError } = await supabase.from("generation_logs").insert({
@@ -1446,6 +1896,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     chapterId: savedChapter.id,
     chapter: chapterContent,
+    ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),

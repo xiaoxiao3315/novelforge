@@ -39,6 +39,20 @@ type ChapterRow = {
   estimated_words: number;
 };
 
+type FutureChapterRow = {
+  id: string;
+  content: unknown;
+  chapter_number: number;
+};
+
+type StaleChapterResult = {
+  count: number;
+  chapterNumbers: number[];
+  staleAt: string;
+};
+
+const STALE_REASON_INTERACTIVE_DECISION_SELECTED = "decision-changed";
+
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
@@ -57,6 +71,85 @@ function cleanText(value: unknown, maxLength: number) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasDefaultRouteMode(value: unknown) {
+  return isRecord(value) && value.routeMode === "default";
+}
+
+function markRouteMetadataStale(
+  route: Record<string, unknown>,
+  staleFromChapterNumber: number,
+  staleAt: string,
+) {
+  return {
+    ...route,
+    needsRegeneration: true,
+    staleReason: STALE_REASON_INTERACTIVE_DECISION_SELECTED,
+    staleFromChapterNumber,
+    staleAt,
+  };
+}
+
+function buildStaleChapterContent(
+  content: unknown,
+  staleFromChapterNumber: number,
+  staleAt: string,
+) {
+  if (!isRecord(content)) {
+    return null;
+  }
+
+  const routeMetadata = isRecord(content.routeMetadata) ? content.routeMetadata : null;
+  const legacyRoute = isRecord(content.route) ? content.route : null;
+  const draft = isRecord(content.draft) ? content.draft : null;
+  const draftRouteMetadata = isRecord(draft?.routeMetadata) ? draft.routeMetadata : null;
+  const legacyDraftRoute = isRecord(draft?.route) ? draft.route : null;
+  const shouldMarkContentRouteMetadata = hasDefaultRouteMode(routeMetadata);
+  const shouldMarkLegacyContentRoute = hasDefaultRouteMode(legacyRoute);
+  const shouldMarkDraftRouteMetadata = hasDefaultRouteMode(draftRouteMetadata);
+  const shouldMarkLegacyDraftRoute = hasDefaultRouteMode(legacyDraftRoute);
+
+  if (
+    !shouldMarkContentRouteMetadata &&
+    !shouldMarkLegacyContentRoute &&
+    !shouldMarkDraftRouteMetadata &&
+    !shouldMarkLegacyDraftRoute
+  ) {
+    return null;
+  }
+
+  return {
+    ...content,
+    needsRegeneration: true,
+    stale: true,
+    ...(shouldMarkContentRouteMetadata && routeMetadata
+      ? { routeMetadata: markRouteMetadataStale(routeMetadata, staleFromChapterNumber, staleAt) }
+      : {}),
+    ...(shouldMarkLegacyContentRoute && legacyRoute
+      ? { route: markRouteMetadataStale(legacyRoute, staleFromChapterNumber, staleAt) }
+      : {}),
+    ...(draft &&
+    (shouldMarkDraftRouteMetadata || shouldMarkLegacyDraftRoute)
+      ? {
+          draft: {
+            ...draft,
+            ...(shouldMarkDraftRouteMetadata && draftRouteMetadata
+              ? {
+                  routeMetadata: markRouteMetadataStale(
+                    draftRouteMetadata,
+                    staleFromChapterNumber,
+                    staleAt,
+                  ),
+                }
+              : {}),
+            ...(shouldMarkLegacyDraftRoute && legacyDraftRoute
+              ? { route: markRouteMetadataStale(legacyDraftRoute, staleFromChapterNumber, staleAt) }
+              : {}),
+          },
+        }
+      : {}),
+  };
 }
 
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
@@ -225,6 +318,52 @@ export async function POST(request: Request) {
     return serverError(configUpdateError.message);
   }
 
+  const staleAt = selectedDecision.selectedAt;
+  const { data: futureChapterRows, error: futureChaptersError } = await supabase
+    .from("chapters")
+    .select("id,content,chapter_number")
+    .eq("project_id", project.id)
+    .eq("user_id", user.id)
+    .gt("chapter_number", chapter.chapterNumber)
+    .order("chapter_number", { ascending: true })
+    .returns<FutureChapterRow[]>();
+
+  if (futureChaptersError) {
+    return serverError(futureChaptersError.message);
+  }
+
+  const staleChapters: StaleChapterResult = {
+    count: 0,
+    chapterNumbers: [],
+    staleAt,
+  };
+
+  for (const futureChapter of futureChapterRows ?? []) {
+    const staleContent = buildStaleChapterContent(
+      futureChapter.content,
+      chapter.chapterNumber,
+      staleAt,
+    );
+
+    if (!staleContent) {
+      continue;
+    }
+
+    const { error: staleUpdateError } = await supabase
+      .from("chapters")
+      .update({ content: staleContent })
+      .eq("id", futureChapter.id)
+      .eq("project_id", project.id)
+      .eq("user_id", user.id);
+
+    if (staleUpdateError) {
+      return serverError(staleUpdateError.message);
+    }
+
+    staleChapters.count += 1;
+    staleChapters.chapterNumbers.push(futureChapter.chapter_number);
+  }
+
   const { error: logError } = await supabase.from("generation_logs").insert({
     project_id: project.id,
     operation: "select_decision_state_change",
@@ -243,6 +382,7 @@ export async function POST(request: Request) {
     output: {
       stateChanges,
       interactiveState,
+      staleChapters,
     },
   });
 
@@ -255,5 +395,6 @@ export async function POST(request: Request) {
     decision: selectedDecision,
     stateChanges,
     interactiveState,
+    staleChapters,
   });
 }

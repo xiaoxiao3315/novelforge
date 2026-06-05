@@ -1,6 +1,7 @@
 import {
   CHAPTER_QUALITY_SCORE_KEYS,
   type ChapterCharacterDirection,
+  type ChapterFastGuidance,
   type ChapterQualityCritique,
   type ChapterQualityScoreKey,
   type ChapterQualityScores,
@@ -87,6 +88,10 @@ type ChapterPlanValidationResult =
 
 type ChapterCharacterDirectionValidationResult =
   | { ok: true; direction: ChapterCharacterDirection }
+  | { ok: false; error: string };
+
+type ChapterFastGuidanceValidationResult =
+  | { ok: true; guidance: ChapterFastGuidance }
   | { ok: false; error: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -530,4 +535,43 @@ export function normalizeChapterWritingPlan(value: unknown) {
 
 export function isChapterWritingPlan(value: unknown): value is ChapterWritingPlan {
   return validateChapterWritingPlan(value).ok;
+}
+
+export function validateChapterFastGuidance(
+  value: unknown,
+): ChapterFastGuidanceValidationResult {
+  if (!isRecord(value)) {
+    return { ok: false, error: "fast guidance must be a JSON object." };
+  }
+
+  const plan = normalizeChapterWritingPlan(value.plan ?? value.chapterPlan);
+
+  if (!plan) {
+    return { ok: false, error: "fast guidance missing valid plan." };
+  }
+
+  const characterDirection = normalizeChapterCharacterDirection(
+    value.characterDirection ?? value.chapterCharacterDirection,
+  );
+
+  if (!characterDirection) {
+    return { ok: false, error: "fast guidance missing valid characterDirection." };
+  }
+
+  return {
+    ok: true,
+    guidance: {
+      plan,
+      characterDirection,
+    },
+  };
+}
+
+export function normalizeChapterFastGuidance(value: unknown) {
+  const result = validateChapterFastGuidance(value);
+  return result.ok ? result.guidance : null;
+}
+
+export function isChapterFastGuidance(value: unknown): value is ChapterFastGuidance {
+  return validateChapterFastGuidance(value).ok;
 }

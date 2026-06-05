@@ -16,6 +16,8 @@ import type { ChapterOutline, VolumeOutline } from "@/prompts/outline";
 
 type ChapterDisplay = ChapterContent & {
   id?: string;
+  needsRegeneration?: boolean;
+  stale?: boolean;
 };
 
 type OutlineGeneratorProps = {
@@ -57,6 +59,45 @@ type SetOfficialResponse = {
   versionId?: string;
   official?: NonNullable<ChapterContent["official"]>;
   error?: string;
+};
+
+type BatchGenerationProgress = {
+  completed: number;
+  currentChapterNumber: number | null;
+  message: string;
+  skipped: number;
+  status: "idle" | "running" | "success" | "failed";
+  total: number;
+};
+
+type BatchChapterRequestMetadata = {
+  batchRunId: string;
+  generationSource: "batch-20";
+  routeMode: "default";
+  routeRevision: string;
+  routeSnapshotHash: string;
+};
+
+type OutlineRequestOptions = {
+  chapterCount?: number;
+  maxChapterNumber?: number;
+  startChapterNumber?: number;
+  volumeNumber?: number;
+};
+
+type OutlineRequestStateOptions = {
+  baseChapters?: ChapterDisplay[];
+  mergeChapters?: boolean;
+};
+
+const BATCH_CHAPTER_LIMIT = 20;
+const emptyBatchProgress: BatchGenerationProgress = {
+  completed: 0,
+  currentChapterNumber: null,
+  message: "",
+  skipped: 0,
+  status: "idle",
+  total: 0,
 };
 
 const volumeSections: Array<{
@@ -185,6 +226,123 @@ function chapterKey(chapter: Pick<ChapterDisplay, "chapterNumber">) {
   return String(chapter.chapterNumber);
 }
 
+function chapterNeedsRegeneration(chapter: ChapterDisplay | null | undefined) {
+  return Boolean(chapter?.needsRegeneration || chapter?.stale);
+}
+
+function hasReadableChapterBody(chapter: ChapterDisplay | null | undefined) {
+  return Boolean(
+    chapter &&
+      !chapterNeedsRegeneration(chapter) &&
+      (chapter.official?.body || chapter.draft?.body),
+  );
+}
+
+function getBatchStartChapterNumber(
+  chapters: ChapterDisplay[],
+  currentChapterNumber?: number | null,
+) {
+  if (typeof currentChapterNumber === "number") {
+    return currentChapterNumber + 1;
+  }
+
+  return chapters[0]?.chapterNumber ?? 1;
+}
+
+function getBatchDesiredChapterNumbers(
+  chapters: ChapterDisplay[],
+  currentChapterNumber?: number | null,
+) {
+  const startChapterNumber = getBatchStartChapterNumber(chapters, currentChapterNumber);
+
+  return Array.from(
+    { length: BATCH_CHAPTER_LIMIT },
+    (_, index) => startChapterNumber + index,
+  );
+}
+
+function getBatchTargetChapters(
+  chapters: ChapterDisplay[],
+  currentChapterNumber?: number | null,
+) {
+  const chapterByNumber = new Map(chapters.map((chapter) => [chapter.chapterNumber, chapter]));
+
+  return getBatchDesiredChapterNumbers(chapters, currentChapterNumber)
+    .map((chapterNumber) => chapterByNumber.get(chapterNumber))
+    .filter((chapter): chapter is ChapterDisplay => Boolean(chapter))
+    .filter((chapter) => !hasReadableChapterBody(chapter));
+}
+
+function getMissingBatchOutlineRanges(
+  chapters: ChapterDisplay[],
+  currentChapterNumber?: number | null,
+) {
+  const existingChapterNumbers = new Set(chapters.map((chapter) => chapter.chapterNumber));
+  const missingChapterNumbers = getBatchDesiredChapterNumbers(
+    chapters,
+    currentChapterNumber,
+  ).filter((chapterNumber) => !existingChapterNumbers.has(chapterNumber));
+  const volumeNumbers = new Set(
+    missingChapterNumbers.map((chapterNumber) => Math.ceil(chapterNumber / BATCH_CHAPTER_LIMIT)),
+  );
+
+  return [...volumeNumbers]
+    .sort((left, right) => left - right)
+    .map((volumeNumber) => ({
+      chapterCount: BATCH_CHAPTER_LIMIT,
+      startChapterNumber: (volumeNumber - 1) * BATCH_CHAPTER_LIMIT + 1,
+      volumeNumber,
+    }));
+}
+
+function getEstimatedBatchChapterCount(
+  chapters: ChapterDisplay[],
+  currentChapterNumber?: number | null,
+) {
+  const chapterByNumber = new Map(chapters.map((chapter) => [chapter.chapterNumber, chapter]));
+
+  return getBatchDesiredChapterNumbers(chapters, currentChapterNumber).filter((chapterNumber) => {
+    const chapter = chapterByNumber.get(chapterNumber);
+
+    return !chapter || !hasReadableChapterBody(chapter);
+  }).length;
+}
+
+function mergeChapterLists(
+  currentChapters: ChapterDisplay[],
+  incomingChapters: ChapterDisplay[],
+) {
+  const chapterMap = new Map<number, ChapterDisplay>();
+
+  for (const chapter of currentChapters) {
+    chapterMap.set(chapter.chapterNumber, chapter);
+  }
+
+  for (const chapter of incomingChapters) {
+    const existingChapter = chapterMap.get(chapter.chapterNumber);
+
+    chapterMap.set(
+      chapter.chapterNumber,
+      existingChapter
+        ? {
+            ...existingChapter,
+            ...chapter,
+            decision: existingChapter.decision,
+            decisionGeneration: existingChapter.decisionGeneration,
+            draft: existingChapter.draft,
+            id: existingChapter.id,
+            official: existingChapter.official,
+            stateChanges: existingChapter.stateChanges,
+            summary: existingChapter.summary,
+            versionCount: existingChapter.versionCount,
+          }
+        : chapter,
+    );
+  }
+
+  return [...chapterMap.values()].sort((left, right) => left.chapterNumber - right.chapterNumber);
+}
+
 function getInitialInterventions(chapters: ChapterDisplay[]) {
   return Object.fromEntries(
     chapters.map((chapter) => [
@@ -268,6 +426,9 @@ export function OutlineGenerator({
   const [error, setError] = useState("");
   const [setupStep, setSetupStep] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [batchProgress, setBatchProgress] =
+    useState<BatchGenerationProgress>(emptyBatchProgress);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
   const [settingOfficialChapterNumber, setSettingOfficialChapterNumber] = useState<number | null>(
     null,
@@ -332,6 +493,46 @@ export function OutlineGenerator({
     }
 
     return true;
+  }
+
+  async function requestOutline(
+    fallbackError: string,
+    outlineOptions: OutlineRequestOptions = {},
+    stateOptions: OutlineRequestStateOptions = {},
+  ) {
+    const response = await fetch("/api/generate/outline", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        projectId,
+        ...outlineOptions,
+      }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as OutlineResponse | null;
+
+    if (!response.ok || !payload?.volume || !payload.chapters) {
+      setError(formatUserFacingError(payload?.error, fallbackError));
+      return null;
+    }
+
+    const nextChapters = stateOptions.mergeChapters
+      ? mergeChapterLists(stateOptions.baseChapters ?? chapters, payload.chapters)
+      : payload.chapters;
+
+    if (!stateOptions.mergeChapters) {
+      setVolume(payload.volume);
+    }
+    setChapters(nextChapters);
+    setInterventions(getInitialInterventions(nextChapters));
+    setQualityModes(getInitialQualityModes(nextChapters));
+
+    return {
+      chapters: nextChapters,
+      volume: payload.volume,
+    };
   }
 
   async function generateReaderSetup() {
@@ -409,31 +610,18 @@ export function OutlineGenerator({
     setSetupStep(shouldBootstrapFirstChapter ? "正在铺开章节目录..." : "");
     setIsGenerating(true);
 
-    const response = await fetch("/api/generate/outline", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ projectId }),
-    });
+    const outlinePayload = await requestOutline("章节大纲生成失败，请稍后重试。");
 
-    const payload = (await response.json().catch(() => null)) as OutlineResponse | null;
-
-    if (!response.ok || !payload?.volume || !payload.chapters) {
+    if (!outlinePayload) {
       setIsGenerating(false);
       setSetupStep("");
-      setError(formatUserFacingError(payload?.error, "章节大纲生成失败，请稍后重试。"));
       return;
     }
 
-    setVolume(payload.volume);
-    setChapters(payload.chapters);
-    setInterventions(getInitialInterventions(payload.chapters));
-    setQualityModes(getInitialQualityModes(payload.chapters));
-
     if (shouldBootstrapFirstChapter) {
       const firstChapter =
-        payload.chapters.find((chapter) => chapter.chapterNumber === 1) ?? payload.chapters[0];
+        outlinePayload.chapters.find((chapter) => chapter.chapterNumber === 1) ??
+        outlinePayload.chapters[0];
 
       if (!firstChapter) {
         setIsGenerating(false);
@@ -459,7 +647,12 @@ export function OutlineGenerator({
 
   async function generateChapter(
     chapter: ChapterDisplay,
-    options: { navigateToChapter?: boolean; qualityMode?: ChapterQualityMode } = {},
+    options: {
+      batchMetadata?: BatchChapterRequestMetadata;
+      navigateToChapter?: boolean;
+      qualityMode?: ChapterQualityMode;
+      refresh?: boolean;
+    } = {},
   ) {
     const selectedQualityMode = options.qualityMode ?? qualityModes[chapterKey(chapter)] ?? "normal";
     const selectedChapterCost = getChapterGenerationCost(selectedQualityMode);
@@ -490,6 +683,7 @@ export function OutlineGenerator({
         chapterId: chapter.id,
         chapterNumber: chapter.chapterNumber,
         intervention: currentIntervention,
+        ...options.batchMetadata,
         qualityMode: selectedQualityMode,
       }),
     });
@@ -528,8 +722,168 @@ export function OutlineGenerator({
     if (options.navigateToChapter) {
       router.push(`/project/${projectId}?chapter=${generatedChapter.chapterNumber}#chapter-reader`);
     }
-    router.refresh();
+    if (options.refresh ?? true) {
+      router.refresh();
+    }
     return generatedChapter;
+  }
+
+  async function generateBatchChapters() {
+    if (!hasPrerequisites) {
+      setError("请先完成作品设定、故事圣经和角色卡。");
+      return;
+    }
+
+    if (isBatchGenerating || isGenerating || generatingChapterNumber !== null) {
+      return;
+    }
+
+    const initialMissingOutlineRanges = getMissingBatchOutlineRanges(
+      chapters,
+      currentChapterNumber,
+    );
+    const needsOutline = initialMissingOutlineRanges.length > 0;
+    const estimatedChapterCount = getEstimatedBatchChapterCount(chapters, currentChapterNumber);
+    const minimumCost =
+      outlineCost * initialMissingOutlineRanges.length + chapterCost * estimatedChapterCount;
+    const hasEnoughBatchStartCredits = creditBalance === null || creditBalance >= minimumCost;
+
+    if (!hasEnoughBatchStartCredits) {
+      setError(formatModeCreditShortfall(creditBalance ?? 0, minimumCost, isInteractive));
+      return;
+    }
+
+    setError("");
+    setIsBatchGenerating(true);
+    setBatchProgress({
+      ...emptyBatchProgress,
+      message: needsOutline ? "正在铺开章节目录..." : "正在准备预生成队列...",
+      status: "running",
+    });
+
+    try {
+      let workingChapters = chapters;
+
+      for (const [index, range] of initialMissingOutlineRanges.entries()) {
+        setSetupStep(`正在补齐第 ${range.startChapterNumber} 章起的大纲...`);
+        setBatchProgress({
+          ...emptyBatchProgress,
+          message: `正在补齐大纲 ${index + 1}/${initialMissingOutlineRanges.length}...`,
+          status: "running",
+        });
+
+        const outlinePayload = await requestOutline(
+          "章节目录生成失败，请稍后重试。",
+          {
+            chapterCount: range.chapterCount,
+            startChapterNumber: range.startChapterNumber,
+            volumeNumber: range.volumeNumber,
+          },
+          {
+            baseChapters: workingChapters,
+            mergeChapters: true,
+          },
+        );
+
+        if (!outlinePayload) {
+          setBatchProgress({
+            ...emptyBatchProgress,
+            message: "章节目录生成失败。",
+            status: "failed",
+          });
+          return;
+        }
+
+        workingChapters = outlinePayload.chapters;
+      }
+
+      const desiredChapterNumbers = getBatchDesiredChapterNumbers(
+        workingChapters,
+        currentChapterNumber,
+      );
+      const targetChapters = getBatchTargetChapters(workingChapters, currentChapterNumber);
+      const readableChapterNumbers = new Set(
+        workingChapters
+          .filter((chapter) => desiredChapterNumbers.includes(chapter.chapterNumber))
+          .filter((chapter) => hasReadableChapterBody(chapter))
+          .map((chapter) => chapter.chapterNumber),
+      );
+      const skipped = readableChapterNumbers.size;
+
+      if (targetChapters.length === 0) {
+        setBatchProgress({
+          ...emptyBatchProgress,
+          message: "后20章暂无需要预生成的章节。",
+          skipped,
+          status: "success",
+        });
+        router.refresh();
+        return;
+      }
+
+      const batchId = `reader-preload-${Date.now()}`;
+      const routeRevision = `default-after-${currentChapterNumber ?? 0}`;
+      const routeSnapshotHash = `${routeRevision}-${desiredChapterNumbers.join("-")}`;
+      let completed = 0;
+
+      for (const chapter of targetChapters) {
+        setBatchProgress({
+          completed,
+          currentChapterNumber: chapter.chapterNumber,
+          message: `正在生成第 ${chapter.chapterNumber} 章正文...`,
+          skipped,
+          status: "running",
+          total: targetChapters.length,
+        });
+
+        const generatedChapter = await generateChapter(chapter, {
+          batchMetadata: {
+            batchRunId: batchId,
+            generationSource: "batch-20",
+            routeMode: "default",
+            routeRevision,
+            routeSnapshotHash,
+          },
+          qualityMode: "normal",
+          refresh: false,
+        });
+
+        if (!generatedChapter) {
+          setBatchProgress({
+            completed,
+            currentChapterNumber: chapter.chapterNumber,
+            message: `第 ${chapter.chapterNumber} 章生成失败，已暂停。`,
+            skipped,
+            status: "failed",
+            total: targetChapters.length,
+          });
+          return;
+        }
+
+        completed += 1;
+        setBatchProgress({
+          completed,
+          currentChapterNumber: chapter.chapterNumber,
+          message: `已完成第 ${chapter.chapterNumber} 章。`,
+          skipped,
+          status: "running",
+          total: targetChapters.length,
+        });
+      }
+
+      setBatchProgress({
+        completed,
+        currentChapterNumber: null,
+        message: `已预生成 ${completed} 章正文。`,
+        skipped,
+        status: "success",
+        total: targetChapters.length,
+      });
+      router.refresh();
+    } finally {
+      setIsBatchGenerating(false);
+      setSetupStep("");
+    }
   }
 
   function updateQualityMode(chapter: ChapterDisplay, mode: ChapterQualityMode) {
@@ -604,6 +958,41 @@ export function OutlineGenerator({
   }
 
   if (isReaderSidebar) {
+    const batchDesiredChapterNumbers = getBatchDesiredChapterNumbers(
+      chapters,
+      currentChapterNumber,
+    );
+    const batchTargetChapters = getBatchTargetChapters(chapters, currentChapterNumber);
+    const batchMissingOutlineRanges = getMissingBatchOutlineRanges(
+      chapters,
+      currentChapterNumber,
+    );
+    const batchEstimatedChapterCount = getEstimatedBatchChapterCount(
+      chapters,
+      currentChapterNumber,
+    );
+    const batchNeedsOutline = batchMissingOutlineRanges.length > 0;
+    const batchMinimumCost =
+      outlineCost * batchMissingOutlineRanges.length + chapterCost * batchEstimatedChapterCount;
+    const batchHasWork = batchNeedsOutline || batchTargetChapters.length > 0;
+    const hasEnoughBatchStartCredits =
+      creditBalance === null || creditBalance >= batchMinimumCost;
+    const batchCreditShortfallMessage =
+      creditBalance === null || hasEnoughBatchStartCredits
+        ? ""
+        : formatModeCreditShortfall(creditBalance, batchMinimumCost, isInteractive);
+    const batchProgressPercent =
+      batchProgress.total > 0
+        ? Math.min(100, Math.round((batchProgress.completed / batchProgress.total) * 100))
+        : batchProgress.status === "success"
+          ? 100
+          : 0;
+    const batchRangeLabel =
+      batchDesiredChapterNumbers.length > 0
+        ? `后20章范围：第 ${batchDesiredChapterNumbers[0]} - ${
+            batchDesiredChapterNumbers[batchDesiredChapterNumbers.length - 1]
+          } 章`
+        : "当前后20章暂无章节目录。";
     const primaryActionCost = hasPrerequisites ? readerBootstrapCost : readerSetupCost;
     const primaryActionShortfallMessage = hasPrerequisites
       ? readerBootstrapCreditShortfallMessage
@@ -647,7 +1036,7 @@ export function OutlineGenerator({
           </div>
           <button
             className="button-secondary reader-sidebar-outline-action disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isGenerating || !hasEnoughPrimaryActionCredits}
+            disabled={isGenerating || isBatchGenerating || !hasEnoughPrimaryActionCredits}
             onClick={hasPrerequisites ? () => generateOutline() : generateReaderSetup}
             type="button"
           >
@@ -682,11 +1071,60 @@ export function OutlineGenerator({
           </div>
         ) : null}
 
+        <div className="reader-batch-actions mt-4">
+          <button
+            className="button-secondary reader-sidebar-outline-action disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={
+              isGenerating ||
+              isBatchGenerating ||
+              generatingChapterNumber !== null ||
+              !hasPrerequisites ||
+              !hasEnoughBatchStartCredits ||
+              !batchHasWork
+            }
+            onClick={generateBatchChapters}
+            type="button"
+          >
+            {isBatchGenerating ? batchProgress.message || "预生成中..." : "预生成后20章正文"}
+          </button>
+          <p className="mt-2 text-xs font-bold leading-5 text-[var(--muted)]">
+            {batchRangeLabel} 已有正文会跳过；需要重生的章节会重新生成，模式固定为 normal。
+          </p>
+          {batchCreditShortfallMessage ? (
+            <p className="mt-2 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-xs font-bold leading-5 text-[#7f2f1d]">
+              {batchCreditShortfallMessage}
+              <Link className="ml-1 underline" href="/account/credits">
+                {isInteractive ? "补充星火" : "补充额度"}
+              </Link>
+            </p>
+          ) : null}
+          {batchProgress.status !== "idle" ? (
+            <div className={`reader-batch-progress reader-batch-progress-${batchProgress.status}`}>
+              <div className="reader-batch-progress-head">
+                <span>{batchProgress.message}</span>
+                <span>
+                  {batchProgress.completed}/{batchProgress.total}
+                </span>
+              </div>
+              <div className="reader-batch-progress-track" aria-hidden="true">
+                <span style={{ width: `${batchProgressPercent}%` }} />
+              </div>
+              <p>
+                {batchProgress.currentChapterNumber
+                  ? `当前：第 ${batchProgress.currentChapterNumber} 章`
+                  : "当前：等待下一步"}
+                {batchProgress.skipped > 0 ? ` · 已跳过 ${batchProgress.skipped} 章` : ""}
+              </p>
+            </div>
+          ) : null}
+        </div>
+
         {chapters.length > 0 ? (
           <div className="reader-sidebar-chapters mt-4">
             {chapters.map((chapter) => {
               const isCurrent = chapter.chapterNumber === currentChapterNumber;
-              const hasReadableBody = Boolean(chapter.official?.body || chapter.draft?.body);
+              const needsRegeneration = chapterNeedsRegeneration(chapter);
+              const hasReadableBody = hasReadableChapterBody(chapter);
 
               return (
                 <a
@@ -706,7 +1144,13 @@ export function OutlineGenerator({
                       <span className="reader-sidebar-chapter-title">{chapter.title}</span>
                     </span>
                     <span className="reader-sidebar-chapter-status">
-                      {isCurrent ? "当前" : hasReadableBody ? "可阅读" : "待生成"}
+                      {needsRegeneration
+                        ? "需重生"
+                        : isCurrent
+                          ? "当前"
+                          : hasReadableBody
+                            ? "可阅读"
+                            : "待生成"}
                     </span>
                   </span>
                 </a>
@@ -739,7 +1183,7 @@ export function OutlineGenerator({
         </div>
         <button
           className="button-primary"
-          disabled={isGenerating || !hasPrerequisites || !hasEnoughOutlineCredits}
+          disabled={isGenerating || isBatchGenerating || !hasPrerequisites || !hasEnoughOutlineCredits}
           onClick={() => generateOutline()}
           type="button"
         >
@@ -847,6 +1291,7 @@ export function OutlineGenerator({
                     <button
                       className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={
+                        isBatchGenerating ||
                         generatingChapterNumber !== null ||
                         settingOfficialChapterNumber !== null ||
                         !hasEnoughSelectedChapterCredits
@@ -870,6 +1315,7 @@ export function OutlineGenerator({
                         disabled={
                           !chapter.draft.versionId ||
                           chapter.official?.versionId === chapter.draft.versionId ||
+                          isBatchGenerating ||
                           generatingChapterNumber !== null ||
                           settingOfficialChapterNumber !== null
                         }
@@ -919,7 +1365,7 @@ export function OutlineGenerator({
                                 ? "border-[var(--accent)] bg-[#eef4f2] text-[var(--accent-strong)]"
                                 : "border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--accent)]",
                             ].join(" ")}
-                            disabled={generatingChapterNumber !== null}
+                            disabled={isBatchGenerating || generatingChapterNumber !== null}
                             key={option.mode}
                             onClick={() => updateQualityMode(chapter, option.mode)}
                             role="radio"
@@ -969,7 +1415,7 @@ export function OutlineGenerator({
                         </span>
                         <textarea
                           className="min-h-20 resize-y rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
-                          disabled={generatingChapterNumber !== null}
+                          disabled={isBatchGenerating || generatingChapterNumber !== null}
                           maxLength={CHAPTER_INTERVENTION_LIMITS[field.key]}
                           onChange={(event) =>
                             updateIntervention(chapter, field.key, event.target.value)

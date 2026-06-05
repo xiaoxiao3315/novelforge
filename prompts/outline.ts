@@ -8,6 +8,33 @@ import type { StoryConcept } from "@/prompts/concept";
 export const OUTLINE_PROMPT_VERSION = "outline-v2";
 export const DEFAULT_OUTLINE_CHAPTER_COUNT = 20;
 export const DEFAULT_ESTIMATED_WORDS = 2500;
+export const MAX_OUTLINE_CHAPTER_NUMBER = 1000;
+export const MAX_OUTLINE_VOLUME_NUMBER = Math.ceil(
+  MAX_OUTLINE_CHAPTER_NUMBER / DEFAULT_OUTLINE_CHAPTER_COUNT,
+);
+
+export type RawOutlineGenerationOptions = {
+  startChapterNumber?: unknown;
+  volumeNumber?: unknown;
+  chapterCount?: unknown;
+  maxChapterNumber?: unknown;
+};
+
+export type NormalizedOutlineGenerationOptions = {
+  startChapterNumber: number;
+  volumeNumber: number;
+  chapterCount: number;
+  maxChapterNumber: number;
+  endChapterNumber: number;
+};
+
+export const DEFAULT_OUTLINE_GENERATION_OPTIONS: NormalizedOutlineGenerationOptions = {
+  startChapterNumber: 1,
+  volumeNumber: 1,
+  chapterCount: DEFAULT_OUTLINE_CHAPTER_COUNT,
+  maxChapterNumber: MAX_OUTLINE_CHAPTER_NUMBER,
+  endChapterNumber: DEFAULT_OUTLINE_CHAPTER_COUNT,
+};
 
 export type VolumeOutline = {
   volumeNumber: number;
@@ -61,32 +88,34 @@ const chapterTextFields = [
 const chapterSchemaKeys = ["chapterNumber", ...chapterTextFields, "estimatedWords"] as const;
 const chapterSchemaKeySet = new Set<string>(chapterSchemaKeys);
 
-const outlineJsonStructureExample = JSON.stringify(
-  {
-    volume: {
-      volumeNumber: 1,
-      title: "第一卷卷名",
-      summary: "第一卷摘要，说明开局处境、阶段目标、关键转折和卷末爆点。",
-      mainConflict: "第一卷主线冲突，必须贯穿 20 章并逐步升级。",
-      endingHook: "第一卷结尾钩子，为第二卷或后续正文留下强追读悬念。",
-    },
-    chapters: [
-      {
-        chapterNumber: 1,
-        title: "章节标题",
-        event: "本章发生的核心事件，不写正文，只写大纲。",
-        conflict: "本章主要冲突，说明阻力和代价。",
-        characterChange: "本章角色关系、心态或能力变化。",
-        highlight: "本章爽点 / 看点。",
-        foreshadowing: "本章埋下或回收的伏笔。",
-        endingHook: "本章结尾钩子。",
-        estimatedWords: 2500,
+function buildOutlineJsonStructureExample(options: NormalizedOutlineGenerationOptions) {
+  return JSON.stringify(
+    {
+      volume: {
+        volumeNumber: options.volumeNumber,
+        title: `第 ${options.volumeNumber} 卷卷名`,
+        summary: `第 ${options.volumeNumber} 卷摘要，说明阶段处境、阶段目标、关键转折和卷末爆点。`,
+        mainConflict: `第 ${options.volumeNumber} 卷主线冲突，必须贯穿第 ${options.startChapterNumber} 到 ${options.endChapterNumber} 章并逐步升级。`,
+        endingHook: `第 ${options.volumeNumber} 卷结尾钩子，为后续正文留下强追读悬念。`,
       },
-    ],
-  },
-  null,
-  2,
-);
+      chapters: [
+        {
+          chapterNumber: options.startChapterNumber,
+          title: "章节标题",
+          event: "本章发生的核心事件，不写正文，只写大纲。",
+          conflict: "本章主要冲突，说明阻力和代价。",
+          characterChange: "本章角色关系、心态或能力变化。",
+          highlight: "本章爽点 / 看点。",
+          foreshadowing: "本章埋下或回收的伏笔。",
+          endingHook: "本章结尾钩子。",
+          estimatedWords: DEFAULT_ESTIMATED_WORDS,
+        },
+      ],
+    },
+    null,
+    2,
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -145,6 +174,112 @@ function normalizePositiveInteger(value: unknown) {
   }
 
   return value;
+}
+
+function normalizeOptionalPositiveInteger(
+  value: unknown,
+  fieldName: keyof RawOutlineGenerationOptions,
+) {
+  if (value === undefined || value === null) {
+    return { ok: true as const, value: null };
+  }
+
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    return { ok: false as const, error: `${fieldName} 必须是正整数。` };
+  }
+
+  return { ok: true as const, value };
+}
+
+export function normalizeOutlineGenerationOptions(
+  rawOptions: RawOutlineGenerationOptions = {},
+):
+  | { ok: true; options: NormalizedOutlineGenerationOptions }
+  | { ok: false; error: string } {
+  const startResult = normalizeOptionalPositiveInteger(
+    rawOptions.startChapterNumber,
+    "startChapterNumber",
+  );
+  const volumeResult = normalizeOptionalPositiveInteger(rawOptions.volumeNumber, "volumeNumber");
+  const countResult = normalizeOptionalPositiveInteger(rawOptions.chapterCount, "chapterCount");
+  const maxResult = normalizeOptionalPositiveInteger(
+    rawOptions.maxChapterNumber,
+    "maxChapterNumber",
+  );
+
+  for (const result of [startResult, volumeResult, countResult, maxResult]) {
+    if (!result.ok) {
+      return result;
+    }
+  }
+
+  const startChapterNumber =
+    startResult.value ??
+    (volumeResult.value
+      ? (volumeResult.value - 1) * DEFAULT_OUTLINE_CHAPTER_COUNT + 1
+      : DEFAULT_OUTLINE_GENERATION_OPTIONS.startChapterNumber);
+  const chapterCount = countResult.value ?? DEFAULT_OUTLINE_GENERATION_OPTIONS.chapterCount;
+  const maxChapterNumber =
+    maxResult.value ?? DEFAULT_OUTLINE_GENERATION_OPTIONS.maxChapterNumber;
+  const volumeNumber =
+    volumeResult.value ?? Math.ceil(startChapterNumber / DEFAULT_OUTLINE_CHAPTER_COUNT);
+
+  if (chapterCount !== DEFAULT_OUTLINE_CHAPTER_COUNT) {
+    return {
+      ok: false,
+      error: `chapterCount 必须是 ${DEFAULT_OUTLINE_CHAPTER_COUNT}。`,
+    };
+  }
+
+  if (maxChapterNumber > MAX_OUTLINE_CHAPTER_NUMBER) {
+    return {
+      ok: false,
+      error: `maxChapterNumber 不能超过 ${MAX_OUTLINE_CHAPTER_NUMBER}。`,
+    };
+  }
+
+  if (volumeNumber > MAX_OUTLINE_VOLUME_NUMBER) {
+    return {
+      ok: false,
+      error: `volumeNumber 不能超过 ${MAX_OUTLINE_VOLUME_NUMBER}。`,
+    };
+  }
+
+  const endChapterNumber = startChapterNumber + chapterCount - 1;
+  const volumeStartChapterNumber = (volumeNumber - 1) * DEFAULT_OUTLINE_CHAPTER_COUNT + 1;
+  const volumeEndChapterNumber = volumeNumber * DEFAULT_OUTLINE_CHAPTER_COUNT;
+
+  if (startChapterNumber > maxChapterNumber) {
+    return { ok: false, error: "startChapterNumber 不能大于 maxChapterNumber。" };
+  }
+
+  if (endChapterNumber > maxChapterNumber) {
+    return {
+      ok: false,
+      error: `章节范围不能超过 maxChapterNumber（当前将生成第 ${startChapterNumber} 到 ${endChapterNumber} 章）。`,
+    };
+  }
+
+  if (
+    startChapterNumber < volumeStartChapterNumber ||
+    endChapterNumber > volumeEndChapterNumber
+  ) {
+    return {
+      ok: false,
+      error: `章节范围必须落在第 ${volumeNumber} 卷的 20 章窗口内（第 ${volumeStartChapterNumber} 到 ${volumeEndChapterNumber} 章）。`,
+    };
+  }
+
+  return {
+    ok: true,
+    options: {
+      startChapterNumber,
+      volumeNumber,
+      chapterCount,
+      maxChapterNumber,
+      endChapterNumber,
+    },
+  };
 }
 
 export function normalizeVolumeOutline(value: unknown): VolumeOutline | null {
@@ -229,6 +364,7 @@ export function normalizeChapterOutlines(value: unknown): ChapterOutline[] {
 
 export function validateOutlineGenerationSchema(
   value: unknown,
+  options: NormalizedOutlineGenerationOptions = DEFAULT_OUTLINE_GENERATION_OPTIONS,
 ):
   | { ok: true; volume: VolumeOutline; chapters: ChapterOutline[] }
   | { ok: false; error: string } {
@@ -260,8 +396,8 @@ export function validateOutlineGenerationSchema(
     return { ok: false, error: `volume 缺少字段：${missingVolumeKeys.join(", ")}。` };
   }
 
-  if (volumeValue.volumeNumber !== 1) {
-    return { ok: false, error: "volume.volumeNumber 必须是 1。" };
+  if (volumeValue.volumeNumber !== options.volumeNumber) {
+    return { ok: false, error: `volume.volumeNumber 必须是 ${options.volumeNumber}。` };
   }
 
   for (const field of volumeTextFields) {
@@ -283,10 +419,10 @@ export function validateOutlineGenerationSchema(
     return { ok: false, error: "chapters 必须是数组。" };
   }
 
-  if (value.chapters.length !== DEFAULT_OUTLINE_CHAPTER_COUNT) {
+  if (value.chapters.length !== options.chapterCount) {
     return {
       ok: false,
-      error: `chapters 必须包含 ${DEFAULT_OUTLINE_CHAPTER_COUNT} 章。`,
+      error: `chapters 必须包含 ${options.chapterCount} 章。`,
     };
   }
 
@@ -323,10 +459,15 @@ export function validateOutlineGenerationSchema(
       return { ok: false, error: `chapters[${index}].chapterNumber 必须是整数。` };
     }
 
-    if (chapterNumber < 1 || chapterNumber > DEFAULT_OUTLINE_CHAPTER_COUNT) {
+    if (
+      chapterNumber < options.startChapterNumber ||
+      chapterNumber > options.endChapterNumber ||
+      chapterNumber > options.maxChapterNumber ||
+      chapterNumber > MAX_OUTLINE_CHAPTER_NUMBER
+    ) {
       return {
         ok: false,
-        error: `chapters[${index}].chapterNumber 必须在 1 到 ${DEFAULT_OUTLINE_CHAPTER_COUNT} 之间。`,
+        error: `chapters[${index}].chapterNumber 必须在 ${options.startChapterNumber} 到 ${options.endChapterNumber} 之间，且不能超过 ${MAX_OUTLINE_CHAPTER_NUMBER}。`,
       };
     }
 
@@ -375,7 +516,11 @@ export function validateOutlineGenerationSchema(
     });
   }
 
-  for (let chapterNumber = 1; chapterNumber <= DEFAULT_OUTLINE_CHAPTER_COUNT; chapterNumber += 1) {
+  for (
+    let chapterNumber = options.startChapterNumber;
+    chapterNumber <= options.endChapterNumber;
+    chapterNumber += 1
+  ) {
     if (!chapterNumbers.has(chapterNumber)) {
       return { ok: false, error: `chapters 缺少第 ${chapterNumber} 章。` };
     }
@@ -388,18 +533,30 @@ export function validateOutlineGenerationSchema(
   };
 }
 
-export function buildOutlinePrompt(input: OutlinePromptInput) {
+export function buildOutlinePrompt(
+  input: OutlinePromptInput,
+  options: NormalizedOutlineGenerationOptions = DEFAULT_OUTLINE_GENERATION_OPTIONS,
+) {
+  const targetVolumeText = `第 ${options.volumeNumber} 卷`;
+  const targetChapterRangeText = `第 ${options.startChapterNumber} 到 ${options.endChapterNumber} 章`;
+  const continuationRequirement =
+    options.startChapterNumber === 1
+      ? "- 每章必须服务第一卷主线冲突，并保留足够的结尾钩子供后续单章正文生成使用。"
+      : `- 当前任务是续铺后续大纲，只生成${targetChapterRangeText}，不要回写、重述或重排第 1 到 ${options.startChapterNumber - 1} 章；每章必须承接长篇主线冲突、人物弧线和已埋伏笔，并保留结尾钩子供后续单章正文生成使用。`;
+
   return [
-    "你是严谨的长篇网文第一卷章节大纲策划。请基于已保存的 story_config、story_concept、story_bible 和 characters 生成第一卷章节大纲。",
+    `你是严谨的长篇网文章节大纲策划。请基于已保存的 story_config、story_concept、story_bible 和 characters 生成${targetVolumeText}${targetChapterRangeText}章节大纲。`,
     "",
     "硬性要求：",
-    "- 只生成第一卷章节大纲，不生成任何章节正文。",
-    `- 必须生成 ${DEFAULT_OUTLINE_CHAPTER_COUNT} 章，每章 estimatedWords 默认围绕 ${DEFAULT_ESTIMATED_WORDS} 字。`,
+    `- 只生成${targetVolumeText}${targetChapterRangeText}章节大纲，不生成任何章节正文。`,
+    `- 必须生成 ${options.chapterCount} 章，每章 estimatedWords 默认围绕 ${DEFAULT_ESTIMATED_WORDS} 字。`,
+    `- volume.volumeNumber 必须是 ${options.volumeNumber}。`,
+    `- chapterNumber 必须从 ${options.startChapterNumber} 到 ${options.endChapterNumber} 连续，不能跳号，不能重复，不能超过 ${options.maxChapterNumber}，系统硬上限是 ${MAX_OUTLINE_CHAPTER_NUMBER}。`,
     "- 只能输出一个 JSON object，首字符必须是 {，末字符必须是 }。",
     "- 不要 Markdown，不要代码块，不要解释，不要前言或结语，不要在 JSON 前后输出任何多余文本。",
     "- 必须严格符合下方目标 JSON 结构示例：顶层只能有 volume 和 chapters，字段名、层级和类型必须一致，不得添加 schema 外字段。",
     "- 不得生成 TipTap、改写、续写、收费、社区或排行榜相关内容。",
-    "- 每章必须服务第一卷主线冲突，并保留足够的结尾钩子供后续单章正文生成使用。",
+    continuationRequirement,
     "",
     "已保存 story_config：",
     `- 作品名：${input.project.title}`,
@@ -449,10 +606,10 @@ export function buildOutlinePrompt(input: OutlinePromptInput) {
     "章节大纲字段要求：",
     "- volume 必须包含 volumeNumber、title、summary、mainConflict、endingHook。",
     "- chapters 每一项必须包含 chapterNumber、title、event、conflict、characterChange、highlight、foreshadowing、endingHook、estimatedWords。",
-    "- chapterNumber 必须从 1 到 20 连续，不能跳号，不能重复。",
+    `- chapterNumber 必须从 ${options.startChapterNumber} 到 ${options.endChapterNumber} 连续，不能跳号，不能重复。`,
     "- event/conflict/characterChange/highlight/foreshadowing/endingHook 都只写大纲，不写正文段落。",
     "",
     "目标 JSON 结构示例（最终答案必须是同结构 JSON object，不要照抄示例内容）：",
-    outlineJsonStructureExample,
+    buildOutlineJsonStructureExample(options),
   ].join("\n");
 }
