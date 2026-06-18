@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { isInternalAuthEnabled, requestHasInternalSession } from "@/lib/internal/auth";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/env";
 
 const protectedRoutes = ["/dashboard", "/create", "/project", "/account"];
@@ -10,6 +11,27 @@ function startsWithRoute(pathname: string, routes: string[]) {
 }
 
 export async function updateSession(request: NextRequest) {
+  const pathname = request.nextUrl.pathname;
+  const hasInternalAuth = requestHasInternalSession(request);
+
+  if (isInternalAuthEnabled()) {
+    if (!hasInternalAuth && startsWithRoute(pathname, protectedRoutes)) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/login";
+      url.searchParams.set("redirectTo", pathname);
+      return NextResponse.redirect(url);
+    }
+
+    if (hasInternalAuth && startsWithRoute(pathname, authRoutes)) {
+      const url = request.nextUrl.clone();
+      url.pathname = "/dashboard";
+      url.searchParams.delete("redirectTo");
+      return NextResponse.redirect(url);
+    }
+
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -42,8 +64,6 @@ export async function updateSession(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const pathname = request.nextUrl.pathname;
 
   if (!user && startsWithRoute(pathname, protectedRoutes)) {
     const url = request.nextUrl.clone();

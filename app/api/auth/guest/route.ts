@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isInternalAuthEnabled, setInternalSession } from "@/lib/internal/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -50,6 +51,12 @@ async function createGuestWithAdmin(email: string, password: string) {
 }
 
 export async function POST() {
+  if (isInternalAuthEnabled()) {
+    const response = NextResponse.json({ ok: true, mode: "internal" });
+    setInternalSession(response);
+    return response;
+  }
+
   let email: string;
   let password: string;
 

@@ -8,6 +8,8 @@ import {
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { hasInternalSession } from "@/lib/internal/auth";
+import { getInternalProjectBundle, saveInternalConcept } from "@/lib/internal/store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -78,6 +80,75 @@ function buildCoreConflict(concept: StoryConcept) {
 }
 
 export async function POST(request: Request) {
+  const internalSession = await hasInternalSession();
+
+  if (internalSession) {
+    const body = (await request.json().catch(() => null)) as GenerateConceptBody | null;
+
+    if (!body || typeof body !== "object") {
+      return validationError("请求格式不正确。");
+    }
+
+    if ("user_id" in body) {
+      return validationError("生成作品设定时不能从前端传 user_id。");
+    }
+
+    const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
+
+    if (!projectId) {
+      return validationError("缺少 project。");
+    }
+
+    const bundle = await getInternalProjectBundle(projectId);
+
+    if (!bundle?.config) {
+      return validationError("缺少 project。");
+    }
+
+    const promptInput = buildPromptInput(bundle.project, bundle.config);
+    let outputText = "";
+
+    try {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CONCEPT_SYSTEM_PROMPT,
+        userPrompt: buildConceptPrompt(promptInput),
+      });
+      outputText = result.outputText;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "DeepSeek 请求失败。";
+      return serverError(`DeepSeek 生成失败：${message.slice(0, 800)}`);
+    }
+
+    if (!outputText) {
+      return serverError("DeepSeek 响应缺少 JSON 文本。");
+    }
+
+    let parsed: unknown;
+
+    try {
+      parsed = parseJsonObject(outputText);
+    } catch {
+      return serverError("AI 输出不是有效 JSON。");
+    }
+
+    const validation = validateStoryConceptSchema(parsed);
+
+    if (!validation.ok) {
+      return serverError(`AI 输出 JSON 未通过作品设定 schema 校验：${validation.error}`);
+    }
+
+    const saved = await saveInternalConcept(projectId, validation.concept);
+
+    return NextResponse.json({
+      conceptId: saved.id,
+      concept: validation.concept,
+      credits: {
+        cost: GENERATION_CREDIT_COSTS.generate_concept,
+        balance: 9999,
+      },
+    });
+  }
+
   const supabase = await createClient();
   const {
     data: { user },

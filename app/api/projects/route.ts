@@ -5,6 +5,8 @@ import {
   isValidMarketGenreForChannel,
   isValidSubGenreForMarketGenre,
 } from "@/data/plot-filters";
+import { hasInternalSession } from "@/lib/internal/auth";
+import { createInternalProject } from "@/lib/internal/store";
 import { isProjectMode, normalizeProjectMode } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 
@@ -54,12 +56,19 @@ function validationError(message: string) {
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const internalSession = await hasInternalSession();
+  let supabase: Awaited<ReturnType<typeof createClient>> | null = null;
+  let user: { id: string } | null = null;
 
-  if (!user) {
+  if (!internalSession) {
+    supabase = await createClient();
+    const {
+      data: { user: currentUser },
+    } = await supabase.auth.getUser();
+    user = currentUser;
+  }
+
+  if (!user && !internalSession) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
@@ -102,6 +111,44 @@ export async function POST(request: Request) {
 
   if (tropes.length > 3 || tropes.some((trope) => !isValidMarketFilterValue("tropes", trope))) {
     return validationError("热门元素最多选择 3 个，且选项必须合法。");
+  }
+
+  if (internalSession) {
+    const project = await createInternalProject({
+      title,
+      description: description || null,
+      config: {
+        theme: typeof body.channel === "string" ? body.channel : null,
+        genre: typeof body.marketGenre === "string" ? body.marketGenre : null,
+        background: typeof body.subGenre === "string" ? body.subGenre : null,
+        world_setting: typeof body.cheatPower === "string" ? body.cheatPower : null,
+        protagonist:
+          typeof body.protagonistArchetype === "string" ? body.protagonistArchetype : null,
+        core_conflict: tropes.join(","),
+        tone: typeof body.tone === "string" ? body.tone : null,
+        serial_structure: typeof body.romanceLine === "string" ? body.romanceLine : null,
+        extra_ideas: extraIdeas || null,
+        config_json: {
+          filterVersion: MARKET_FILTER_VERSION,
+          channel: body.channel,
+          marketGenre: body.marketGenre,
+          subGenre: body.subGenre,
+          tropes,
+          protagonistArchetype: body.protagonistArchetype,
+          cheatPower: body.cheatPower,
+          romanceLine: body.romanceLine,
+          tone: body.tone,
+          extraIdeas,
+          mode,
+        },
+      },
+    });
+
+    return NextResponse.json({ projectId: project.id }, { status: 201 });
+  }
+
+  if (!supabase || !user) {
+    return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
   const { data: project, error: projectError } = await supabase

@@ -8,6 +8,8 @@ import {
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { hasInternalSession } from "@/lib/internal/auth";
+import { getInternalProjectBundle, saveInternalOutline } from "@/lib/internal/store";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
@@ -184,6 +186,106 @@ function buildPromptInput(
 }
 
 export async function POST(request: Request) {
+  const internalSession = await hasInternalSession();
+
+  if (internalSession) {
+    const body = (await request.json().catch(() => null)) as GenerateOutlineBody | null;
+
+    if (!body || typeof body !== "object") {
+      return validationError("请求格式不正确。");
+    }
+
+    if ("user_id" in body) {
+      return validationError("生成章节大纲时不能从前端传 user_id。");
+    }
+
+    const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
+
+    if (!projectId) {
+      return validationError("缺少 project。");
+    }
+
+    const outlineOptionsResult = normalizeOutlineGenerationOptions({
+      startChapterNumber: body.startChapterNumber,
+      volumeNumber: body.volumeNumber,
+      chapterCount: body.chapterCount,
+      maxChapterNumber: body.maxChapterNumber,
+    });
+
+    if (!outlineOptionsResult.ok) {
+      return validationError(outlineOptionsResult.error);
+    }
+
+    const outlineOptions: NormalizedOutlineGenerationOptions = outlineOptionsResult.options;
+    const bundle = await getInternalProjectBundle(projectId);
+    const concept = normalizeStoryConcept(bundle?.concept);
+    const bible = normalizeStoryBible(bundle?.bible);
+    const characters = normalizeCharacterCards(bundle?.characters ?? []);
+
+    if (!bundle?.config || !concept || !bible || characters.length === 0) {
+      return validationError("缺少 story_bible。");
+    }
+
+    const promptInput = buildPromptInput(bundle.project, bundle.config, concept, bible, characters);
+    const userPrompt = buildOutlinePrompt(promptInput, outlineOptions);
+    const parseFailures: JsonParseFailure[] = [];
+    let parsed: unknown;
+    let parsedSuccessfully = false;
+
+    for (let attempt = 1; attempt <= OUTLINE_GENERATION_ATTEMPTS; attempt += 1) {
+      let result: Awaited<ReturnType<typeof generateDeepSeekJson>>;
+
+      try {
+        result = await generateDeepSeekJson({
+          systemPrompt: OUTLINE_SYSTEM_PROMPT,
+          userPrompt,
+          maxTokens: OUTLINE_MAX_TOKENS,
+          temperature: OUTLINE_TEMPERATURE,
+        });
+      } catch (error) {
+        const message = getErrorMessage(error);
+        return serverError(`DeepSeek 生成失败（第 ${attempt} 次）：${message.slice(0, 800)}`);
+      }
+
+      if (!result.outputText) {
+        parseFailures.push(buildEmptyOutputFailure(attempt, result.finishReason));
+      } else {
+        try {
+          parsed = parseJsonObject(result.outputText);
+          parsedSuccessfully = true;
+          break;
+        } catch (error) {
+          parseFailures.push(
+            buildJsonParseFailure(attempt, result.outputText, result.finishReason, error),
+          );
+        }
+      }
+    }
+
+    if (!parsedSuccessfully) {
+      return serverError(formatJsonParseFailureLog(parseFailures));
+    }
+
+    const validation = validateOutlineGenerationSchema(parsed, outlineOptions);
+
+    if (!validation.ok) {
+      return serverError(`AI 输出 JSON 未通过章节大纲 schema 校验：${validation.error}`);
+    }
+
+    const volumeId = await saveInternalOutline(projectId, validation.volume, validation.chapters);
+
+    return NextResponse.json({
+      volumeId,
+      outlineOptions,
+      volume: validation.volume,
+      chapters: validation.chapters,
+      credits: {
+        cost: GENERATION_CREDIT_COSTS.generate_outline,
+        balance: 9999,
+      },
+    });
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
