@@ -54,8 +54,16 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     setIsSubmitting(true);
 
     try {
-      const supabase = createClient();
-      const { error } = await supabase.auth.signInAnonymously();
+      const response = await fetch("/api/auth/guest", { method: "POST" });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+      } | null;
+      const error = response.ok
+        ? null
+        : {
+            code: "internal_guest_failed",
+            message: payload?.error || "Guest sign-in failed.",
+          };
 
       if (error) {
         const fallback =
