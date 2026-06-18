@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-const DEFAULT_GUEST_EMAIL = "novelforge.guest@example.com";
+const DEFAULT_GUEST_EMAIL = "novelforge.guest.internal@gmail.com";
 const DEFAULT_GUEST_PASSWORD = "novelforge-internal-guest";
 
 function getGuestCredentials() {
