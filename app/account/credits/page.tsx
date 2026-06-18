@@ -15,6 +15,7 @@ import {
   ensureCreditAccount,
   type GenerationCreditOperation,
 } from "@/lib/credits";
+import { hasInternalSession } from "@/lib/internal/auth";
 import { isMockPaymentEnabled } from "@/lib/payments/mock";
 import { CREDIT_ORDER_STATUS_LABELS } from "@/lib/payments/order-status";
 import { CREDIT_PACKAGES } from "@/lib/payments/packages";
@@ -86,6 +87,92 @@ function getStatusTone(status: CreditOrderStatus) {
 }
 
 export default async function CreditsPage() {
+  const internalSession = await hasInternalSession();
+
+  if (internalSession) {
+    const balance = 9999;
+
+    return (
+      <main className="app-shell py-8">
+        <AppNav isAuthed creditBalance={balance} />
+
+        <section className="grid gap-6 py-10 lg:grid-cols-[minmax(0,1fr)_340px]">
+          <div>
+            <div className="flex flex-wrap items-center gap-3">
+              <StatusBookmark tone="gold">Internal Mode</StatusBookmark>
+              <BookBadge tone="ink">本地额度</BookBadge>
+            </div>
+            <h1 className="mt-8 font-serif text-5xl font-black leading-tight text-[var(--ink)]">
+              内部创作额度
+            </h1>
+            <p className="mt-4 max-w-3xl text-lg leading-9 text-[var(--muted)]">
+              当前运行在内部单用户模式，不接入 Supabase 账户、订单或真实支付。生成流程使用固定额度显示。
+            </p>
+          </div>
+
+          <PaperPanel className="p-6">
+            <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+              Internal Balance
+            </p>
+            <p className="mt-4 font-serif text-6xl font-black text-[var(--brown)]">
+              {balance}
+              <span className="ml-2 text-lg font-bold text-[var(--muted)]">额度</span>
+            </p>
+            <p className="mt-4 text-sm leading-7 text-[var(--muted)]">
+              这个数字只用于内部界面显示，不会写入 Supabase，也不会产生订单流水。
+            </p>
+            <CreditBadge balance={balance} className="mt-4" label="当前额度" />
+          </PaperPanel>
+        </section>
+
+        <section className="grid gap-6 py-8 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <PaperPanel className="p-6">
+            <BookBadge tone="paper">内部模式</BookBadge>
+            <h2 className="mt-4 font-serif text-3xl font-black text-[var(--ink)]">
+              无需补给包
+            </h2>
+            <p className="mt-3 text-sm leading-7 text-[var(--muted)]">
+              当前版本用于内部访问，游客登录后即可创建项目并生成内容；补给包、Mock 支付和订单记录均不启用。
+            </p>
+          </PaperPanel>
+
+          <aside className="grid gap-6 xl:sticky xl:top-6">
+            <details className="credits-fold" open>
+              <summary>
+                <div>
+                  <p className="text-sm font-black uppercase text-[var(--gold-strong)]">
+                    Costs
+                  </p>
+                  <h2 className="mt-2 font-serif text-3xl font-black text-[var(--ink)]">
+                    原始消耗规则
+                  </h2>
+                </div>
+                <BookBadge tone="paper">参考</BookBadge>
+              </summary>
+              <div className="credits-fold-body grid gap-3">
+                {Object.entries(GENERATION_CREDIT_COSTS).map(([operation, cost]) => (
+                  <BookCard key={operation} spine="消耗">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-black text-[var(--gold-strong)]">
+                          {operation}
+                        </p>
+                        <p className="mt-1 font-bold leading-6 text-[var(--ink)]">
+                          {operationLabels[operation as GenerationCreditOperation]}
+                        </p>
+                      </div>
+                      <BookBadge tone={cost > 0 ? "gold" : "success"}>{cost} 额度</BookBadge>
+                    </div>
+                  </BookCard>
+                ))}
+              </div>
+            </details>
+          </aside>
+        </section>
+      </main>
+    );
+  }
+
   const supabase = await createClient();
   const {
     data: { user },

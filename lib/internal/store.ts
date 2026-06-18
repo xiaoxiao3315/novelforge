@@ -253,6 +253,70 @@ export async function saveInternalOutline(
   return volumeId;
 }
 
+export async function saveInternalChapter(
+  projectId: string,
+  chapterId: string,
+  content: ChapterContent,
+) {
+  const store = await readInternalStore();
+  const chapter = store.chapters.find(
+    (item) => item.project_id === projectId && item.id === chapterId,
+  );
+
+  if (!chapter) {
+    return null;
+  }
+
+  chapter.content = content;
+  await touchProject(store, projectId);
+  await writeInternalStore(store);
+
+  return chapter;
+}
+
+export async function updateInternalProjectConfig(projectId: string, configJson: unknown) {
+  const store = await readInternalStore();
+  const config = store.storyConfigs.find((item) => item.project_id === projectId);
+
+  if (!config) {
+    return null;
+  }
+
+  config.config_json = configJson;
+  await touchProject(store, projectId);
+  await writeInternalStore(store);
+
+  return config;
+}
+
+export async function saveInternalChapterUpdates(
+  projectId: string,
+  updates: Array<{ chapterId: string; content: ChapterContent | Record<string, unknown> }>,
+) {
+  const store = await readInternalStore();
+  let updatedCount = 0;
+
+  for (const update of updates) {
+    const chapter = store.chapters.find(
+      (item) => item.project_id === projectId && item.id === update.chapterId,
+    );
+
+    if (!chapter) {
+      continue;
+    }
+
+    chapter.content = update.content as ChapterContent;
+    updatedCount += 1;
+  }
+
+  if (updatedCount > 0) {
+    await touchProject(store, projectId);
+    await writeInternalStore(store);
+  }
+
+  return updatedCount;
+}
+
 async function touchProject(store: InternalStore, projectId: string) {
   const project = store.projects.find((item) => item.id === projectId);
 

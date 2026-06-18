@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
 import { parseJsonObject } from "@/lib/ai/json";
@@ -8,6 +8,8 @@ import {
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { isInternalAuthEnabled, requestHasInternalSession } from "@/lib/internal/auth";
+import { getInternalProjectBundle, saveInternalChapter } from "@/lib/internal/store";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
 import {
   DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
@@ -1258,7 +1260,401 @@ function withQualityLogInput(
   };
 }
 
-export async function POST(request: Request) {
+async function buildInternalChapterSummary({
+  chapter,
+  outputText,
+  previousChapters,
+  model,
+}: {
+  chapter: ChapterOutline;
+  outputText: string;
+  previousChapters: ReturnType<typeof buildPreviousChapterContext>[];
+  model: string;
+}): Promise<ChapterSummary> {
+  const summaryUserPrompt = buildChapterSummaryPrompt({
+    chapter,
+    body: outputText,
+    previousSummaries: previousChapters.map((previousChapter) => ({
+      ...previousChapter,
+      summary: previousChapter.summary,
+    })),
+  });
+  let parsedSummary: unknown;
+  let parsedSummaryOutputText = "";
+  let summaryPrompt = summaryUserPrompt;
+
+  for (let attempt = 1; attempt <= CHAPTER_SUMMARY_GENERATION_ATTEMPTS; attempt += 1) {
+    try {
+      const result = await generateDeepSeekJson({
+        systemPrompt: CHAPTER_SUMMARY_SYSTEM_PROMPT,
+        userPrompt: summaryPrompt,
+        maxTokens: CHAPTER_SUMMARY_MAX_TOKENS,
+        temperature: CHAPTER_SUMMARY_TEMPERATURE,
+      });
+
+      if (!result.outputText) {
+        continue;
+      }
+
+      parsedSummary = parseSummaryJsonObject(result.outputText);
+      parsedSummaryOutputText = result.outputText;
+
+      const validation = validateChapterSummaryOutput(parsedSummary);
+
+      if (validation.ok) {
+        return buildChapterSummary(validation.summary, model);
+      }
+
+      if (attempt < CHAPTER_SUMMARY_GENERATION_ATTEMPTS) {
+        summaryPrompt = buildChapterSummaryRetryPrompt({
+          originalPrompt: summaryUserPrompt,
+          validationError: validation.error,
+          missingFields: validation.missingFields,
+          rawPreview: result.outputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+        });
+      }
+    } catch {
+      // Keep internal generation usable even when summary JSON needs fallback.
+    }
+  }
+
+  const repair = repairChapterSummaryOutput(parsedSummary);
+
+  if (repair.ok) {
+    return buildChapterSummary(repair.summary, model);
+  }
+
+  return buildChapterSummary(
+    buildFallbackChapterSummaryPayload(chapter, outputText || parsedSummaryOutputText),
+    model,
+  );
+}
+
+async function generateInternalChapter(body: GenerateChapterBody) {
+  const batchRouteMetadataValidation = parseBatchRouteMetadata(body);
+
+  if (!batchRouteMetadataValidation.ok) {
+    return validationError(batchRouteMetadataValidation.error);
+  }
+
+  const batchRouteMetadata = batchRouteMetadataValidation.metadata;
+  const readerPreloadMetadataValidation = parseReaderPreloadMetadata(body);
+
+  if (!readerPreloadMetadataValidation.ok) {
+    return validationError(readerPreloadMetadataValidation.error);
+  }
+
+  const readerPreloadMetadata = readerPreloadMetadataValidation.metadata;
+  const qualityModeValidation = normalizeQualityMode(body.qualityMode);
+
+  if (!qualityModeValidation.ok) {
+    return validationError(qualityModeValidation.error);
+  }
+
+  const { qualityMode } = qualityModeValidation;
+  const interventionValidation = parseChapterIntervention(body.intervention);
+
+  if (!interventionValidation.ok) {
+    return validationError(interventionValidation.error);
+  }
+
+  const { intervention } = interventionValidation;
+  const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
+  const chapterId = typeof body.chapterId === "string" ? body.chapterId.trim() : "";
+  const chapterNumber =
+    typeof body.chapterNumber === "number" && Number.isInteger(body.chapterNumber)
+      ? body.chapterNumber
+      : null;
+
+  if (!projectId) {
+    return validationError("Missing project.");
+  }
+
+  if (!chapterId && !chapterNumber) {
+    return validationError("Missing chapter outline.");
+  }
+
+  const bundle = await getInternalProjectBundle(projectId);
+
+  if (!bundle || !bundle.config) {
+    return validationError("Missing project.");
+  }
+
+  const visibleProject: ProjectRow = {
+    id: bundle.project.id,
+    title: bundle.project.title,
+    description: bundle.project.description,
+  };
+  const config = bundle.config as StoryConfigRow;
+  const model = getDeepSeekModel();
+  const concept = normalizeStoryConcept(bundle.concept);
+
+  if (!concept) {
+    return validationError("Missing story_concept.");
+  }
+
+  const bible = normalizeStoryBible(bundle.bible);
+
+  if (!bible) {
+    return validationError("Missing story_bible.");
+  }
+
+  const characters = normalizeCharacterCards(bundle.characters);
+
+  if (characters.length === 0) {
+    return validationError("Missing characters.");
+  }
+
+  const chapterRow =
+    (chapterId ? bundle.chapters.find((row) => row.id === chapterId) : null) ??
+    (chapterNumber
+      ? bundle.chapters.find((row) => row.chapter_number === chapterNumber)
+      : null);
+  const chapter = chapterRow ? normalizeChapterOutlines([chapterRow.content])[0] ?? null : null;
+
+  if (!chapterRow || !chapter) {
+    return validationError("Missing chapter outline.");
+  }
+
+  if (!chapterRow.volume_id) {
+    return validationError("Missing chapter volume.");
+  }
+
+  const volumeRow = bundle.volumes.find((row) => row.id === chapterRow.volume_id);
+  const volume = normalizeVolumeOutline(volumeRow?.content);
+
+  if (!volume) {
+    return validationError("Missing volume.");
+  }
+
+  const previousRows = bundle.chapters
+    .filter((row) => row.chapter_number < chapter.chapterNumber)
+    .sort((left, right) => left.chapter_number - right.chapter_number);
+  const previousChapters = previousRows
+    .map((row) => {
+      const outline = normalizeChapterOutlines([row.content])[0] ?? null;
+      return outline ? buildPreviousChapterContext(outline, row.content) : null;
+    })
+    .filter((item): item is ReturnType<typeof buildPreviousChapterContext> => Boolean(item));
+  const projectMode = getProjectModeFromConfig(config.config_json);
+
+  if (readerPreloadMetadata) {
+    if (projectMode !== "interactive") {
+      return validationError("reader-preload-10 only supports interactive projects.");
+    }
+
+    const { anchorChapterNumber } = readerPreloadMetadata;
+
+    if (
+      chapter.chapterNumber <= anchorChapterNumber ||
+      chapter.chapterNumber > anchorChapterNumber + 10
+    ) {
+      return validationError("reader-preload-10 can only generate the next 10 chapters from the anchor.");
+    }
+
+    const anchorChapterRow = previousRows.find(
+      (row) => row.chapter_number === anchorChapterNumber,
+    );
+
+    if (!anchorChapterRow || !hasUnlockedReadableBody(anchorChapterRow.content)) {
+      return validationError("reader-preload-10 requires a readable unlocked anchor chapter.");
+    }
+
+    const existingPreloadContent = normalizeChapterContent(chapterRow.content);
+
+    if (
+      existingPreloadContent &&
+      !existingPreloadContent.needsRegeneration &&
+      !existingPreloadContent.stale &&
+      (existingPreloadContent.official?.body || existingPreloadContent.draft?.body)
+    ) {
+      return NextResponse.json({
+        chapterId: chapterRow.id,
+        chapter: existingPreloadContent,
+        alreadyGenerated: true,
+        credits: {
+          cost: 0,
+          balance: 9999,
+        },
+      });
+    }
+  }
+
+  const previousDecisionRow = previousRows.find(
+    (row) => row.chapter_number === chapter.chapterNumber - 1,
+  );
+  const previousDecision =
+    projectMode === "interactive" && previousDecisionRow
+      ? normalizeChapterDecision(
+          isRecord(previousDecisionRow.content)
+            ? (previousDecisionRow.content as { decision?: unknown }).decision
+            : null,
+        )
+      : null;
+  const interactiveState =
+    projectMode === "interactive" && isRecord(config.config_json)
+      ? normalizeInteractiveStoryState(
+          (config.config_json as { interactiveState?: unknown }).interactiveState,
+        )
+      : null;
+  const promptInput = buildPromptInput(
+    visibleProject,
+    config,
+    concept,
+    bible,
+    characters,
+    volume,
+    chapter,
+    previousChapters,
+    intervention,
+    previousDecision,
+    null,
+    interactiveState,
+  );
+  let outputText = "";
+  let qualityPipelineResult: ChapterQualityPipelineResult | null = null;
+  let qualityMetadata: ChapterDraftQualityMetadata | null = null;
+
+  if (qualityMode === "quality") {
+    const qualityPipelineInput = {
+      storyContext: buildChapterQualityContext(promptInput),
+      draftSource: "generate",
+      rewritePolicy: "score-threshold",
+      rewriteScoreThreshold: DEFAULT_FAST_REWRITE_SCORE_THRESHOLD,
+      criticalRewriteScoreThreshold: DEFAULT_FAST_REWRITE_CRITICAL_SCORE_THRESHOLD,
+      enableFastGuidance: true,
+    } satisfies Parameters<typeof runChapterQualityPipeline>[0];
+
+    qualityPipelineResult = await runChapterQualityPipeline(
+      qualityPipelineInput,
+      createQualityPipelineModel(promptInput),
+    );
+    qualityMetadata = buildQualityMetadata(qualityPipelineResult);
+
+    if (qualityPipelineResult.status !== "success" || !qualityPipelineResult.finalText) {
+      const errorMessage =
+        qualityPipelineResult.errors.at(-1)?.message ||
+        "Quality pipeline failed before producing final chapter text.";
+      return serverError(`High quality chapter generation failed: ${errorMessage.slice(0, 800)}`);
+    }
+
+    outputText = cleanChapterBody(qualityPipelineResult.finalText);
+  } else {
+    try {
+      const result = await generateDeepSeekText({
+        systemPrompt: CHAPTER_SYSTEM_PROMPT,
+        userPrompt: buildChapterPrompt(promptInput),
+        maxTokens: CHAPTER_MAX_TOKENS,
+        temperature: CHAPTER_TEMPERATURE,
+      });
+
+      outputText = cleanChapterBody(result.outputText);
+    } catch (error) {
+      return serverError(`DeepSeek generation failed: ${getErrorMessage(error).slice(0, 800)}`);
+    }
+  }
+
+  if (!outputText) {
+    return serverError("DeepSeek response did not include chapter body.");
+  }
+
+  const existingContent = normalizeChapterContent(chapterRow.content);
+  const nextVersionCount = (existingContent?.versionCount ?? 0) + 1;
+  const baseDraft = buildChapterDraft(outputText, model, promptInput.wordTarget, intervention);
+  const draft = {
+    ...baseDraft,
+    versionId: `internal-${nextVersionCount}-${crypto.randomUUID()}`,
+    ...(qualityMetadata ? { quality: qualityMetadata } : {}),
+    ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+  };
+  const shouldGenerateAutoDecision =
+    process.env.ENABLE_AUTO_CHAPTER_DECISION === "true" && projectMode === "interactive";
+  const autoDecisionPromise =
+    shouldGenerateAutoDecision
+      ? generateChapterDecision(
+          buildDecisionPromptInput({
+            bible,
+            chapter,
+            characters,
+            config,
+            concept,
+            currentChapterBody: outputText,
+            previousChapters,
+            project: visibleProject,
+            volume,
+          }),
+        )
+      : null;
+  const summary = await buildInternalChapterSummary({
+    chapter,
+    outputText,
+    previousChapters,
+    model,
+  });
+  const autoDecisionResult = autoDecisionPromise ? await autoDecisionPromise : null;
+  const autoDecisionSummary = buildDecisionGenerationSummary(autoDecisionResult);
+  const baseChapterContent = buildChapterContent(
+    chapter,
+    draft,
+    summary,
+    chapterRow.content,
+    nextVersionCount,
+  );
+  const routedBaseChapterContent = batchRouteMetadata
+    ? baseChapterContent
+    : withoutStaleRouteMetadata(baseChapterContent);
+  const decisionChapterContent =
+    projectMode === "interactive"
+      ? withFreshInteractiveDecisionContent({
+          baseContent: routedBaseChapterContent,
+          decisionResult: autoDecisionResult,
+        })
+      : routedBaseChapterContent;
+  const chapterContent = batchRouteMetadata
+    ? {
+        ...withoutReadBilling(decisionChapterContent),
+        routeMetadata: batchRouteMetadata,
+      }
+    : withoutReadBilling(decisionChapterContent);
+  const savedChapter = await saveInternalChapter(projectId, chapterRow.id, chapterContent);
+
+  if (!savedChapter) {
+    return serverError("Chapter body save failed.");
+  }
+
+  return NextResponse.json({
+    chapterId: savedChapter.id,
+    chapter: chapterContent,
+    ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
+    ...(qualityMode === "quality" && qualityPipelineResult
+      ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
+      : {}),
+    credits: {
+      cost: 0,
+      balance: 9999,
+    },
+  });
+}
+
+export async function POST(request: NextRequest) {
+  const body = (await request.json().catch(() => null)) as GenerateChapterBody | null;
+
+  if (!body || typeof body !== "object") {
+    return validationError("è¯·æ±‚æ ¼å¼ä¸æ­£ç¡®ã€‚");
+  }
+
+  if ("user_id" in body) {
+    return validationError("ç”Ÿæˆç« èŠ‚æ­£æ–‡æ—¶ä¸èƒ½ä»Žå‰ç«¯ä¼  user_idã€‚");
+  }
+
+  if (isInternalAuthEnabled()) {
+    if (!requestHasInternalSession(request)) {
+      return NextResponse.json({ error: "请先登录。" }, { status: 401 });
+    }
+
+    return generateInternalChapter(body);
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -1269,7 +1665,6 @@ export async function POST(request: Request) {
   }
 
   const userId = user.id;
-  const body = (await request.json().catch(() => null)) as GenerateChapterBody | null;
 
   if (!body || typeof body !== "object") {
     return validationError("请求格式不正确。");
