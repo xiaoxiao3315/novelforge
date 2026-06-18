@@ -12,7 +12,8 @@ NovelForge 是一个互动小说生成工作台。用户通过剧情筛选器创
 - DeepSeek 生成作品设定、故事圣经、角色卡、第一卷 20 章大纲、单章正文。
 - 单章导演指令：风格倾向、必须出现、必须避免、结尾要求。
 - 章节摘要、章节版本、正式稿确认。
-- 点数系统：生成成功后扣点，失败不扣点。
+- 点数系统：先记日志、再扣点、后落库；扣点失败不保存内容，保存失败自动退点。
+- 互动剧情模式：命运分歧、读者预载（reader-preload-10）、按章解锁扣费（claim-read）。
 - 点数账户页：余额、成本表、交易流水、订单状态。
 - Mock 支付闭环：仅非生产环境测试用，不接真实支付。
 
@@ -20,6 +21,7 @@ NovelForge 是一个互动小说生成工作台。用户通过剧情筛选器创
 
 ```bash
 npm install
+npx supabase db push   # 应用 supabase/migrations 下全部迁移（含 wo017 退款与事务 RPC）
 npm run dev
 ```
 
@@ -42,8 +44,17 @@ git diff --check
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `DEEPSEEK_MODEL`
+- `ENABLE_MOCK_PAYMENTS`：设为 `true` 才启用 Mock 支付；生产环境始终禁用
 
 不要把 `.env.local` 或任何密钥提交到仓库。
+
+## 计费与事务
+
+成本定义在 `lib/credits.ts`（concept 1 / bible 3 / outline 5 / chapter 8 / quality chapter 20 / 预载章节阅读 8）。
+
+- 所有生成路由统一顺序：**写 generation_log → 原子扣点（`spend_generation_credits`，advisory lock 防双扣）→ 落库内容**。扣点失败返回 402/500 且不保存内容；落库失败调用 `refund_generation_credits` 自动退点（按 generation_log_id 幂等）。
+- 读者预载章节生成时不扣点，解锁阅读时经 `claim-read` 扣费；服务端对预载做幂等直返、正文脱敏和每分钟 6 次的频控。
+- `set_official_chapter_version` 与 `apply_chapter_decision` 两个 RPC 把多步写入收敛为单事务（行锁防并发覆盖）。
 
 ## 支付状态
 

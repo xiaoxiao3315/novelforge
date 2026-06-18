@@ -18,9 +18,9 @@ const chapterQualityModeOptions: Array<{
   },
   {
     mode: "quality",
-    label: "\u6781\u901f\u7cbe\u4fee",
+    label: "极速精修",
     cost: GENERATION_CREDIT_COSTS.generate_chapter_quality,
-    description: "\u5feb\u901f\u5b8c\u6210\u7b56\u5212\u3001\u5ba1\u7a3f\u548c\u5fc5\u8981\u4fee\u8ba2\uff0c\u9002\u5408\u6b63\u5f0f\u7ae0\u8282\u3002",
+    description: "快速完成策划、审稿和必要修订，适合正式章节。",
   },
 ];
 

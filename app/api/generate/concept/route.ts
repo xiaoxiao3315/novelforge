@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { parseJsonObject } from "@/lib/ai/json";
 import {
   GENERATION_CREDIT_COSTS,
+  refundGenerationCredits,
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildConceptPrompt,
@@ -54,16 +57,6 @@ function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
 }
 
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  return JSON.parse(trimmed) as unknown;
-}
-
 function buildPromptInput(project: ProjectRow, config: StoryConfigRow): ConceptPromptInput {
   return {
     project: {
@@ -94,6 +87,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
+  const userId = user.id;
   const body = (await request.json().catch(() => null)) as GenerateConceptBody | null;
 
   if (!body || typeof body !== "object") {
@@ -114,6 +108,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -209,6 +204,42 @@ export async function POST(request: Request) {
 
   const concept = validation.concept;
 
+  // 先记日志、再扣点、最后落库：扣点失败时不保存内容，保存失败时自动退点。
+  const { data: generationLog, error: logError } = await supabase
+    .from("generation_logs")
+    .insert({
+      project_id: visibleProject.id,
+      operation: "generate_concept",
+      target_type: "story_concept",
+      model,
+      prompt_version: CONCEPT_PROMPT_VERSION,
+      input: logInput,
+    })
+    .select("id")
+    .single<GenerationLogIdRow>();
+
+  if (logError || !generationLog) {
+    return serverError(`生成日志写入失败，本次未扣费：${logError?.message || "未知错误"}`);
+  }
+
+  const creditSpend = await spendGenerationCredits({
+    supabase,
+    projectId: visibleProject.id,
+    generationLogId: generationLog.id,
+    operation: "generate_concept",
+    reason: "生成作品设定",
+  });
+
+  if (!creditSpend.ok) {
+    const error = `点数扣除失败，内容未保存：${creditSpend.error}`;
+    await supabase.from("generation_logs").update({ error }).eq("id", generationLog.id);
+    const insufficient = creditSpend.error.includes("insufficient credits");
+    return NextResponse.json(
+      { error: insufficient ? "点数不足，本次未扣费，内容未保存。" : error },
+      { status: insufficient ? 402 : 500 },
+    );
+  }
+
   const { data: storyConcept, error: conceptError } = await supabase
     .from("story_concepts")
     .upsert(
@@ -228,41 +259,24 @@ export async function POST(request: Request) {
     .single<{ id: string }>();
 
   if (conceptError || !storyConcept) {
-    const error = conceptError?.message || "作品设定保存失败。";
-    await writeErrorLog(error);
-    return serverError(error);
+    const saveError = conceptError?.message || "作品设定保存失败。";
+    const refund = await refundGenerationCredits({
+      supabase: createAdminClient(),
+      generationLogId: generationLog.id,
+      userId,
+    });
+    const refundNote = refund.ok ? "已自动退还本次点数。" : `自动退点失败：${refund.error}`;
+    await supabase
+      .from("generation_logs")
+      .update({ error: `${saveError}（${refundNote}）` })
+      .eq("id", generationLog.id);
+    return serverError(`作品设定保存失败，${refundNote}`);
   }
 
-  const { data: generationLog, error: logError } = await supabase
+  await supabase
     .from("generation_logs")
-    .insert({
-      project_id: visibleProject.id,
-      operation: "generate_concept",
-      target_type: "story_concept",
-      target_id: storyConcept.id,
-      model,
-      prompt_version: CONCEPT_PROMPT_VERSION,
-      input: logInput,
-      output: concept,
-    })
-    .select("id")
-    .single<GenerationLogIdRow>();
-
-  if (logError || !generationLog) {
-    return serverError(`作品设定已保存，但生成日志写入失败：${logError?.message || "未知错误"}`);
-  }
-
-  const creditSpend = await spendGenerationCredits({
-    supabase,
-    projectId: visibleProject.id,
-    generationLogId: generationLog.id,
-    operation: "generate_concept",
-    reason: "生成作品设定",
-  });
-
-  if (!creditSpend.ok) {
-    return serverError(`作品设定已保存，但点数扣除失败：${creditSpend.error}`);
-  }
+    .update({ target_id: storyConcept.id, output: concept })
+    .eq("id", generationLog.id);
 
   return NextResponse.json({
     conceptId: storyConcept.id,

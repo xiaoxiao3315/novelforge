@@ -39,10 +39,6 @@ function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -83,6 +79,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -139,43 +136,16 @@ export async function POST(request: Request) {
     promptVersion: version.prompt_version,
   };
 
-  const { error: clearError } = await supabase
-    .from("chapter_versions")
-    .update({ is_official: false })
-    .eq("project_id", projectId)
-    .eq("chapter_id", chapterId)
-    .eq("user_id", user.id);
+  // 单个事务内完成：清旧官方版本、标记新官方版本、更新章节内容（见 wo017 RPC）。
+  const { error: rpcError } = await supabase.rpc("set_official_chapter_version", {
+    p_project_id: projectId,
+    p_chapter_id: chapterId,
+    p_version_id: version.id,
+    p_official: official,
+  });
 
-  if (clearError) {
-    return serverError(clearError.message);
-  }
-
-  const { error: markError } = await supabase
-    .from("chapter_versions")
-    .update({ is_official: true })
-    .eq("id", version.id)
-    .eq("project_id", projectId)
-    .eq("chapter_id", chapterId)
-    .eq("user_id", user.id);
-
-  if (markError) {
-    return serverError(markError.message);
-  }
-
-  const content = {
-    ...(isRecord(chapter.content) ? chapter.content : {}),
-    official,
-  };
-
-  const { error: updateChapterError } = await supabase
-    .from("chapters")
-    .update({ content })
-    .eq("id", chapterId)
-    .eq("project_id", projectId)
-    .eq("user_id", user.id);
-
-  if (updateChapterError) {
-    return serverError(updateChapterError.message);
+  if (rpcError) {
+    return serverError(rpcError.message);
   }
 
   return NextResponse.json({

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
@@ -61,21 +61,45 @@ type SetOfficialResponse = {
   error?: string;
 };
 
-type BatchGenerationProgress = {
-  completed: number;
-  currentChapterNumber: number | null;
-  message: string;
-  skipped: number;
-  status: "idle" | "running" | "success" | "failed";
-  total: number;
-};
-
 type BatchChapterRequestMetadata = {
   batchRunId: string;
   generationSource: "batch-20";
   routeMode: "default";
   routeRevision: string;
   routeSnapshotHash: string;
+};
+
+type ReaderPreloadStatus =
+  | "idle"
+  | "waiting"
+  | "running"
+  | "cooldown"
+  | "retrying"
+  | "paused"
+  | "generated"
+  | "failed"
+  | "complete";
+
+type ReaderPreloadStatusDetail = {
+  anchorChapterNumber: number;
+  attempt?: number;
+  currentChapterNumber?: number;
+  error?: string;
+  failedChapterNumber?: number;
+  generatedChapterNumbers: number[];
+  generatedCount: number;
+  nextDelayMs?: number;
+  maxAttempts?: number;
+  projectId: string;
+  reason?: string;
+  status: ReaderPreloadStatus;
+  targetChapterNumbers: number[];
+  totalTargetCount: number;
+};
+
+type ReaderCacheItemStatus = {
+  label: string;
+  tone: "cached" | "charged" | "failed" | "pending" | "readable" | "running" | "waiting";
 };
 
 type OutlineRequestOptions = {
@@ -88,16 +112,6 @@ type OutlineRequestOptions = {
 type OutlineRequestStateOptions = {
   baseChapters?: ChapterDisplay[];
   mergeChapters?: boolean;
-};
-
-const BATCH_CHAPTER_LIMIT = 20;
-const emptyBatchProgress: BatchGenerationProgress = {
-  completed: 0,
-  currentChapterNumber: null,
-  message: "",
-  skipped: 0,
-  status: "idle",
-  total: 0,
 };
 
 const volumeSections: Array<{
@@ -238,74 +252,154 @@ function hasReadableChapterBody(chapter: ChapterDisplay | null | undefined) {
   );
 }
 
-function getBatchStartChapterNumber(
-  chapters: ChapterDisplay[],
-  currentChapterNumber?: number | null,
-) {
-  if (typeof currentChapterNumber === "number") {
-    return currentChapterNumber + 1;
+function isAnchorPreloadError(error: string | undefined) {
+  return Boolean(error?.includes("reader-preload-10 requires a readable unlocked anchor chapter"));
+}
+
+function formatReaderPreloadError(error: string | undefined) {
+  if (isAnchorPreloadError(error)) {
+    return "当前章未完成解锁，暂不缓存";
   }
 
-  return chapters[0]?.chapterNumber ?? 1;
+  return formatUserFacingError(error, "后台缓存失败，可稍后重试。");
 }
 
-function getBatchDesiredChapterNumbers(
-  chapters: ChapterDisplay[],
-  currentChapterNumber?: number | null,
-) {
-  const startChapterNumber = getBatchStartChapterNumber(chapters, currentChapterNumber);
+function dispatchReaderPreloadPause(paused: boolean, reason: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
 
-  return Array.from(
-    { length: BATCH_CHAPTER_LIMIT },
-    (_, index) => startChapterNumber + index,
+  window.dispatchEvent(
+    new CustomEvent("novelforge:reader-preload-pause", {
+      detail: { paused, reason },
+    }),
   );
 }
 
-function getBatchTargetChapters(
-  chapters: ChapterDisplay[],
-  currentChapterNumber?: number | null,
-) {
-  const chapterByNumber = new Map(chapters.map((chapter) => [chapter.chapterNumber, chapter]));
+function getReaderCacheItemStatus(
+  chapter: ChapterDisplay,
+  preloadStatus: ReaderPreloadStatusDetail | null,
+): ReaderCacheItemStatus {
+  if (
+    preloadStatus?.status === "failed" &&
+    preloadStatus.failedChapterNumber === chapter.chapterNumber
+  ) {
+    return { label: "失败", tone: "failed" };
+  }
 
-  return getBatchDesiredChapterNumbers(chapters, currentChapterNumber)
-    .map((chapterNumber) => chapterByNumber.get(chapterNumber))
-    .filter((chapter): chapter is ChapterDisplay => Boolean(chapter))
-    .filter((chapter) => !hasReadableChapterBody(chapter));
+  if (
+    preloadStatus?.status === "running" &&
+    preloadStatus.currentChapterNumber === chapter.chapterNumber
+  ) {
+    return { label: "正在缓存", tone: "running" };
+  }
+
+  if (
+    preloadStatus?.status === "retrying" &&
+    preloadStatus.currentChapterNumber === chapter.chapterNumber
+  ) {
+    return { label: "稍后重试", tone: "waiting" };
+  }
+
+  if (
+    preloadStatus?.status === "cooldown" &&
+    preloadStatus.currentChapterNumber === chapter.chapterNumber
+  ) {
+    return { label: "冷却中", tone: "waiting" };
+  }
+
+  if (preloadStatus?.generatedChapterNumbers.includes(chapter.chapterNumber)) {
+    return { label: "已缓存", tone: "cached" };
+  }
+
+  if (chapter.readBilling?.state === "unclaimed") {
+    return { label: "未认领", tone: "cached" };
+  }
+
+  if (chapter.readBilling?.state === "charged") {
+    return { label: "已阅读", tone: "charged" };
+  }
+
+  if (hasReadableChapterBody(chapter)) {
+    return { label: "可阅读", tone: "readable" };
+  }
+
+  if (chapterNeedsRegeneration(chapter)) {
+    return { label: "需重生待缓存", tone: "pending" };
+  }
+
+  return { label: "待生成", tone: "pending" };
 }
 
-function getMissingBatchOutlineRanges(
-  chapters: ChapterDisplay[],
-  currentChapterNumber?: number | null,
+function getReaderCacheSummary(
+  cacheChapters: ChapterDisplay[],
+  preloadStatus: ReaderPreloadStatusDetail | null,
 ) {
-  const existingChapterNumbers = new Set(chapters.map((chapter) => chapter.chapterNumber));
-  const missingChapterNumbers = getBatchDesiredChapterNumbers(
-    chapters,
-    currentChapterNumber,
-  ).filter((chapterNumber) => !existingChapterNumbers.has(chapterNumber));
-  const volumeNumbers = new Set(
-    missingChapterNumbers.map((chapterNumber) => Math.ceil(chapterNumber / BATCH_CHAPTER_LIMIT)),
-  );
+  if (preloadStatus?.status === "waiting") {
+    if (preloadStatus.reason === "another-tab-running") {
+      return "其他页面缓存中";
+    }
 
-  return [...volumeNumbers]
-    .sort((left, right) => left - right)
-    .map((volumeNumber) => ({
-      chapterCount: BATCH_CHAPTER_LIMIT,
-      startChapterNumber: (volumeNumber - 1) * BATCH_CHAPTER_LIMIT + 1,
-      volumeNumber,
-    }));
-}
+    if (preloadStatus.reason === "page-hidden") {
+      return "页面隐藏暂停";
+    }
 
-function getEstimatedBatchChapterCount(
-  chapters: ChapterDisplay[],
-  currentChapterNumber?: number | null,
-) {
-  const chapterByNumber = new Map(chapters.map((chapter) => [chapter.chapterNumber, chapter]));
+    if (preloadStatus.reason === "offline") {
+      return "离线暂停";
+    }
 
-  return getBatchDesiredChapterNumbers(chapters, currentChapterNumber).filter((chapterNumber) => {
-    const chapter = chapterByNumber.get(chapterNumber);
+    return "等待空闲";
+  }
 
-    return !chapter || !hasReadableChapterBody(chapter);
-  }).length;
+  if (preloadStatus?.status === "paused") {
+    return "已暂停";
+  }
+
+  if (preloadStatus?.status === "running" && preloadStatus.currentChapterNumber) {
+    return `缓存中 第 ${preloadStatus.currentChapterNumber} 章`;
+  }
+
+  if (preloadStatus?.status === "retrying" && preloadStatus.currentChapterNumber) {
+    return `稍后重试 第 ${preloadStatus.currentChapterNumber} 章`;
+  }
+
+  if (preloadStatus?.status === "cooldown") {
+    return "冷却中";
+  }
+
+  if (preloadStatus?.status === "failed") {
+    if (isAnchorPreloadError(preloadStatus.error)) {
+      return "暂不缓存";
+    }
+
+    return preloadStatus.failedChapterNumber
+      ? `失败 第 ${preloadStatus.failedChapterNumber} 章`
+      : "缓存失败";
+  }
+
+  const cachedChapterNumbers = new Set<number>();
+
+  for (const chapter of cacheChapters) {
+    if (chapter.readBilling?.state || hasReadableChapterBody(chapter)) {
+      cachedChapterNumbers.add(chapter.chapterNumber);
+    }
+  }
+
+  for (const chapterNumber of preloadStatus?.generatedChapterNumbers ?? []) {
+    cachedChapterNumbers.add(chapterNumber);
+  }
+
+  const totalTargetCount = preloadStatus?.totalTargetCount ?? cacheChapters.length;
+
+  if (totalTargetCount === 0) {
+    return "暂无后续";
+  }
+
+  if (cachedChapterNumbers.size > 0 || preloadStatus?.status === "complete") {
+    return `已缓存 ${cachedChapterNumbers.size}/${totalTargetCount}`;
+  }
+
+  return "待缓存";
 }
 
 function mergeChapterLists(
@@ -426,13 +520,12 @@ export function OutlineGenerator({
   const [error, setError] = useState("");
   const [setupStep, setSetupStep] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
-  const [batchProgress, setBatchProgress] =
-    useState<BatchGenerationProgress>(emptyBatchProgress);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
   const [settingOfficialChapterNumber, setSettingOfficialChapterNumber] = useState<number | null>(
     null,
   );
+  const [readerPreloadStatus, setReaderPreloadStatus] =
+    useState<ReaderPreloadStatusDetail | null>(null);
   const router = useRouter();
   const conceptCost = GENERATION_CREDIT_COSTS.generate_concept;
   const bibleCost = GENERATION_CREDIT_COSTS.generate_bible;
@@ -476,23 +569,98 @@ export function OutlineGenerator({
     creditBalance === null || hasEnoughReaderSetupCredits
       ? ""
       : formatModeCreditShortfall(creditBalance, readerSetupCost, isInteractive);
+  const readerCacheChapters =
+    currentChapterNumber === null || currentChapterNumber === undefined
+      ? chapters
+      : chapters.filter(
+          (chapter) =>
+            chapter.chapterNumber > currentChapterNumber &&
+            chapter.chapterNumber <= currentChapterNumber + 10,
+        );
+  const effectiveReaderPreloadStatus =
+    readerPreloadStatus?.projectId === projectId &&
+    (currentChapterNumber === null ||
+      currentChapterNumber === undefined ||
+      readerPreloadStatus.anchorChapterNumber === currentChapterNumber)
+      ? readerPreloadStatus
+      : null;
+  const readerCacheSummary = getReaderCacheSummary(
+    readerCacheChapters,
+    effectiveReaderPreloadStatus,
+  );
+  const readerCacheFailureMessage =
+    effectiveReaderPreloadStatus?.status === "failed"
+      ? formatReaderPreloadError(effectiveReaderPreloadStatus.error)
+      : "";
 
-  async function runSetupRequest(endpoint: string, fallbackError: string) {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ projectId }),
-    });
-    const payload = (await response.json().catch(() => null)) as GenerationSetupResponse | null;
-
-    if (!response.ok) {
-      setError(formatUserFacingError(payload?.error, fallbackError));
-      return false;
+  useEffect(() => {
+    if (!isReaderSidebar) {
+      return;
     }
 
-    return true;
+    function handleReaderPreloadStatus(event: Event) {
+      const customEvent = event as CustomEvent<ReaderPreloadStatusDetail>;
+      const detail = customEvent.detail;
+
+      if (!detail || detail.projectId !== projectId) {
+        return;
+      }
+
+      if (
+        currentChapterNumber !== null &&
+        currentChapterNumber !== undefined &&
+        detail.anchorChapterNumber !== currentChapterNumber
+      ) {
+        return;
+      }
+
+      setReaderPreloadStatus(detail);
+    }
+
+    window.addEventListener("novelforge:reader-preload-status", handleReaderPreloadStatus);
+
+    return () => {
+      window.removeEventListener("novelforge:reader-preload-status", handleReaderPreloadStatus);
+    };
+  }, [currentChapterNumber, isReaderSidebar, projectId]);
+
+  useEffect(() => {
+    if (!isReaderSidebar || !isInteractive) {
+      return;
+    }
+
+    const isBusy = isGenerating || settingOfficialChapterNumber !== null;
+
+    dispatchReaderPreloadPause(isBusy, "reader-sidebar-busy");
+
+    return () => {
+      if (isBusy) {
+        dispatchReaderPreloadPause(false, "reader-sidebar-busy");
+      }
+    };
+  }, [isGenerating, isInteractive, isReaderSidebar, settingOfficialChapterNumber]);
+
+  async function runSetupRequest(endpoint: string, fallbackError: string) {
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ projectId }),
+      });
+      const payload = (await response.json().catch(() => null)) as GenerationSetupResponse | null;
+
+      if (!response.ok) {
+        setError(formatUserFacingError(payload?.error, fallbackError));
+        return false;
+      }
+
+      return true;
+    } catch {
+      setError(`网络异常，${fallbackError}`);
+      return false;
+    }
   }
 
   async function requestOutline(
@@ -500,21 +668,32 @@ export function OutlineGenerator({
     outlineOptions: OutlineRequestOptions = {},
     stateOptions: OutlineRequestStateOptions = {},
   ) {
-    const response = await fetch("/api/generate/outline", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        ...outlineOptions,
-      }),
-    });
+    let payload: OutlineResponse | null = null;
 
-    const payload = (await response.json().catch(() => null)) as OutlineResponse | null;
+    try {
+      const response = await fetch("/api/generate/outline", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          ...outlineOptions,
+        }),
+      });
 
-    if (!response.ok || !payload?.volume || !payload.chapters) {
-      setError(formatUserFacingError(payload?.error, fallbackError));
+      payload = (await response.json().catch(() => null)) as OutlineResponse | null;
+
+      if (!response.ok || !payload?.volume || !payload.chapters) {
+        setError(formatUserFacingError(payload?.error, fallbackError));
+        return null;
+      }
+    } catch {
+      setError(`网络异常，${fallbackError}`);
+      return null;
+    }
+
+    if (!payload?.volume || !payload.chapters) {
       return null;
     }
 
@@ -670,219 +849,73 @@ export function OutlineGenerator({
 
     setError("");
     setGeneratingChapterNumber(chapter.chapterNumber);
+    dispatchReaderPreloadPause(true, "manual-generation");
     const currentIntervention =
       interventions[chapterKey(chapter)] ?? { ...EMPTY_CHAPTER_INTERVENTION };
 
-    const response = await fetch("/api/generate/chapter", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        chapterId: chapter.id,
-        chapterNumber: chapter.chapterNumber,
-        intervention: currentIntervention,
-        ...options.batchMetadata,
-        qualityMode: selectedQualityMode,
-      }),
-    });
+    try {
+      const response = await fetch("/api/generate/chapter", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          chapterId: chapter.id,
+          chapterNumber: chapter.chapterNumber,
+          intervention: currentIntervention,
+          ...options.batchMetadata,
+          qualityMode: selectedQualityMode,
+        }),
+      });
 
-    const payload = (await response.json().catch(() => null)) as ChapterResponse | null;
+      const payload = (await response.json().catch(() => null)) as ChapterResponse | null;
 
-    setGeneratingChapterNumber(null);
+      if (!response.ok || !payload?.chapter) {
+        setError(
+          formatUserFacingError(
+            payload?.error,
+            isInteractive ? "进入本章失败，请稍后重试。" : "章节正文生成失败，请稍后重试。",
+          ),
+        );
+        return null;
+      }
 
-    if (!response.ok || !payload?.chapter) {
+      const generatedChapter = {
+        ...payload.chapter,
+        id: payload.chapterId || chapter.id,
+      };
+
+      setInterventions((currentInterventions) => ({
+        ...currentInterventions,
+        [chapterKey(generatedChapter)]:
+          generatedChapter.draft?.intervention ?? currentIntervention,
+      }));
+      setChapters((currentChapters) =>
+        currentChapters.map((currentChapter) =>
+          currentChapter.chapterNumber === generatedChapter.chapterNumber
+            ? generatedChapter
+            : currentChapter,
+        ),
+      );
+      if (options.navigateToChapter) {
+        router.push(`/project/${projectId}?chapter=${generatedChapter.chapterNumber}#chapter-reader`);
+      }
+      if (options.refresh ?? true) {
+        router.refresh();
+      }
+      return generatedChapter;
+    } catch (error) {
       setError(
         formatUserFacingError(
-          payload?.error,
+          error instanceof Error ? error.message : undefined,
           isInteractive ? "进入本章失败，请稍后重试。" : "章节正文生成失败，请稍后重试。",
         ),
       );
       return null;
-    }
-
-    const generatedChapter = {
-      ...payload.chapter,
-      id: payload.chapterId || chapter.id,
-    };
-
-    setInterventions((currentInterventions) => ({
-      ...currentInterventions,
-      [chapterKey(generatedChapter)]:
-        generatedChapter.draft?.intervention ?? currentIntervention,
-    }));
-    setChapters((currentChapters) =>
-      currentChapters.map((currentChapter) =>
-        currentChapter.chapterNumber === generatedChapter.chapterNumber
-          ? generatedChapter
-          : currentChapter,
-      ),
-    );
-    if (options.navigateToChapter) {
-      router.push(`/project/${projectId}?chapter=${generatedChapter.chapterNumber}#chapter-reader`);
-    }
-    if (options.refresh ?? true) {
-      router.refresh();
-    }
-    return generatedChapter;
-  }
-
-  async function generateBatchChapters() {
-    if (!hasPrerequisites) {
-      setError("请先完成作品设定、故事圣经和角色卡。");
-      return;
-    }
-
-    if (isBatchGenerating || isGenerating || generatingChapterNumber !== null) {
-      return;
-    }
-
-    const initialMissingOutlineRanges = getMissingBatchOutlineRanges(
-      chapters,
-      currentChapterNumber,
-    );
-    const needsOutline = initialMissingOutlineRanges.length > 0;
-    const estimatedChapterCount = getEstimatedBatchChapterCount(chapters, currentChapterNumber);
-    const minimumCost =
-      outlineCost * initialMissingOutlineRanges.length + chapterCost * estimatedChapterCount;
-    const hasEnoughBatchStartCredits = creditBalance === null || creditBalance >= minimumCost;
-
-    if (!hasEnoughBatchStartCredits) {
-      setError(formatModeCreditShortfall(creditBalance ?? 0, minimumCost, isInteractive));
-      return;
-    }
-
-    setError("");
-    setIsBatchGenerating(true);
-    setBatchProgress({
-      ...emptyBatchProgress,
-      message: needsOutline ? "正在铺开章节目录..." : "正在准备预生成队列...",
-      status: "running",
-    });
-
-    try {
-      let workingChapters = chapters;
-
-      for (const [index, range] of initialMissingOutlineRanges.entries()) {
-        setSetupStep(`正在补齐第 ${range.startChapterNumber} 章起的大纲...`);
-        setBatchProgress({
-          ...emptyBatchProgress,
-          message: `正在补齐大纲 ${index + 1}/${initialMissingOutlineRanges.length}...`,
-          status: "running",
-        });
-
-        const outlinePayload = await requestOutline(
-          "章节目录生成失败，请稍后重试。",
-          {
-            chapterCount: range.chapterCount,
-            startChapterNumber: range.startChapterNumber,
-            volumeNumber: range.volumeNumber,
-          },
-          {
-            baseChapters: workingChapters,
-            mergeChapters: true,
-          },
-        );
-
-        if (!outlinePayload) {
-          setBatchProgress({
-            ...emptyBatchProgress,
-            message: "章节目录生成失败。",
-            status: "failed",
-          });
-          return;
-        }
-
-        workingChapters = outlinePayload.chapters;
-      }
-
-      const desiredChapterNumbers = getBatchDesiredChapterNumbers(
-        workingChapters,
-        currentChapterNumber,
-      );
-      const targetChapters = getBatchTargetChapters(workingChapters, currentChapterNumber);
-      const readableChapterNumbers = new Set(
-        workingChapters
-          .filter((chapter) => desiredChapterNumbers.includes(chapter.chapterNumber))
-          .filter((chapter) => hasReadableChapterBody(chapter))
-          .map((chapter) => chapter.chapterNumber),
-      );
-      const skipped = readableChapterNumbers.size;
-
-      if (targetChapters.length === 0) {
-        setBatchProgress({
-          ...emptyBatchProgress,
-          message: "后20章暂无需要预生成的章节。",
-          skipped,
-          status: "success",
-        });
-        router.refresh();
-        return;
-      }
-
-      const batchId = `reader-preload-${Date.now()}`;
-      const routeRevision = `default-after-${currentChapterNumber ?? 0}`;
-      const routeSnapshotHash = `${routeRevision}-${desiredChapterNumbers.join("-")}`;
-      let completed = 0;
-
-      for (const chapter of targetChapters) {
-        setBatchProgress({
-          completed,
-          currentChapterNumber: chapter.chapterNumber,
-          message: `正在生成第 ${chapter.chapterNumber} 章正文...`,
-          skipped,
-          status: "running",
-          total: targetChapters.length,
-        });
-
-        const generatedChapter = await generateChapter(chapter, {
-          batchMetadata: {
-            batchRunId: batchId,
-            generationSource: "batch-20",
-            routeMode: "default",
-            routeRevision,
-            routeSnapshotHash,
-          },
-          qualityMode: "normal",
-          refresh: false,
-        });
-
-        if (!generatedChapter) {
-          setBatchProgress({
-            completed,
-            currentChapterNumber: chapter.chapterNumber,
-            message: `第 ${chapter.chapterNumber} 章生成失败，已暂停。`,
-            skipped,
-            status: "failed",
-            total: targetChapters.length,
-          });
-          return;
-        }
-
-        completed += 1;
-        setBatchProgress({
-          completed,
-          currentChapterNumber: chapter.chapterNumber,
-          message: `已完成第 ${chapter.chapterNumber} 章。`,
-          skipped,
-          status: "running",
-          total: targetChapters.length,
-        });
-      }
-
-      setBatchProgress({
-        completed,
-        currentChapterNumber: null,
-        message: `已预生成 ${completed} 章正文。`,
-        skipped,
-        status: "success",
-        total: targetChapters.length,
-      });
-      router.refresh();
     } finally {
-      setIsBatchGenerating(false);
-      setSetupStep("");
+      setGeneratingChapterNumber(null);
+      dispatchReaderPreloadPause(false, "manual-generation");
     }
   }
 
@@ -904,38 +937,42 @@ export function OutlineGenerator({
     setError("");
     setSettingOfficialChapterNumber(chapter.chapterNumber);
 
-    const response = await fetch("/api/chapters/set-official", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        chapterId: chapter.id,
-        versionId,
-      }),
-    });
+    try {
+      const response = await fetch("/api/chapters/set-official", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          chapterId: chapter.id,
+          versionId,
+        }),
+      });
 
-    const payload = (await response.json().catch(() => null)) as SetOfficialResponse | null;
+      const payload = (await response.json().catch(() => null)) as SetOfficialResponse | null;
 
-    setSettingOfficialChapterNumber(null);
+      if (!response.ok || !payload?.official) {
+        setError(formatUserFacingError(payload?.error, "正式稿设置失败，请稍后重试。"));
+        return;
+      }
 
-    if (!response.ok || !payload?.official) {
-      setError(formatUserFacingError(payload?.error, "正式稿设置失败，请稍后重试。"));
-      return;
+      setChapters((currentChapters) =>
+        currentChapters.map((currentChapter) =>
+          currentChapter.id === chapter.id
+            ? {
+                ...currentChapter,
+                official: payload.official,
+              }
+            : currentChapter,
+        ),
+      );
+      router.refresh();
+    } catch {
+      setError("网络异常，正式稿设置请求未完成，请检查网络后重试。");
+    } finally {
+      setSettingOfficialChapterNumber(null);
     }
-
-    setChapters((currentChapters) =>
-      currentChapters.map((currentChapter) =>
-        currentChapter.id === chapter.id
-          ? {
-              ...currentChapter,
-              official: payload.official,
-            }
-          : currentChapter,
-      ),
-    );
-    router.refresh();
   }
 
   function updateIntervention(
@@ -958,41 +995,6 @@ export function OutlineGenerator({
   }
 
   if (isReaderSidebar) {
-    const batchDesiredChapterNumbers = getBatchDesiredChapterNumbers(
-      chapters,
-      currentChapterNumber,
-    );
-    const batchTargetChapters = getBatchTargetChapters(chapters, currentChapterNumber);
-    const batchMissingOutlineRanges = getMissingBatchOutlineRanges(
-      chapters,
-      currentChapterNumber,
-    );
-    const batchEstimatedChapterCount = getEstimatedBatchChapterCount(
-      chapters,
-      currentChapterNumber,
-    );
-    const batchNeedsOutline = batchMissingOutlineRanges.length > 0;
-    const batchMinimumCost =
-      outlineCost * batchMissingOutlineRanges.length + chapterCost * batchEstimatedChapterCount;
-    const batchHasWork = batchNeedsOutline || batchTargetChapters.length > 0;
-    const hasEnoughBatchStartCredits =
-      creditBalance === null || creditBalance >= batchMinimumCost;
-    const batchCreditShortfallMessage =
-      creditBalance === null || hasEnoughBatchStartCredits
-        ? ""
-        : formatModeCreditShortfall(creditBalance, batchMinimumCost, isInteractive);
-    const batchProgressPercent =
-      batchProgress.total > 0
-        ? Math.min(100, Math.round((batchProgress.completed / batchProgress.total) * 100))
-        : batchProgress.status === "success"
-          ? 100
-          : 0;
-    const batchRangeLabel =
-      batchDesiredChapterNumbers.length > 0
-        ? `后20章范围：第 ${batchDesiredChapterNumbers[0]} - ${
-            batchDesiredChapterNumbers[batchDesiredChapterNumbers.length - 1]
-          } 章`
-        : "当前后20章暂无章节目录。";
     const primaryActionCost = hasPrerequisites ? readerBootstrapCost : readerSetupCost;
     const primaryActionShortfallMessage = hasPrerequisites
       ? readerBootstrapCreditShortfallMessage
@@ -1036,7 +1038,7 @@ export function OutlineGenerator({
           </div>
           <button
             className="button-secondary reader-sidebar-outline-action disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={isGenerating || isBatchGenerating || !hasEnoughPrimaryActionCredits}
+            disabled={isGenerating || !hasEnoughPrimaryActionCredits}
             onClick={hasPrerequisites ? () => generateOutline() : generateReaderSetup}
             type="button"
           >
@@ -1071,53 +1073,38 @@ export function OutlineGenerator({
           </div>
         ) : null}
 
-        <div className="reader-batch-actions mt-4">
-          <button
-            className="button-secondary reader-sidebar-outline-action disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={
-              isGenerating ||
-              isBatchGenerating ||
-              generatingChapterNumber !== null ||
-              !hasPrerequisites ||
-              !hasEnoughBatchStartCredits ||
-              !batchHasWork
-            }
-            onClick={generateBatchChapters}
-            type="button"
-          >
-            {isBatchGenerating ? batchProgress.message || "预生成中..." : "预生成后20章正文"}
-          </button>
-          <p className="mt-2 text-xs font-bold leading-5 text-[var(--muted)]">
-            {batchRangeLabel} 已有正文会跳过；需要重生的章节会重新生成，模式固定为 normal。
-          </p>
-          {batchCreditShortfallMessage ? (
-            <p className="mt-2 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-xs font-bold leading-5 text-[#7f2f1d]">
-              {batchCreditShortfallMessage}
-              <Link className="ml-1 underline" href="/account/credits">
-                {isInteractive ? "补充星火" : "补充额度"}
-              </Link>
-            </p>
-          ) : null}
-          {batchProgress.status !== "idle" ? (
-            <div className={`reader-batch-progress reader-batch-progress-${batchProgress.status}`}>
-              <div className="reader-batch-progress-head">
-                <span>{batchProgress.message}</span>
-                <span>
-                  {batchProgress.completed}/{batchProgress.total}
-                </span>
-              </div>
-              <div className="reader-batch-progress-track" aria-hidden="true">
-                <span style={{ width: `${batchProgressPercent}%` }} />
-              </div>
-              <p>
-                {batchProgress.currentChapterNumber
-                  ? `当前：第 ${batchProgress.currentChapterNumber} 章`
-                  : "当前：等待下一步"}
-                {batchProgress.skipped > 0 ? ` · 已跳过 ${batchProgress.skipped} 章` : ""}
-              </p>
+        {chapters.length > 0 ? (
+          <details className="reader-cache-fold mt-4">
+            <summary>
+              <span>后台缓存</span>
+              <span className="reader-cache-summary">{readerCacheSummary}</span>
+            </summary>
+            <div className="reader-cache-list">
+              {readerCacheFailureMessage ? (
+                <p className="reader-cache-note">{readerCacheFailureMessage}</p>
+              ) : null}
+              {readerCacheChapters.length > 0 ? (
+                readerCacheChapters.map((chapter) => {
+                  const cacheStatus = getReaderCacheItemStatus(
+                    chapter,
+                    effectiveReaderPreloadStatus,
+                  );
+
+                  return (
+                    <div className="reader-cache-item" key={chapter.id ?? chapter.chapterNumber}>
+                      <span>第 {chapter.chapterNumber} 章</span>
+                      <strong className={`reader-cache-status-${cacheStatus.tone}`}>
+                        {cacheStatus.label}
+                      </strong>
+                    </div>
+                  );
+                })
+              ) : (
+                <p className="reader-cache-note">暂无后续大纲，去目录铺开后才会缓存。</p>
+              )}
             </div>
-          ) : null}
-        </div>
+          </details>
+        ) : null}
 
         {chapters.length > 0 ? (
           <div className="reader-sidebar-chapters mt-4">
@@ -1125,35 +1112,73 @@ export function OutlineGenerator({
               const isCurrent = chapter.chapterNumber === currentChapterNumber;
               const needsRegeneration = chapterNeedsRegeneration(chapter);
               const hasReadableBody = hasReadableChapterBody(chapter);
+              const isUnclaimedCachedChapter = chapter.readBilling?.state === "unclaimed";
+              const shouldShowGenerateButton =
+                needsRegeneration || (!hasReadableBody && !isUnclaimedCachedChapter);
+              const isGeneratingThisChapter = generatingChapterNumber === chapter.chapterNumber;
+              const sidebarGenerateDisabled =
+                isGenerating ||
+                generatingChapterNumber !== null ||
+                settingOfficialChapterNumber !== null ||
+                !hasEnoughChapterCredits;
+              const sidebarGenerateLabel = isGeneratingThisChapter
+                ? needsRegeneration
+                  ? "重生中..."
+                  : "生成中..."
+                : !hasEnoughChapterCredits
+                  ? `${creditUnit}不足`
+                  : needsRegeneration
+                    ? "重生"
+                    : "生成";
+              const sidebarStatusLabel = needsRegeneration
+                ? "需重生"
+                : isUnclaimedCachedChapter
+                  ? "未认领"
+                  : isCurrent
+                    ? "当前"
+                    : hasReadableBody
+                      ? "可阅读"
+                      : "待生成";
 
               return (
-                <a
-                  aria-current={isCurrent ? "page" : undefined}
+                <article
                   className={[
                     "reader-sidebar-chapter",
                     isCurrent ? "reader-sidebar-chapter-active" : "",
                   ].join(" ")}
-                  href={`/project/${projectId}?chapter=${chapter.chapterNumber}#chapter-reader`}
                   key={chapter.id ?? chapter.chapterNumber}
                 >
-                  <span className="reader-sidebar-chapter-link">
-                    <span className="reader-sidebar-chapter-copy">
-                      <span className="reader-sidebar-chapter-number">
-                        第 {chapter.chapterNumber} 章
+                  <div className="reader-sidebar-chapter-row">
+                    <Link
+                      aria-current={isCurrent ? "page" : undefined}
+                      className="reader-sidebar-chapter-link"
+                      href={`/project/${projectId}?chapter=${chapter.chapterNumber}#chapter-reader`}
+                    >
+                      <span className="reader-sidebar-chapter-copy">
+                        <span className="reader-sidebar-chapter-number">
+                          第 {chapter.chapterNumber} 章
+                        </span>
+                        <span className="reader-sidebar-chapter-title">{chapter.title}</span>
                       </span>
-                      <span className="reader-sidebar-chapter-title">{chapter.title}</span>
+                    </Link>
+                    <span className="reader-sidebar-chapter-side">
+                      <span className="reader-sidebar-chapter-status">{sidebarStatusLabel}</span>
+                      {shouldShowGenerateButton ? (
+                        <button
+                          aria-label={`${needsRegeneration ? "重生" : "生成"}第 ${
+                            chapter.chapterNumber
+                          } 章正文`}
+                          className="reader-sidebar-chapter-action disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={sidebarGenerateDisabled}
+                          onClick={() => generateChapter(chapter, { qualityMode: "normal" })}
+                          type="button"
+                        >
+                          {sidebarGenerateLabel}
+                        </button>
+                      ) : null}
                     </span>
-                    <span className="reader-sidebar-chapter-status">
-                      {needsRegeneration
-                        ? "需重生"
-                        : isCurrent
-                          ? "当前"
-                          : hasReadableBody
-                            ? "可阅读"
-                            : "待生成"}
-                    </span>
-                  </span>
-                </a>
+                  </div>
+                </article>
               );
             })}
           </div>
@@ -1183,7 +1208,7 @@ export function OutlineGenerator({
         </div>
         <button
           className="button-primary"
-          disabled={isGenerating || isBatchGenerating || !hasPrerequisites || !hasEnoughOutlineCredits}
+          disabled={isGenerating || !hasPrerequisites || !hasEnoughOutlineCredits}
           onClick={() => generateOutline()}
           type="button"
         >
@@ -1291,7 +1316,6 @@ export function OutlineGenerator({
                     <button
                       className="button-secondary min-h-9 px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60"
                       disabled={
-                        isBatchGenerating ||
                         generatingChapterNumber !== null ||
                         settingOfficialChapterNumber !== null ||
                         !hasEnoughSelectedChapterCredits
@@ -1315,7 +1339,6 @@ export function OutlineGenerator({
                         disabled={
                           !chapter.draft.versionId ||
                           chapter.official?.versionId === chapter.draft.versionId ||
-                          isBatchGenerating ||
                           generatingChapterNumber !== null ||
                           settingOfficialChapterNumber !== null
                         }
@@ -1365,7 +1388,7 @@ export function OutlineGenerator({
                                 ? "border-[var(--accent)] bg-[#eef4f2] text-[var(--accent-strong)]"
                                 : "border-[var(--line)] bg-white text-[var(--muted)] hover:border-[var(--accent)]",
                             ].join(" ")}
-                            disabled={isBatchGenerating || generatingChapterNumber !== null}
+                            disabled={generatingChapterNumber !== null}
                             key={option.mode}
                             onClick={() => updateQualityMode(chapter, option.mode)}
                             role="radio"
@@ -1415,7 +1438,7 @@ export function OutlineGenerator({
                         </span>
                         <textarea
                           className="min-h-20 resize-y rounded-md border border-[var(--line)] bg-white px-3 py-2 text-sm leading-6 text-[var(--ink)] outline-none transition focus:border-[var(--accent)]"
-                          disabled={isBatchGenerating || generatingChapterNumber !== null}
+                          disabled={generatingChapterNumber !== null}
                           maxLength={CHAPTER_INTERVENTION_LIMITS[field.key]}
                           onChange={(event) =>
                             updateIntervention(chapter, field.key, event.target.value)

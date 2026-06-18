@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabasePublishableKey, getSupabaseUrl } from "@/lib/supabase/env";
 
-const protectedRoutes = ["/dashboard", "/create", "/project"];
+const protectedRoutes = ["/dashboard", "/create", "/project", "/account"];
 const authRoutes = ["/login"];
 
 function startsWithRoute(pathname: string, routes: string[]) {

@@ -5,6 +5,10 @@ import { BookBadge, PaperPanel, StatusBookmark } from "@/components/ui/book";
 import { ensureCreditAccount } from "@/lib/credits";
 import { createClient } from "@/lib/supabase/server";
 
+export const metadata = {
+  title: "开启新故事",
+};
+
 export default async function CreateProjectPage() {
   const supabase = await createClient();
   const {

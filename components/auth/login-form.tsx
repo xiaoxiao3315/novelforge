@@ -21,27 +21,58 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     setMessage("");
     setIsSubmitting(true);
 
-    const supabase = createClient();
-    const authCall =
-      mode === "sign-in"
-        ? supabase.auth.signInWithPassword({ email, password })
-        : supabase.auth.signUp({ email, password });
+    try {
+      const supabase = createClient();
+      const authCall =
+        mode === "sign-in"
+          ? supabase.auth.signInWithPassword({ email, password })
+          : supabase.auth.signUp({ email, password });
 
-    const { data, error } = await authCall;
-    setIsSubmitting(false);
+      const { data, error } = await authCall;
 
-    if (error) {
-      setMessage(formatUserFacingError(error.message, "登录或注册失败，请检查邮箱和密码后重试。"));
-      return;
+      if (error) {
+        setMessage(formatUserFacingError(error.message, "登录或注册失败，请检查邮箱和密码后重试。"));
+        return;
+      }
+
+      if (mode === "sign-up" && !data.session) {
+        setMessage("注册成功。请先到邮箱确认账号，再返回登录。");
+        return;
+      }
+
+      router.replace(redirectTo);
+      router.refresh();
+    } catch {
+      setMessage("网络异常，登录请求未完成，请检查网络后重试。");
+    } finally {
+      setIsSubmitting(false);
     }
+  }
 
-    if (mode === "sign-up" && !data.session) {
-      setMessage("注册成功。请先到邮箱确认账号，再返回登录。");
-      return;
+  async function handleGuestSignIn() {
+    setMessage("");
+    setIsSubmitting(true);
+
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInAnonymously();
+
+      if (error) {
+        const fallback =
+          error.code === "anonymous_provider_disabled"
+            ? "游客登录未启用。请先在 Supabase Auth 中开启 Anonymous Sign-Ins。"
+            : "游客登录失败，请稍后重试。";
+        setMessage(formatUserFacingError(error.message, fallback));
+        return;
+      }
+
+      router.replace(redirectTo);
+      router.refresh();
+    } catch {
+      setMessage("网络异常，游客登录请求未完成，请检查网络后重试。");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    router.replace(redirectTo);
-    router.refresh();
   }
 
   return (
@@ -51,7 +82,7 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
           {mode === "sign-in" ? "进入故事" : "创建故事账号"}
         </h2>
         <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-          使用邮箱和密码回到你的故事书房。
+          使用邮箱和密码回到你的故事书房，也可以先用游客身份试用。
         </p>
       </div>
 
@@ -91,7 +122,21 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
       </button>
 
       <button
+        className="button-secondary mt-3 w-full"
+        disabled={isSubmitting}
+        onClick={handleGuestSignIn}
+        type="button"
+      >
+        游客登录
+      </button>
+
+      <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+        游客数据保存在当前浏览器会话中；清除浏览器数据或退出后，可能无法找回。
+      </p>
+
+      <button
         className="mt-4 w-full text-sm font-bold text-[var(--accent-strong)]"
+        disabled={isSubmitting}
         type="button"
         onClick={() => {
           setMessage("");

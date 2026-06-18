@@ -73,10 +73,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function hasDefaultRouteMode(value: unknown) {
-  return isRecord(value) && value.routeMode === "default";
-}
-
 function markRouteMetadataStale(
   route: Record<string, unknown>,
   staleFromChapterNumber: number,
@@ -102,54 +98,50 @@ function buildStaleChapterContent(
 
   const routeMetadata = isRecord(content.routeMetadata) ? content.routeMetadata : null;
   const legacyRoute = isRecord(content.route) ? content.route : null;
-  const draft = isRecord(content.draft) ? content.draft : null;
-  const draftRouteMetadata = isRecord(draft?.routeMetadata) ? draft.routeMetadata : null;
-  const legacyDraftRoute = isRecord(draft?.route) ? draft.route : null;
-  const shouldMarkContentRouteMetadata = hasDefaultRouteMode(routeMetadata);
-  const shouldMarkLegacyContentRoute = hasDefaultRouteMode(legacyRoute);
-  const shouldMarkDraftRouteMetadata = hasDefaultRouteMode(draftRouteMetadata);
-  const shouldMarkLegacyDraftRoute = hasDefaultRouteMode(legacyDraftRoute);
+  const hasOldRouteContent = Boolean(
+    content.draft ||
+      content.official ||
+      content.summary ||
+      content.decision ||
+      content.decisionGeneration ||
+      content.stateChanges ||
+      content.readBilling ||
+      routeMetadata ||
+      legacyRoute,
+  );
 
-  if (
-    !shouldMarkContentRouteMetadata &&
-    !shouldMarkLegacyContentRoute &&
-    !shouldMarkDraftRouteMetadata &&
-    !shouldMarkLegacyDraftRoute
-  ) {
+  if (!hasOldRouteContent) {
     return null;
   }
 
-  return {
+  const nextContent: Record<string, unknown> = {
     ...content,
     needsRegeneration: true,
     stale: true,
-    ...(shouldMarkContentRouteMetadata && routeMetadata
-      ? { routeMetadata: markRouteMetadataStale(routeMetadata, staleFromChapterNumber, staleAt) }
-      : {}),
-    ...(shouldMarkLegacyContentRoute && legacyRoute
-      ? { route: markRouteMetadataStale(legacyRoute, staleFromChapterNumber, staleAt) }
-      : {}),
-    ...(draft &&
-    (shouldMarkDraftRouteMetadata || shouldMarkLegacyDraftRoute)
+    staleReason: STALE_REASON_INTERACTIVE_DECISION_SELECTED,
+    staleFromChapterNumber,
+    staleAt,
+    routeMetadata: markRouteMetadataStale(
+      routeMetadata ?? { generationSource: "reader-preload-10" },
+      staleFromChapterNumber,
+      staleAt,
+    ),
+    ...(legacyRoute
       ? {
-          draft: {
-            ...draft,
-            ...(shouldMarkDraftRouteMetadata && draftRouteMetadata
-              ? {
-                  routeMetadata: markRouteMetadataStale(
-                    draftRouteMetadata,
-                    staleFromChapterNumber,
-                    staleAt,
-                  ),
-                }
-              : {}),
-            ...(shouldMarkLegacyDraftRoute && legacyDraftRoute
-              ? { route: markRouteMetadataStale(legacyDraftRoute, staleFromChapterNumber, staleAt) }
-              : {}),
-          },
+          route: markRouteMetadataStale(legacyRoute, staleFromChapterNumber, staleAt),
         }
       : {}),
   };
+
+  delete nextContent.draft;
+  delete nextContent.official;
+  delete nextContent.summary;
+  delete nextContent.decision;
+  delete nextContent.decisionGeneration;
+  delete nextContent.stateChanges;
+  delete nextContent.readBilling;
+
+  return nextContent;
 }
 
 function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
@@ -289,35 +281,6 @@ export async function POST(request: Request) {
     decision: selectedDecision,
     stateChanges,
   };
-  const { data: savedChapter, error: updateError } = await supabase
-    .from("chapters")
-    .update({ content: chapterContent })
-    .eq("id", chapterRow.id)
-    .eq("project_id", project.id)
-    .eq("user_id", user.id)
-    .select("id")
-    .single<{ id: string }>();
-
-  if (updateError || !savedChapter) {
-    return serverError(updateError?.message || "剧情选择保存失败。");
-  }
-
-  const configJson = isRecord(config.config_json) ? config.config_json : {};
-  const { error: configUpdateError } = await supabase
-    .from("story_configs")
-    .update({
-      config_json: {
-        ...configJson,
-        interactiveState: normalizeInteractiveStoryState(interactiveState),
-      },
-    })
-    .eq("project_id", project.id)
-    .eq("user_id", user.id);
-
-  if (configUpdateError) {
-    return serverError(configUpdateError.message);
-  }
-
   const staleAt = selectedDecision.selectedAt;
   const { data: futureChapterRows, error: futureChaptersError } = await supabase
     .from("chapters")
@@ -337,6 +300,7 @@ export async function POST(request: Request) {
     chapterNumbers: [],
     staleAt,
   };
+  const staleUpdates: Array<{ id: string; content: Record<string, unknown> }> = [];
 
   for (const futureChapter of futureChapterRows ?? []) {
     const staleContent = buildStaleChapterContent(
@@ -349,29 +313,36 @@ export async function POST(request: Request) {
       continue;
     }
 
-    const { error: staleUpdateError } = await supabase
-      .from("chapters")
-      .update({ content: staleContent })
-      .eq("id", futureChapter.id)
-      .eq("project_id", project.id)
-      .eq("user_id", user.id);
-
-    if (staleUpdateError) {
-      return serverError(staleUpdateError.message);
-    }
-
+    staleUpdates.push({ id: futureChapter.id, content: staleContent });
     staleChapters.count += 1;
     staleChapters.chapterNumbers.push(futureChapter.chapter_number);
+  }
+
+  // 单个事务内完成：保存本章选择、更新互动状态、标记后续章节需重生（见 wo017 RPC）。
+  const configJson = isRecord(config.config_json) ? config.config_json : {};
+  const { error: applyError } = await supabase.rpc("apply_chapter_decision", {
+    p_project_id: project.id,
+    p_chapter_id: chapterRow.id,
+    p_chapter_content: chapterContent,
+    p_config_json: {
+      ...configJson,
+      interactiveState: normalizeInteractiveStoryState(interactiveState),
+    },
+    p_stale_chapters: staleUpdates,
+  });
+
+  if (applyError) {
+    return serverError(applyError.message || "剧情选择保存失败。");
   }
 
   const { error: logError } = await supabase.from("generation_logs").insert({
     project_id: project.id,
     operation: "select_decision_state_change",
     target_type: "chapter",
-    target_id: savedChapter.id,
+    target_id: chapterRow.id,
     prompt_version: "story-state-rules-v1",
     input: {
-      chapterId: savedChapter.id,
+      chapterId: chapterRow.id,
       decision: selectedDecision,
       previousInteractiveState: normalizeInteractiveStoryState(
         isRecord(config.config_json)
@@ -391,7 +362,7 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
-    chapterId: savedChapter.id,
+    chapterId: chapterRow.id,
     decision: selectedDecision,
     stateChanges,
     interactiveState,

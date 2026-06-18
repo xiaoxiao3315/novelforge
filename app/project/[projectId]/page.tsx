@@ -58,9 +58,58 @@ type ChapterDisplay = ChapterContent & {
   versionCount: number;
 };
 
+type ChapterClaimGate = {
+  chapterId: string;
+  chapterNumber: number;
+  autoClaim: boolean;
+};
+
 type ChapterVersionRow = {
   chapter_id: string;
 };
+
+function chapterNeedsRegeneration(chapter: ChapterDisplay | null | undefined) {
+  return Boolean(chapter?.needsRegeneration || chapter?.stale);
+}
+
+function isUnclaimedReadChapter(chapter: ChapterDisplay | null | undefined) {
+  return chapter?.readBilling?.state === "unclaimed";
+}
+
+function hasUnlockedReadableBody(chapter: ChapterDisplay | null | undefined) {
+  return Boolean(
+    chapter &&
+      !chapterNeedsRegeneration(chapter) &&
+      (chapter.official?.body || chapter.draft?.body) &&
+      (!chapter.readBilling || chapter.readBilling.state === "charged"),
+  );
+}
+
+function redactUnclaimedChapterBody(chapter: ChapterDisplay): ChapterDisplay {
+  if (!isUnclaimedReadChapter(chapter)) {
+    return chapter;
+  }
+
+  return {
+    ...chapter,
+    ...(chapter.draft
+      ? {
+          draft: {
+            ...chapter.draft,
+            body: "",
+          },
+        }
+      : {}),
+    ...(chapter.official
+      ? {
+          official: {
+            ...chapter.official,
+            body: "",
+          },
+        }
+      : {}),
+  };
+}
 
 export default async function ProjectDetailPage({
   params,
@@ -91,6 +140,7 @@ export default async function ProjectDetailPage({
     .from("projects")
     .select("id,title,description,status,created_at,updated_at")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle();
 
   if (projectError || !project) {
@@ -100,7 +150,7 @@ export default async function ProjectDetailPage({
   const creditAccount = await ensureCreditAccount(supabase);
   const creditBalance = creditAccount.ok ? creditAccount.balance : null;
 
-  const { data: config } = await supabase
+  const { data: config, error: configError } = await supabase
     .from("story_configs")
     .select(
       "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
@@ -115,7 +165,7 @@ export default async function ProjectDetailPage({
         )
       : null;
 
-  const { data: storyConcept } = await supabase
+  const { data: storyConcept, error: conceptLoadError } = await supabase
     .from("story_concepts")
     .select("content")
     .eq("project_id", projectId)
@@ -123,13 +173,13 @@ export default async function ProjectDetailPage({
 
   const concept = normalizeStoryConcept(storyConcept?.content);
 
-  const { data: storyBible } = await supabase
+  const { data: storyBible, error: bibleLoadError } = await supabase
     .from("story_bibles")
     .select("content")
     .eq("project_id", projectId)
     .maybeSingle<StoryBibleRow>();
 
-  const { data: characterRows } = await supabase
+  const { data: characterRows, error: charactersLoadError } = await supabase
     .from("characters")
     .select("content")
     .eq("project_id", projectId)
@@ -139,25 +189,35 @@ export default async function ProjectDetailPage({
   const bible = normalizeStoryBible(storyBible?.content);
   const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
 
-  const { data: volumeRows } = await supabase
+  const { data: volumeRows, error: volumesLoadError } = await supabase
     .from("volumes")
     .select("id,content")
     .eq("project_id", projectId)
     .order("volume_number", { ascending: true })
     .returns<VolumeRow[]>();
 
-  const { data: chapterRows } = await supabase
+  const { data: chapterRows, error: chaptersLoadError } = await supabase
     .from("chapters")
     .select("id,volume_id,content")
     .eq("project_id", projectId)
     .order("chapter_number", { ascending: true })
     .returns<ChapterRow[]>();
 
-  const { data: chapterVersionRows } = await supabase
+  const { data: chapterVersionRows, error: versionsLoadError } = await supabase
     .from("chapter_versions")
     .select("chapter_id")
     .eq("project_id", projectId)
     .returns<ChapterVersionRow[]>();
+
+  const loadErrors = [
+    configError ? `作品设定读取失败：${configError.message}` : null,
+    conceptLoadError ? `作品概念读取失败：${conceptLoadError.message}` : null,
+    bibleLoadError ? `故事圣经读取失败：${bibleLoadError.message}` : null,
+    charactersLoadError ? `角色卡读取失败：${charactersLoadError.message}` : null,
+    volumesLoadError ? `卷信息读取失败：${volumesLoadError.message}` : null,
+    chaptersLoadError ? `章节读取失败：${chaptersLoadError.message}` : null,
+    versionsLoadError ? `章节版本读取失败：${versionsLoadError.message}` : null,
+  ].filter((item): item is string => Boolean(item));
 
   const chapterVersionCounts = new Map<string, number>();
 
@@ -198,14 +258,29 @@ export default async function ProjectDetailPage({
 
   chapters.sort((left, right) => left.chapterNumber - right.chapterNumber);
   const defaultChapterNumber =
-    chapters.find((chapter) => chapter.official?.body || chapter.draft?.body)?.chapterNumber ??
+    chapters.find((chapter) => hasUnlockedReadableBody(chapter))?.chapterNumber ??
     chapters[0]?.chapterNumber ??
     null;
+  const hasRequestedExistingChapter = Boolean(
+    currentChapterNumber &&
+      chapters.some((chapter) => chapter.chapterNumber === currentChapterNumber),
+  );
   const visibleChapterNumber =
-    currentChapterNumber && chapters.some((chapter) => chapter.chapterNumber === currentChapterNumber)
+    hasRequestedExistingChapter && currentChapterNumber
       ? currentChapterNumber
       : defaultChapterNumber;
   const visibleChapter = chapters.find((chapter) => chapter.chapterNumber === visibleChapterNumber);
+  // 只要当前展示章节未解锁就显示付费门：显式请求的章节自动解锁，
+  // 默认落点章节改为手动确认，避免误扣费，也避免显示“尚未生成”的误导文案。
+  const currentChapterClaimGate: ChapterClaimGate | null =
+    visibleChapter && isUnclaimedReadChapter(visibleChapter)
+      ? {
+          chapterId: visibleChapter.id,
+          chapterNumber: visibleChapter.chapterNumber,
+          autoClaim: hasRequestedExistingChapter,
+        }
+      : null;
+  const displayChapters = chapters.map(redactUnclaimedChapterBody);
   const volume = visibleChapter?.volumeId
     ? volumes.get(visibleChapter.volumeId) ?? firstVolume
     : firstVolume;
@@ -221,7 +296,7 @@ export default async function ProjectDetailPage({
       creditBalance={creditBalance}
       currentChapterNumber={visibleChapterNumber}
       hasPrerequisites={hasOutlinePrerequisites}
-      initialChapters={chapters}
+      initialChapters={displayChapters}
       initialVolume={volume}
       projectId={projectId}
       projectMode={projectMode}
@@ -248,10 +323,25 @@ export default async function ProjectDetailPage({
         isAuthed
       />
 
+      {loadErrors.length > 0 ? (
+        <div
+          className="mt-4 rounded-md border border-[rgba(138,58,33,0.32)] bg-[rgba(138,58,33,0.08)] px-4 py-3 text-sm font-bold text-[var(--warning)]"
+          role="alert"
+        >
+          部分数据读取失败，页面可能显示不完整，请刷新重试。
+          {loadErrors.map((item) => (
+            <span className="mt-1 block font-normal" key={item}>
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : null}
+
       <ProjectWorkbenchLayout
         chapterGenerationSlot={chapterGenerationSlot}
-        chapters={chapters}
+        chapters={displayChapters}
         creditBalance={creditBalance}
+        currentChapterClaimGate={currentChapterClaimGate}
         currentChapterNumber={visibleChapterNumber}
         interactiveState={interactiveState}
         project={project}

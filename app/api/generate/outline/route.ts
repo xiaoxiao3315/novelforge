@@ -1,11 +1,14 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { parseJsonObject } from "@/lib/ai/json";
 import {
   GENERATION_CREDIT_COSTS,
+  refundGenerationCredits,
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -19,10 +22,8 @@ import {
   normalizeOutlineGenerationOptions,
   OUTLINE_PROMPT_VERSION,
   validateOutlineGenerationSchema,
-  type ChapterOutline,
   type NormalizedOutlineGenerationOptions,
   type OutlinePromptInput,
-  type VolumeOutline,
 } from "@/prompts/outline";
 
 type GenerateOutlineBody = {
@@ -65,10 +66,6 @@ type CharacterRow = {
   content: CharacterCard | null;
 };
 
-type VolumeIdRow = {
-  id: string;
-};
-
 type GenerationLogIdRow = {
   id: string;
 };
@@ -100,16 +97,6 @@ function validationError(message: string) {
 
 function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
-}
-
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  return JSON.parse(trimmed) as unknown;
 }
 
 function getErrorType(error: unknown) {
@@ -196,35 +183,6 @@ function buildPromptInput(
   };
 }
 
-function buildVolumeRow(projectId: string, volume: VolumeOutline) {
-  return {
-    project_id: projectId,
-    volume_number: volume.volumeNumber,
-    title: volume.title,
-    summary: volume.summary,
-    main_conflict: volume.mainConflict,
-    ending_hook: volume.endingHook,
-    content: volume,
-  };
-}
-
-function buildChapterRow(projectId: string, volumeId: string, chapter: ChapterOutline) {
-  return {
-    project_id: projectId,
-    volume_id: volumeId,
-    chapter_number: chapter.chapterNumber,
-    title: chapter.title,
-    event: chapter.event,
-    conflict: chapter.conflict,
-    character_change: chapter.characterChange,
-    highlight: chapter.highlight,
-    foreshadowing: chapter.foreshadowing,
-    ending_hook: chapter.endingHook,
-    estimated_words: chapter.estimatedWords,
-    content: chapter,
-  };
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -235,6 +193,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
+  const userId = user.id;
   const body = (await request.json().catch(() => null)) as GenerateOutlineBody | null;
 
   if (!body || typeof body !== "object") {
@@ -268,6 +227,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -437,53 +397,22 @@ export async function POST(request: Request) {
 
   const { volume, chapters } = validation;
 
-  const { data: savedVolume, error: volumeError } = await supabase
-    .from("volumes")
-    .upsert(buildVolumeRow(visibleProject.id, volume), {
-      onConflict: "project_id,volume_number",
-    })
-    .select("id")
-    .single<VolumeIdRow>();
-
-  if (volumeError || !savedVolume) {
-    const error = volumeError?.message || "卷信息保存失败。";
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
-  const { error: chapterError } = await supabase
-    .from("chapters")
-    .upsert(
-      chapters.map((chapter) => buildChapterRow(visibleProject.id, savedVolume.id, chapter)),
-      { onConflict: "project_id,chapter_number" },
-    );
-
-  if (chapterError) {
-    const error = chapterError.message || "章节大纲保存失败。";
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
+  // 先记日志、再扣点、最后落库：扣点失败时不保存内容，保存失败时自动退点。
   const { data: generationLog, error: logError } = await supabase
     .from("generation_logs")
     .insert({
       project_id: visibleProject.id,
       operation: "generate_outline",
       target_type: "volume",
-      target_id: savedVolume.id,
       model,
       prompt_version: OUTLINE_PROMPT_VERSION,
       input: logInput,
-      output: {
-        volume,
-        chapters,
-      },
     })
     .select("id")
     .single<GenerationLogIdRow>();
 
   if (logError || !generationLog) {
-    return serverError(`章节大纲已保存，但生成日志写入失败：${logError?.message || "未知错误"}`);
+    return serverError(`生成日志写入失败，本次未扣费：${logError?.message || "未知错误"}`);
   }
 
   const creditSpend = await spendGenerationCredits({
@@ -495,11 +424,47 @@ export async function POST(request: Request) {
   });
 
   if (!creditSpend.ok) {
-    return serverError(`章节大纲已保存，但点数扣除失败：${creditSpend.error}`);
+    const error = `点数扣除失败，内容未保存：${creditSpend.error}`;
+    await supabase.from("generation_logs").update({ error }).eq("id", generationLog.id);
+    const insufficient = creditSpend.error.includes("insufficient credits");
+    return NextResponse.json(
+      { error: insufficient ? "点数不足，本次未扣费，内容未保存。" : error },
+      { status: insufficient ? 402 : 500 },
+    );
+  }
+
+  async function refundAndLogSaveFailure(saveError: string) {
+    const refund = await refundGenerationCredits({
+      supabase: createAdminClient(),
+      generationLogId: generationLog!.id,
+      userId,
+    });
+    const refundNote = refund.ok ? "已自动退还本次点数。" : `自动退点失败：${refund.error}`;
+    await supabase
+      .from("generation_logs")
+      .update({ error: `${saveError}（${refundNote}）` })
+      .eq("id", generationLog!.id);
+    return refundNote;
+  }
+
+  const { data: volumeId, error: outlineSaveError } = await supabase.rpc(
+    "save_outline_generation",
+    {
+      p_project_id: visibleProject.id,
+      p_generation_log_id: generationLog.id,
+      p_volume: volume,
+      p_chapters: chapters,
+    },
+  );
+
+  if (outlineSaveError || !volumeId) {
+    const saveError = outlineSaveError?.message || "章节大纲保存失败。";
+    const refundNote = await refundAndLogSaveFailure(saveError);
+    return serverError(`章节大纲保存失败，${refundNote}`);
   }
 
   return NextResponse.json({
-    volumeId: savedVolume.id,
+    volumeId,
     outlineOptions,
     volume,
     chapters,

@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { parseJsonObject } from "@/lib/ai/json";
 import {
   GENERATION_CREDIT_COSTS,
+  refundGenerationCredits,
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   buildBiblePrompt,
   BIBLE_PROMPT_VERSION,
   validateStoryBibleGenerationSchema,
   type BiblePromptInput,
-  type CharacterCard,
-  type StoryBible,
 } from "@/prompts/bible";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
 
@@ -60,16 +61,6 @@ function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
 }
 
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  return JSON.parse(trimmed) as unknown;
-}
-
 function buildPromptInput(
   project: ProjectRow,
   config: StoryConfigRow,
@@ -87,27 +78,6 @@ function buildPromptInput(
   };
 }
 
-function buildImmutableRulesText(bible: StoryBible) {
-  return bible.immutableRules.map((rule) => `- ${rule}`).join("\n");
-}
-
-function buildCharacterRow(projectId: string, character: CharacterCard, sortOrder: number) {
-  return {
-    project_id: projectId,
-    name: character.name,
-    role: character.role,
-    appearance: character.appearance,
-    personality: character.personality,
-    goal: character.goal,
-    weakness: character.weakness,
-    secret: character.secret,
-    relationship_to_protagonist: character.relationshipToProtagonist,
-    character_arc: character.characterArc,
-    sort_order: sortOrder,
-    content: character,
-  };
-}
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -118,6 +88,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
+  const userId = user.id;
   const body = (await request.json().catch(() => null)) as GenerateBibleBody | null;
 
   if (!body || typeof body !== "object") {
@@ -138,6 +109,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -251,79 +223,22 @@ export async function POST(request: Request) {
 
   const { bible, characters } = validation;
 
-  const { data: storyBible, error: bibleError } = await supabase
-    .from("story_bibles")
-    .upsert(
-      {
-        project_id: visibleProject.id,
-        worldview: bible.worldview,
-        power_system: bible.powerSystem,
-        major_factions: bible.majorFactions,
-        main_plot: bible.mainPlot,
-        first_volume_plot: bible.firstVolumePlot,
-        protagonist_arc: bible.protagonistArc,
-        antagonist_plan: bible.antagonistPlan,
-        mid_late_foreshadowing: bible.midLateForeshadowing,
-        final_truth: bible.finalTruth,
-        immutable_rules: buildImmutableRulesText(bible),
-        content: bible,
-      },
-      { onConflict: "project_id" },
-    )
-    .select("id")
-    .single<{ id: string }>();
-
-  if (bibleError || !storyBible) {
-    const error = bibleError?.message || "故事圣经保存失败。";
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
-  const { error: deleteCharactersError } = await supabase
-    .from("characters")
-    .delete()
-    .eq("project_id", visibleProject.id);
-
-  if (deleteCharactersError) {
-    const error = `旧角色卡清理失败：${deleteCharactersError.message}`;
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
-  const { error: characterError } = await supabase
-    .from("characters")
-    .insert(
-      characters.map((character, index) =>
-        buildCharacterRow(visibleProject.id, character, index),
-      ),
-    );
-
-  if (characterError) {
-    const error = characterError.message || "角色卡保存失败。";
-    await writeErrorLog(error);
-    return serverError(error);
-  }
-
+  // 先记日志、再扣点、最后落库：扣点失败时不保存内容，保存失败时自动退点。
   const { data: generationLog, error: logError } = await supabase
     .from("generation_logs")
     .insert({
       project_id: visibleProject.id,
       operation: "generate_bible",
       target_type: "story_bible",
-      target_id: storyBible.id,
       model,
       prompt_version: BIBLE_PROMPT_VERSION,
       input: logInput,
-      output: {
-        bible,
-        characters,
-      },
     })
     .select("id")
     .single<GenerationLogIdRow>();
 
   if (logError || !generationLog) {
-    return serverError(`故事圣经已保存，但生成日志写入失败：${logError?.message || "未知错误"}`);
+    return serverError(`生成日志写入失败，本次未扣费：${logError?.message || "未知错误"}`);
   }
 
   const creditSpend = await spendGenerationCredits({
@@ -335,11 +250,47 @@ export async function POST(request: Request) {
   });
 
   if (!creditSpend.ok) {
-    return serverError(`故事圣经已保存，但点数扣除失败：${creditSpend.error}`);
+    const error = `点数扣除失败，内容未保存：${creditSpend.error}`;
+    await supabase.from("generation_logs").update({ error }).eq("id", generationLog.id);
+    const insufficient = creditSpend.error.includes("insufficient credits");
+    return NextResponse.json(
+      { error: insufficient ? "点数不足，本次未扣费，内容未保存。" : error },
+      { status: insufficient ? 402 : 500 },
+    );
+  }
+
+  async function refundAndLogSaveFailure(saveError: string) {
+    const refund = await refundGenerationCredits({
+      supabase: createAdminClient(),
+      generationLogId: generationLog!.id,
+      userId,
+    });
+    const refundNote = refund.ok ? "已自动退还本次点数。" : `自动退点失败：${refund.error}`;
+    await supabase
+      .from("generation_logs")
+      .update({ error: `${saveError}（${refundNote}）` })
+      .eq("id", generationLog!.id);
+    return refundNote;
+  }
+
+  const { data: storyBibleId, error: bibleError } = await supabase.rpc(
+    "save_story_bible_generation",
+    {
+      p_project_id: visibleProject.id,
+      p_generation_log_id: generationLog.id,
+      p_bible: bible,
+      p_characters: characters,
+    },
+  );
+
+  if (bibleError || !storyBibleId) {
+    const saveError = bibleError?.message || "故事圣经和角色卡保存失败。";
+    const refundNote = await refundAndLogSaveFailure(saveError);
+    return serverError(`故事圣经和角色卡保存失败，${refundNote}`);
   }
 
   return NextResponse.json({
-    bibleId: storyBible.id,
+    bibleId: storyBibleId,
     bible,
     characters,
     credits: {

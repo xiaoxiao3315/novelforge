@@ -10,10 +10,15 @@ export function SignOutButton() {
 
   async function handleSignOut() {
     setIsSigningOut(true);
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    router.replace("/login");
-    router.refresh();
+
+    try {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      router.replace("/login");
+      router.refresh();
+    } catch {
+      setIsSigningOut(false);
+    }
   }
 
   return (

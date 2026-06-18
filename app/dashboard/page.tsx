@@ -10,6 +10,10 @@ import {
 } from "@/lib/projects/modes";
 import { createClient } from "@/lib/supabase/server";
 
+export const metadata = {
+  title: "我的故事",
+};
+
 type ProjectRow = Omit<ProjectCardData, "mode">;
 
 type StoryConfigModeRow = {
@@ -30,6 +34,7 @@ export default async function DashboardPage() {
   const { data: projects, error: projectsError } = await supabase
     .from("projects")
     .select("id,title,description,status,created_at,updated_at")
+    .eq("user_id", user.id)
     .order("updated_at", { ascending: false });
   const projectRows = (projects ?? []) as ProjectRow[];
   const projectIds = projectRows.map((project) => project.id);

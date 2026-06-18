@@ -61,25 +61,29 @@ export function ConceptGenerator({
     setError("");
     setIsGenerating(true);
 
-    const response = await fetch("/api/generate/concept", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ projectId }),
-    });
+    try {
+      const response = await fetch("/api/generate/concept", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ projectId }),
+      });
 
-    const payload = (await response.json().catch(() => null)) as ConceptResponse | null;
+      const payload = (await response.json().catch(() => null)) as ConceptResponse | null;
 
-    setIsGenerating(false);
+      if (!response.ok || !payload?.concept) {
+        setError(formatUserFacingError(payload?.error, "作品设定生成失败，请稍后重试。"));
+        return;
+      }
 
-    if (!response.ok || !payload?.concept) {
-      setError(formatUserFacingError(payload?.error, "作品设定生成失败，请稍后重试。"));
-      return;
+      setConcept(payload.concept);
+      router.refresh();
+    } catch {
+      setError("网络异常，作品设定生成请求未完成，请检查网络后重试。");
+    } finally {
+      setIsGenerating(false);
     }
-
-    setConcept(payload.concept);
-    router.refresh();
   }
 
   return (

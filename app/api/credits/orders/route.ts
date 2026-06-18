@@ -77,6 +77,7 @@ export async function POST(request: Request) {
   const { data: existingOrder, error: existingOrderError } = await supabase
     .from("credit_orders")
     .select(orderSelectFields)
+    .eq("user_id", user.id)
     .eq("provider", PLACEHOLDER_PROVIDER)
     .eq("package_name", creditPackage.packageId)
     .eq("status", "pending")
@@ -114,6 +115,7 @@ export async function POST(request: Request) {
     const { data: racedOrder, error: racedOrderError } = await supabase
       .from("credit_orders")
       .select(orderSelectFields)
+      .eq("user_id", user.id)
       .eq("provider", PLACEHOLDER_PROVIDER)
       .eq("package_name", creditPackage.packageId)
       .eq("status", "pending")

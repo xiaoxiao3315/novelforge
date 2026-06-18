@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
-import { ChapterContinueAction } from "@/components/project/chapter-continue-action";
+import Link from "next/link";
 import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
+import { ChapterPreloadController } from "@/components/project/chapter-preload-controller";
+import { ChapterReadClaimGate } from "@/components/project/chapter-read-claim-gate";
 import { ChapterRegenerateAction } from "@/components/project/chapter-regenerate-action";
 import {
   BookBadge,
@@ -35,6 +37,11 @@ type ProjectWorkbenchLayoutProps = {
   chapterGenerationSlot?: ReactNode;
   chapters: WorkbenchChapter[];
   creditBalance: number | null;
+  currentChapterClaimGate?: {
+    chapterId: string;
+    chapterNumber: number;
+    autoClaim?: boolean;
+  } | null;
   currentChapterNumber?: number | null;
   interactiveState: InteractiveStoryState | null;
   project: WorkbenchProject;
@@ -110,6 +117,10 @@ function formatRewriteStatus(quality: WorkbenchQualityMetadata) {
     return "已执行精修";
   }
 
+  if (quality.steps?.rewrite === "failed") {
+    return "精修失败，已保留审稿初稿（按普通生成计费）";
+  }
+
   if (quality.rewriteApplied === false) {
     return "未执行精修：初稿评分已达标";
   }
@@ -140,6 +151,10 @@ function getChapterDisplayStatus(chapter: WorkbenchChapter, projectMode: Project
 
   if (projectMode !== "interactive") {
     return getChapterStatus(chapter);
+  }
+
+  if (chapter.readBilling?.state === "unclaimed") {
+    return "待读取";
   }
 
   if (chapter.decision?.selectedOptionId || chapter.decision?.customChoice?.trim()) {
@@ -287,24 +302,76 @@ function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) 
   );
 }
 
+function ChapterReadingNav({
+  nextChapterNumber,
+  previousChapterNumber,
+  projectId,
+}: {
+  nextChapterNumber?: number | null;
+  previousChapterNumber?: number | null;
+  projectId: string;
+}) {
+  return (
+    <nav aria-label="章节导航" className="reader-chapter-nav">
+      {previousChapterNumber ? (
+        <Link
+          className="reader-chapter-nav-item"
+          href={`/project/${projectId}?chapter=${previousChapterNumber}#chapter-reader`}
+        >
+          上一章
+        </Link>
+      ) : (
+        <span aria-disabled="true" className="reader-chapter-nav-item">
+          上一章
+        </span>
+      )}
+      <a className="reader-chapter-nav-item" href="#chapter-directory">
+        目录
+      </a>
+      {nextChapterNumber ? (
+        <Link
+          className="reader-chapter-nav-item"
+          href={`/project/${projectId}?chapter=${nextChapterNumber}#chapter-reader`}
+        >
+          下一章
+        </Link>
+      ) : (
+        <span aria-disabled="true" className="reader-chapter-nav-item">
+          下一章
+        </span>
+      )}
+    </nav>
+  );
+}
+
 function ChapterReaderPreview({
   chapter,
+  currentChapterClaimGate,
   interactiveState,
   projectId,
   projectMode,
   creditBalance,
   hasNextChapter = false,
   nextChapterNumber = null,
+  nextOutlineChapterNumber = null,
+  previousChapterNumber = null,
   showBackmatter = true,
   volume,
 }: {
   chapter: WorkbenchChapter | null;
+  currentChapterClaimGate?: {
+    chapterId: string;
+    chapterNumber: number;
+    autoClaim?: boolean;
+  } | null;
   interactiveState: InteractiveStoryState | null;
   projectId: string;
   projectMode: ProjectMode;
   creditBalance?: number | null;
   hasNextChapter?: boolean;
   nextChapterNumber?: number | null;
+  nextOutlineChapterNumber?: number | null;
+  previousChapterNumber?: number | null;
   showBackmatter?: boolean;
   volume: VolumeOutline | null;
 }) {
@@ -312,6 +379,7 @@ function ChapterReaderPreview({
   const reader = getReaderBody(chapter, projectMode);
   const needsRegeneration = chapterNeedsRegeneration(chapter);
   const hasReadableBody = hasReadableChapterBody(chapter);
+  const isClaimingCurrentChapter = Boolean(currentChapterClaimGate);
   const summary = chapter?.official?.summary ?? chapter?.summary ?? null;
   const readerSourceLabel = "阅读页";
   const creditUnit = isInteractive ? "星火" : "额度";
@@ -355,7 +423,14 @@ function ChapterReaderPreview({
             hasReadableBody ? "" : "interactive-reader-empty",
           ].join(" ")}
         >
-          {hasReadableBody ? (
+          {currentChapterClaimGate ? (
+            <ChapterReadClaimGate
+              autoClaim={currentChapterClaimGate.autoClaim ?? true}
+              chapterId={currentChapterClaimGate.chapterId}
+              chapterNumber={currentChapterClaimGate.chapterNumber}
+              projectId={projectId}
+            />
+          ) : hasReadableBody ? (
             reader.body
           ) : (
             <div className="reader-empty-state">
@@ -381,30 +456,27 @@ function ChapterReaderPreview({
             </div>
           )}
         </div>
-        {!isInteractive && chapter && hasReadableBody ? (
-          <ChapterContinueAction
-            creditBalance={creditBalance ?? null}
-            hasNextChapter={hasNextChapter}
-            nextChapterNumber={nextChapterNumber}
+        {isInteractive && chapter && hasReadableBody && !isClaimingCurrentChapter ? (
+          <ChapterEndDecision
+            chapterId={chapter.id}
+            chapterNumber={chapter.chapterNumber}
+            initialDecisionGeneration={chapter.decisionGeneration ?? null}
+            initialDecision={chapter.decision ?? null}
+            initialInteractiveState={interactiveState}
+            initialStateChanges={chapter.stateChanges ?? null}
+            key={chapter.id}
+            nextChapterNumber={nextOutlineChapterNumber}
+            projectId={projectId}
+          />
+        ) : null}
+        {chapter && hasReadableBody && !isClaimingCurrentChapter ? (
+          <ChapterReadingNav
+            nextChapterNumber={hasNextChapter ? nextChapterNumber : null}
+            previousChapterNumber={previousChapterNumber}
             projectId={projectId}
           />
         ) : null}
       </ReaderPage>
-      {isInteractive && chapter && hasReadableBody ? (
-        <ChapterEndDecision
-          chapterId={chapter.id}
-          chapterNumber={chapter.chapterNumber}
-          creditBalance={creditBalance ?? null}
-          hasNextChapter={hasNextChapter}
-          initialDecisionGeneration={chapter.decisionGeneration ?? null}
-          initialDecision={chapter.decision ?? null}
-          initialInteractiveState={interactiveState}
-          initialStateChanges={chapter.stateChanges ?? null}
-          key={chapter.id}
-          nextChapterNumber={nextChapterNumber}
-          projectId={projectId}
-        />
-      ) : null}
 
       {showBackmatter ? <ChapterBackmatter chapter={chapter} readerSource={reader.source} summary={summary} /> : null}
     </div>
@@ -466,6 +538,7 @@ function ProjectReaderShellLayout({
   chapters,
   creditBalance,
   currentChapter,
+  currentChapterClaimGate,
   interactiveState,
   project,
   projectMode,
@@ -475,6 +548,7 @@ function ProjectReaderShellLayout({
   | "chapterGenerationSlot"
   | "chapters"
   | "creditBalance"
+  | "currentChapterClaimGate"
   | "interactiveState"
   | "project"
   | "projectMode"
@@ -486,11 +560,37 @@ function ProjectReaderShellLayout({
   const modeLabel = isInteractive ? "互动阅读" : "经典阅读";
   const creditLabel = isInteractive ? "星火" : "额度";
   const nextChapter = currentChapter
+    ? chapters.find(
+        (chapter) =>
+          chapter.chapterNumber === currentChapter.chapterNumber + 1 &&
+          hasReadableChapterBody(chapter),
+      )
+    : null;
+  const nextOutlineChapter = currentChapter
     ? chapters.find((chapter) => chapter.chapterNumber === currentChapter.chapterNumber + 1)
     : null;
+  const previousChapter = currentChapter
+    ? chapters.find(
+        (chapter) =>
+          chapter.chapterNumber === currentChapter.chapterNumber - 1 &&
+          hasReadableChapterBody(chapter),
+      )
+    : null;
+  const shouldPreload =
+    isInteractive &&
+    currentChapter &&
+    hasReadableChapterBody(currentChapter) &&
+    !currentChapterClaimGate;
 
   return (
     <section className="interactive-reader-shell">
+      {shouldPreload ? (
+        <ChapterPreloadController
+          anchorChapterNumber={currentChapter.chapterNumber}
+          chapters={chapters}
+          projectId={project.id}
+        />
+      ) : null}
       <div className="reader-mobile-topbar">
         <div className="reader-mobile-current">
           <span>{modeLabel}</span>
@@ -546,9 +646,12 @@ function ProjectReaderShellLayout({
         <ChapterReaderPreview
           chapter={currentChapter}
           creditBalance={creditBalance}
+          currentChapterClaimGate={currentChapterClaimGate}
           hasNextChapter={Boolean(nextChapter)}
           interactiveState={interactiveState}
           nextChapterNumber={nextChapter?.chapterNumber ?? null}
+          nextOutlineChapterNumber={nextOutlineChapter?.chapterNumber ?? null}
+          previousChapterNumber={previousChapter?.chapterNumber ?? null}
           projectId={project.id}
           projectMode={projectMode}
           showBackmatter={false}
@@ -563,6 +666,7 @@ export function ProjectWorkbenchLayout({
   chapterGenerationSlot,
   chapters,
   creditBalance,
+  currentChapterClaimGate = null,
   currentChapterNumber,
   interactiveState,
   project,
@@ -584,6 +688,7 @@ export function ProjectWorkbenchLayout({
       chapters={chapters}
       creditBalance={creditBalance}
       currentChapter={currentChapter}
+      currentChapterClaimGate={currentChapterClaimGate}
       interactiveState={interactiveState}
       project={project}
       projectMode={projectMode}

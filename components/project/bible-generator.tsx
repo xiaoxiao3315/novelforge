@@ -83,26 +83,30 @@ export function BibleGenerator({
     setError("");
     setIsGenerating(true);
 
-    const response = await fetch("/api/generate/bible", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ projectId }),
-    });
+    try {
+      const response = await fetch("/api/generate/bible", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ projectId }),
+      });
 
-    const payload = (await response.json().catch(() => null)) as BibleResponse | null;
+      const payload = (await response.json().catch(() => null)) as BibleResponse | null;
 
-    setIsGenerating(false);
+      if (!response.ok || !payload?.bible || !payload.characters) {
+        setError(formatUserFacingError(payload?.error, "故事圣经生成失败，请稍后重试。"));
+        return;
+      }
 
-    if (!response.ok || !payload?.bible || !payload.characters) {
-      setError(formatUserFacingError(payload?.error, "故事圣经生成失败，请稍后重试。"));
-      return;
+      setBible(payload.bible);
+      setCharacters(payload.characters);
+      router.refresh();
+    } catch {
+      setError("网络异常，故事圣经生成请求未完成，请检查网络后重试。");
+    } finally {
+      setIsGenerating(false);
     }
-
-    setBible(payload.bible);
-    setCharacters(payload.characters);
-    router.refresh();
   }
 
   return (

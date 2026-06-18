@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
 import { generateDeepSeekJson, generateDeepSeekText, getDeepSeekModel } from "@/lib/ai/deepseek";
+import { parseJsonObject } from "@/lib/ai/json";
 import {
   GENERATION_CREDIT_COSTS,
+  refundGenerationCredits,
   requireGenerationCredits,
   spendGenerationCredits,
 } from "@/lib/credits";
@@ -28,6 +30,7 @@ import {
   summarizeChapterDecisionGenerationFailures,
   type ChapterDecisionGenerationResult,
 } from "@/lib/interactive/chapter-decision-generation";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
@@ -44,6 +47,7 @@ import {
   CHAPTER_PROMPT_VERSION,
   DEFAULT_CHAPTER_WORD_TARGET,
   EMPTY_CHAPTER_INTERVENTION,
+  normalizeChapterContent,
   type ChapterIntervention,
   type ChapterContent,
   type ChapterPromptInput,
@@ -59,6 +63,7 @@ import {
   buildChapterSummaryRetryPrompt,
   CHAPTER_SUMMARY_PROMPT_VERSION,
   repairChapterSummaryOutput,
+  type ChapterSummary,
   validateChapterSummaryOutput,
 } from "@/prompts/chapter-summary";
 import { normalizeStoryConcept, type StoryConcept } from "@/prompts/concept";
@@ -95,6 +100,7 @@ type GenerateChapterBody = {
   qualityMode?: unknown;
   generationSource?: unknown;
   batchRunId?: unknown;
+  anchorChapterNumber?: unknown;
   routeMode?: unknown;
   routeRevision?: unknown;
   routeSnapshotHash?: unknown;
@@ -166,6 +172,8 @@ type GenerationLogIdRow = {
 
 const CHAPTER_MAX_TOKENS = 6000;
 const CHAPTER_TEMPERATURE = 0.72;
+const PRELOAD_RATE_LIMIT_WINDOW_MS = 60_000;
+const PRELOAD_RATE_LIMIT_PER_WINDOW = 6;
 const CHAPTER_SUMMARY_GENERATION_ATTEMPTS = 2;
 const CHAPTER_QUALITY_JSON_GENERATION_ATTEMPTS = 2;
 const CHAPTER_SUMMARY_MAX_TOKENS = 1800;
@@ -221,6 +229,14 @@ type SummaryRepairLog = {
   rawPreview: string;
 };
 
+type SummaryFallbackLog = {
+  summaryFallback: true;
+  reason: string;
+  rawPreview: string;
+};
+
+type ChapterSummaryPayload = Parameters<typeof buildChapterSummary>[0];
+
 type ChapterGenerationQualityMode = "normal" | "quality";
 
 type BatchChapterRouteMetadata = {
@@ -231,6 +247,12 @@ type BatchChapterRouteMetadata = {
   routeSnapshotHash?: string;
   qualityMode: "normal";
   isDefaultRoute: true;
+};
+
+type ReaderPreloadMetadata = {
+  generationSource: "reader-preload-10";
+  anchorChapterNumber: number;
+  qualityMode: "normal";
 };
 
 type ChapterDraftQualityMetadata = {
@@ -331,7 +353,7 @@ function parseBatchRouteMetadata(
   body: GenerateChapterBody,
 ): { ok: true; metadata: BatchChapterRouteMetadata | null } | { ok: false; error: string } {
   const hasBatchMetadata =
-    body.generationSource !== undefined ||
+    body.generationSource === "batch-20" ||
     body.batchRunId !== undefined ||
     body.routeMode !== undefined ||
     body.routeRevision !== undefined ||
@@ -393,14 +415,58 @@ function parseBatchRouteMetadata(
   };
 }
 
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
+function parseReaderPreloadMetadata(
+  body: GenerateChapterBody,
+): { ok: true; metadata: ReaderPreloadMetadata | null } | { ok: false; error: string } {
+  if (body.generationSource === undefined || body.generationSource === "batch-20") {
+    if (body.anchorChapterNumber !== undefined) {
+      return {
+        ok: false,
+        error: "anchorChapterNumber requires generationSource=reader-preload-10.",
+      };
+    }
 
-  return JSON.parse(trimmed) as unknown;
+    return { ok: true, metadata: null };
+  }
+
+  if (body.generationSource !== "reader-preload-10") {
+    return { ok: false, error: "generationSource must be batch-20 or reader-preload-10." };
+  }
+
+  if (body.qualityMode !== "normal") {
+    return { ok: false, error: "reader-preload-10 chapter generation requires qualityMode=normal." };
+  }
+
+  if (
+    body.batchRunId !== undefined ||
+    body.routeMode !== undefined ||
+    body.routeRevision !== undefined ||
+    body.routeSnapshotHash !== undefined
+  ) {
+    return {
+      ok: false,
+      error: "reader-preload-10 cannot include batch route metadata.",
+    };
+  }
+
+  const anchorChapterNumber = body.anchorChapterNumber;
+
+  if (
+    typeof anchorChapterNumber !== "number" ||
+    !Number.isInteger(anchorChapterNumber) ||
+    anchorChapterNumber <= 0
+  ) {
+    return { ok: false, error: "reader-preload-10 requires anchorChapterNumber." };
+  }
+
+  return {
+    ok: true,
+    metadata: {
+      generationSource: "reader-preload-10",
+      anchorChapterNumber,
+      qualityMode: "normal",
+    },
+  };
 }
 
 function isControlCharacterJsonError(error: unknown) {
@@ -644,6 +710,7 @@ function buildSummaryValidationLogOutput(
   schemaFailures: SummarySchemaValidationFailureLog[],
   parseFailures: SummaryJsonParseFailure[],
   repairLog: SummaryRepairLog | null = null,
+  fallbackLog: SummaryFallbackLog | null = null,
 ) {
   return {
     summaryValidation: {
@@ -653,6 +720,31 @@ function buildSummaryValidationLogOutput(
       repairedFields: repairLog?.repairedFields ?? [],
     },
     summaryJsonParseFailures: parseFailures,
+    ...(fallbackLog ? { summaryFallback: fallbackLog } : {}),
+  };
+}
+
+function buildFallbackChapterSummaryPayload(
+  chapter: ChapterOutline,
+  body: string,
+): ChapterSummaryPayload {
+  const bodyPreview = body.replace(/\s+/g, " ").trim().slice(0, 180);
+  const fallbackNote = bodyPreview || "正文已生成，但自动摘要暂不可用。";
+
+  return {
+    keyEvents: [chapter.event || `第 ${chapter.chapterNumber} 章正文已生成。`],
+    characterStateChanges: [
+      chapter.characterChange || "自动摘要生成失败，角色状态变化请以正文为准。",
+    ],
+    relationshipChanges: ["自动摘要生成失败，关系变化请以正文为准。"],
+    foreshadowingAndClues: [
+      chapter.foreshadowing || "自动摘要生成失败，伏笔线索请以正文为准。",
+    ],
+    unresolvedQuestions: [
+      chapter.endingHook || "自动摘要生成失败，未解悬念请以正文为准。",
+    ],
+    endingState: `自动摘要生成失败，已保留正文。正文预览：${fallbackNote}`,
+    continuityNotes: [`下一章生成请优先参考第 ${chapter.chapterNumber} 章完整正文。`],
   };
 }
 
@@ -907,6 +999,56 @@ function withoutStaleRouteMetadata(content: ChapterContent): ChapterContent {
   return nextContent;
 }
 
+function withoutReadBilling(content: ChapterContent): ChapterContent {
+  const nextContent = { ...content };
+
+  delete nextContent.readBilling;
+
+  return nextContent;
+}
+
+function redactChapterBodies(content: ChapterContent): ChapterContent {
+  return {
+    ...content,
+    ...(content.draft ? { draft: { ...content.draft, body: "" } } : {}),
+    ...(content.official ? { official: { ...content.official, body: "" } } : {}),
+  };
+}
+
+function hasUnlockedReadableBody(content: unknown) {
+  const chapter = normalizeChapterContent(content);
+
+  return Boolean(
+    chapter &&
+      !chapter.needsRegeneration &&
+      !chapter.stale &&
+      (chapter.official?.body || chapter.draft?.body) &&
+      (!chapter.readBilling || chapter.readBilling.state === "charged"),
+  );
+}
+
+// 质量流水线的 5 个提示词都会整体序列化 storyContext。
+// 不加窗口的话，前文摘要 + 正文节选会随章节数无限膨胀（且每次精修放大 5 倍成本）。
+// 策略：最近 8 章保留完整上下文（含正文节选），再往前 16 章只保留摘要，更早的丢弃
+// （长线设定靠 story_bible/伏笔字段维系；正文生成主提示词另有全量压缩前情）。
+const QUALITY_CONTEXT_EXCERPT_WINDOW = 8;
+const QUALITY_CONTEXT_SUMMARY_WINDOW = 24;
+
+function buildQualityPreviousSummaries(
+  previousChapters: ChapterPromptInput["previousChapters"],
+): ChapterPromptInput["previousChapters"] {
+  if (previousChapters.length <= QUALITY_CONTEXT_EXCERPT_WINDOW) {
+    return previousChapters;
+  }
+
+  const recent = previousChapters.slice(-QUALITY_CONTEXT_EXCERPT_WINDOW);
+  const older = previousChapters
+    .slice(-QUALITY_CONTEXT_SUMMARY_WINDOW, -QUALITY_CONTEXT_EXCERPT_WINDOW)
+    .map((chapter) => ({ ...chapter, draftExcerpt: null }));
+
+  return [...older, ...recent];
+}
+
 function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPromptContext {
   return {
     storyConfig: input.config,
@@ -915,7 +1057,7 @@ function buildChapterQualityContext(input: ChapterPromptInput): ChapterQualityPr
     characters: input.characters,
     volume: input.volume,
     chapterOutline: input.chapter,
-    previousSummaries: input.previousChapters,
+    previousSummaries: buildQualityPreviousSummaries(input.previousChapters),
     directorInstruction: input.intervention,
     interactiveDecision: {
       previousDecision: input.previousDecision ?? null,
@@ -1126,6 +1268,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
+  const userId = user.id;
   const body = (await request.json().catch(() => null)) as GenerateChapterBody | null;
 
   if (!body || typeof body !== "object") {
@@ -1143,6 +1286,13 @@ export async function POST(request: Request) {
   }
 
   const batchRouteMetadata = batchRouteMetadataValidation.metadata;
+  const readerPreloadMetadataValidation = parseReaderPreloadMetadata(body);
+
+  if (!readerPreloadMetadataValidation.ok) {
+    return validationError(readerPreloadMetadataValidation.error);
+  }
+
+  const readerPreloadMetadata = readerPreloadMetadataValidation.metadata;
   const qualityModeValidation = normalizeQualityMode(body.qualityMode);
 
   if (!qualityModeValidation.ok) {
@@ -1177,6 +1327,7 @@ export async function POST(request: Request) {
     .from("projects")
     .select("id,title,description")
     .eq("id", projectId)
+    .eq("user_id", user.id)
     .maybeSingle<ProjectRow>();
 
   if (projectError) {
@@ -1242,6 +1393,7 @@ export async function POST(request: Request) {
       project: visibleProject,
       intervention,
       ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+      ...(readerPreloadMetadata ? { preloadMetadata: readerPreloadMetadata } : {}),
     },
     qualityMode,
   );
@@ -1399,6 +1551,90 @@ export async function POST(request: Request) {
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
   const projectMode = getProjectModeFromConfig(config.config_json);
+
+  if (readerPreloadMetadata) {
+    if (projectMode !== "interactive") {
+      const error = "reader-preload-10 only supports interactive projects.";
+      await writeErrorLog(error, baseLogInput, chapterRow.id);
+      return validationError(error);
+    }
+
+    const { anchorChapterNumber } = readerPreloadMetadata;
+
+    if (
+      chapter.chapterNumber <= anchorChapterNumber ||
+      chapter.chapterNumber > anchorChapterNumber + 10
+    ) {
+      const error = "reader-preload-10 can only generate the next 10 chapters from the anchor.";
+      await writeErrorLog(error, baseLogInput, chapterRow.id);
+      return validationError(error);
+    }
+
+    const anchorChapterRow = (previousRows ?? []).find(
+      (row) => row.chapter_number === anchorChapterNumber,
+    );
+
+    if (!anchorChapterRow || !hasUnlockedReadableBody(anchorChapterRow.content)) {
+      const error = "reader-preload-10 requires a readable unlocked anchor chapter.";
+      await writeErrorLog(error, baseLogInput, chapterRow.id);
+      return validationError(error);
+    }
+
+    // 幂等保护：目标章节已有可用正文（含未解锁缓存）时直接返回，
+    // 不再免费消耗 AI 重复生成，也不在响应中泄露未付费正文。
+    const existingPreloadContent = normalizeChapterContent(chapterRow.content);
+
+    if (
+      existingPreloadContent &&
+      !existingPreloadContent.needsRegeneration &&
+      !existingPreloadContent.stale &&
+      (existingPreloadContent.official?.body || existingPreloadContent.draft?.body)
+    ) {
+      const redactedExisting: ChapterContent = {
+        ...existingPreloadContent,
+        ...(existingPreloadContent.draft
+          ? { draft: { ...existingPreloadContent.draft, body: "" } }
+          : {}),
+        ...(existingPreloadContent.official
+          ? { official: { ...existingPreloadContent.official, body: "" } }
+          : {}),
+      };
+
+      return NextResponse.json({
+        chapterId: chapterRow.id,
+        chapter: redactedExisting,
+        alreadyGenerated: true,
+        credits: {
+          cost: 0,
+          deferredCost:
+            existingPreloadContent.readBilling?.state === "unclaimed"
+              ? GENERATION_CREDIT_COSTS.claim_read_chapter
+              : 0,
+          balance: null,
+        },
+      });
+    }
+
+    // 频控：后台缓存生成是平台先行垫付 AI 成本的免费操作，
+    // 按用户在最近一分钟内的章节生成次数限流（客户端正常节奏约 5 次/分钟）。
+    const windowStartIso = new Date(
+      Date.now() - PRELOAD_RATE_LIMIT_WINDOW_MS,
+    ).toISOString();
+    const { count: recentGenerationCount, error: rateLimitError } = await supabase
+      .from("generation_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", user.id)
+      .eq("operation", "generate_chapter")
+      .gte("created_at", windowStartIso);
+
+    if (!rateLimitError && (recentGenerationCount ?? 0) >= PRELOAD_RATE_LIMIT_PER_WINDOW) {
+      return NextResponse.json(
+        { error: "后台缓存生成过于频繁，请稍后再试。" },
+        { status: 429 },
+      );
+    }
+  }
+
   const previousDecisionRow = (previousRows ?? []).find(
     (row) => row.chapter_number === chapter.chapterNumber - 1,
   );
@@ -1446,12 +1682,16 @@ export async function POST(request: Request) {
     currentDecision,
     interactiveState,
     ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+    ...(readerPreloadMetadata ? { preloadMetadata: readerPreloadMetadata } : {}),
   };
   const creditOperation =
     qualityMode === "quality" ? "generate_chapter_quality" : "generate_chapter";
-  const creditCheck = await requireGenerationCredits(supabase, creditOperation);
+  const shouldDeferReadBilling = Boolean(readerPreloadMetadata);
+  const creditCheck = shouldDeferReadBilling
+    ? null
+    : await requireGenerationCredits(supabase, creditOperation);
 
-  if (!creditCheck.ok) {
+  if (creditCheck && !creditCheck.ok) {
     return NextResponse.json({ error: creditCheck.error }, { status: creditCheck.status ?? 500 });
   }
 
@@ -1529,6 +1769,7 @@ export async function POST(request: Request) {
     draft,
     body: outputText,
     ...(batchRouteMetadata ? { routeMetadata: batchRouteMetadata } : {}),
+    ...(readerPreloadMetadata ? { preloadMetadata: readerPreloadMetadata } : {}),
     ...(qualityMode === "quality"
       ? {
           qualityMode,
@@ -1538,7 +1779,10 @@ export async function POST(request: Request) {
         }
       : {}),
   };
-  const shouldGenerateAutoDecision = false;
+  // 互动模式下章节生成后自动附带命运分歧的开关。
+  // 默认关闭：分歧由读者在章节结尾按需生成，避免为未读章节多付一次 AI 成本。
+  const shouldGenerateAutoDecision =
+    process.env.ENABLE_AUTO_CHAPTER_DECISION === "true" && projectMode === "interactive";
   const autoDecisionPromise =
     shouldGenerateAutoDecision
       ? generateChapterDecision(
@@ -1568,6 +1812,7 @@ export async function POST(request: Request) {
   let parsedSummary: unknown;
   let parsedSummaryOutputText = "";
   let summaryValidation: ReturnType<typeof validateChapterSummaryOutput> | null = null;
+  let summaryFallbackLog: SummaryFallbackLog | null = null;
   let summaryRepairLog: SummaryRepairLog | null = null;
   let summaryPrompt = summaryUserPrompt;
 
@@ -1592,10 +1837,22 @@ export async function POST(request: Request) {
         logMessage,
         summaryLogInput,
         chapterRow.id,
-        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures, null, {
+          summaryFallback: true,
+          reason: errorMessage,
+          rawPreview: "",
+        }),
       );
-      await autoDecisionPromise?.catch(() => null);
-      return serverError(errorMessage);
+      summaryFallbackLog = {
+        summaryFallback: true,
+        reason: errorMessage,
+        rawPreview: "",
+      };
+      summaryValidation = {
+        ok: true,
+        summary: buildFallbackChapterSummaryPayload(chapter, outputText),
+      };
+      break;
     }
 
     if (!result.outputText) {
@@ -1665,12 +1922,22 @@ export async function POST(request: Request) {
     } else if (summarySchemaFailures.length > 0) {
       const lastFailure = summarySchemaFailures[summarySchemaFailures.length - 1];
       const error = `章节摘要 JSON 未通过 schema 校验：${lastFailure.validationError}`;
+      summaryFallbackLog = {
+        summaryFallback: true,
+        reason: error,
+        rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      };
       await writeSummaryErrorLog(
         error,
         summaryLogInput,
         chapterRow.id,
         {
-          ...buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+          ...buildSummaryValidationLogOutput(
+            summarySchemaFailures,
+            summaryParseFailures,
+            null,
+            summaryFallbackLog,
+          ),
           summaryRepairAttempt: {
             ok: false,
             error: repair.error,
@@ -1680,72 +1947,177 @@ export async function POST(request: Request) {
           },
         },
       );
-      await autoDecisionPromise?.catch(() => null);
-      return serverError(error);
+      summaryValidation = {
+        ok: true,
+        summary: buildFallbackChapterSummaryPayload(chapter, outputText),
+      };
     } else {
       const error = "DeepSeek 摘要生成失败：AI 输出不是有效 JSON。";
       const errorLog =
         summaryParseFailures.length > 0
           ? formatSummaryJsonFailureLog(summaryParseFailures)
           : error;
+      summaryFallbackLog = {
+        summaryFallback: true,
+        reason: error,
+        rawPreview: parsedSummaryOutputText.slice(0, RAW_OUTPUT_PREVIEW_LENGTH),
+      };
       await writeSummaryErrorLog(
         errorLog,
         summaryLogInput,
         chapterRow.id,
-        buildSummaryValidationLogOutput(summarySchemaFailures, summaryParseFailures),
+        buildSummaryValidationLogOutput(
+          summarySchemaFailures,
+          summaryParseFailures,
+          null,
+          summaryFallbackLog,
+        ),
       );
-      await autoDecisionPromise?.catch(() => null);
-      return serverError(error);
+      summaryValidation = {
+        ok: true,
+        summary: buildFallbackChapterSummaryPayload(chapter, outputText),
+      };
     }
   }
 
-  const summary = buildChapterSummary(summaryValidation.summary, model);
+  const summary: ChapterSummary = buildChapterSummary(summaryValidation.summary, model);
   const autoDecisionResult = autoDecisionPromise ? await autoDecisionPromise : null;
   const autoDecisionSummary = buildDecisionGenerationSummary(autoDecisionResult);
-  const { data: latestVersionRow, error: latestVersionError } = await supabase
-    .from("chapter_versions")
-    .select("version_number")
-    .eq("project_id", visibleProject.id)
-    .eq("chapter_id", chapterRow.id)
-    .eq("user_id", user.id)
-    .order("version_number", { ascending: false })
-    .limit(1)
-    .maybeSingle<ChapterVersionNumberRow>();
 
-  if (latestVersionError) {
-    const error = `章节版本号读取失败：${latestVersionError.message}`;
-    await writeErrorLog(
-      error,
-      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
-      chapterRow.id,
-    );
-    return serverError(error);
-  }
-
-  const nextVersionNumber = (latestVersionRow?.version_number ?? 0) + 1;
-  const { data: savedVersion, error: versionError } = await supabase
-    .from("chapter_versions")
+  // 先记日志、再扣点、最后落库：扣点失败时不保存内容，保存失败时自动退点。
+  const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
+  const { data: generationLog, error: chapterLogError } = await supabase
+    .from("generation_logs")
     .insert({
       project_id: visibleProject.id,
-      chapter_id: chapterRow.id,
-      version_number: nextVersionNumber,
-      body: outputText,
-      summary,
-      intervention,
+      operation: "generate_chapter",
+      target_type: "chapter",
+      target_id: chapterRow.id,
       model,
       prompt_version: CHAPTER_PROMPT_VERSION,
+      input: chapterLogInput,
     })
-    .select("id,version_number")
-    .single<ChapterVersionIdRow>();
+    .select("id")
+    .single<GenerationLogIdRow>();
 
-  if (versionError || !savedVersion) {
-    const error = versionError?.message || "章节版本保存失败。";
-    await writeErrorLog(
-      error,
-      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
-      chapterRow.id,
+  if (chapterLogError || !generationLog) {
+    return serverError(
+      `生成日志写入失败，本次未扣费：${chapterLogError?.message || "未知错误"}`,
     );
-    return serverError(error);
+  }
+
+  let creditBalanceAfter: number | null = null;
+
+  // 精修步骤失败但已回退保留初稿时，按普通生成价格扣点。
+  const rewriteFellBack =
+    creditOperation === "generate_chapter_quality" &&
+    qualityPipelineResult?.steps.rewrite === "failed";
+  const effectiveCreditOperation = rewriteFellBack ? "generate_chapter" : creditOperation;
+
+  if (!shouldDeferReadBilling) {
+    const creditSpend = await spendGenerationCredits({
+      supabase,
+      projectId: visibleProject.id,
+      generationLogId: generationLog.id,
+      operation: effectiveCreditOperation,
+      reason: rewriteFellBack
+        ? "精修失败回退初稿，按普通生成计费"
+        : qualityMode === "quality"
+          ? "精修生成章节正文和摘要"
+          : "生成章节正文和摘要",
+    });
+
+    if (!creditSpend.ok) {
+      const error = `点数扣除失败，内容未保存：${creditSpend.error}`;
+      await supabase.from("generation_logs").update({ error }).eq("id", generationLog.id);
+      const insufficient = creditSpend.error.includes("insufficient credits");
+      return NextResponse.json(
+        { error: insufficient ? "点数不足，本次未扣费，内容未保存。" : error },
+        { status: insufficient ? 402 : 500 },
+      );
+    }
+
+    creditBalanceAfter = creditSpend.balanceAfter;
+  }
+
+  async function refundAndLogSaveFailure(saveError: string) {
+    if (shouldDeferReadBilling) {
+      await supabase
+        .from("generation_logs")
+        .update({ error: saveError })
+        .eq("id", generationLog!.id);
+      return "本次为后台缓存生成，未扣费。";
+    }
+
+    const refund = await refundGenerationCredits({
+      supabase: createAdminClient(),
+      generationLogId: generationLog!.id,
+      userId,
+    });
+    const refundNote = refund.ok ? "已自动退还本次点数。" : `自动退点失败：${refund.error}`;
+    await supabase
+      .from("generation_logs")
+      .update({ error: `${saveError}（${refundNote}）` })
+      .eq("id", generationLog!.id);
+    return refundNote;
+  }
+
+  // 并发安全：版本号唯一冲突时重读最新版本号并重试。
+  const VERSION_INSERT_ATTEMPTS = 3;
+  let savedVersion: ChapterVersionIdRow | null = null;
+  let versionErrorMessage = "";
+
+  for (let attempt = 1; attempt <= VERSION_INSERT_ATTEMPTS; attempt += 1) {
+    const { data: latestVersionRow, error: latestVersionError } = await supabase
+      .from("chapter_versions")
+      .select("version_number")
+      .eq("project_id", visibleProject.id)
+      .eq("chapter_id", chapterRow.id)
+      .eq("user_id", user.id)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle<ChapterVersionNumberRow>();
+
+    if (latestVersionError) {
+      versionErrorMessage = `章节版本号读取失败：${latestVersionError.message}`;
+      break;
+    }
+
+    const nextVersionNumber = (latestVersionRow?.version_number ?? 0) + 1;
+    const { data: insertedVersion, error: versionError } = await supabase
+      .from("chapter_versions")
+      .insert({
+        project_id: visibleProject.id,
+        chapter_id: chapterRow.id,
+        version_number: nextVersionNumber,
+        body: outputText,
+        summary,
+        intervention,
+        model,
+        prompt_version: CHAPTER_PROMPT_VERSION,
+      })
+      .select("id,version_number")
+      .single<ChapterVersionIdRow>();
+
+    if (insertedVersion && !versionError) {
+      savedVersion = insertedVersion;
+      break;
+    }
+
+    versionErrorMessage = versionError?.message || "章节版本保存失败。";
+
+    const isUniqueConflict =
+      versionError?.code === "23505" || /duplicate key/i.test(versionErrorMessage);
+
+    if (!isUniqueConflict || attempt === VERSION_INSERT_ATTEMPTS) {
+      break;
+    }
+  }
+
+  if (!savedVersion) {
+    const saveError = versionErrorMessage || "章节版本保存失败。";
+    const refundNote = await refundAndLogSaveFailure(saveError);
+    return serverError(`章节版本保存失败，${refundNote}`);
   }
 
   const versionedDraft = {
@@ -1769,16 +2141,33 @@ export async function POST(request: Request) {
           decisionResult: autoDecisionResult,
         })
       : routedBaseChapterContent;
+  const billableChapterContent = withoutReadBilling(decisionChapterContent);
   const chapterContent = batchRouteMetadata
     ? {
-        ...decisionChapterContent,
+        ...billableChapterContent,
         routeMetadata: batchRouteMetadata,
       }
-    : decisionChapterContent;
+    : billableChapterContent;
+  const preloadReadBilling = readerPreloadMetadata
+    ? {
+        state: "unclaimed" as const,
+        source: "reader-preload-10" as const,
+        cost: GENERATION_CREDIT_COSTS.claim_read_chapter,
+        generationLogId: generationLog.id,
+        anchorChapterNumber: readerPreloadMetadata.anchorChapterNumber,
+        generatedAt: new Date().toISOString(),
+      }
+    : null;
+  const finalChapterContent = preloadReadBilling
+    ? {
+        ...chapterContent,
+        readBilling: preloadReadBilling,
+      }
+    : chapterContent;
 
   const { data: savedChapter, error: updateError } = await supabase
     .from("chapters")
-    .update({ content: chapterContent })
+    .update({ content: finalChapterContent })
     .eq("id", chapterRow.id)
     .eq("project_id", visibleProject.id)
     .eq("user_id", user.id)
@@ -1786,46 +2175,35 @@ export async function POST(request: Request) {
     .single<{ id: string }>();
 
   if (updateError || !savedChapter) {
-    const error = updateError?.message || "章节正文保存失败。";
+    const saveError = updateError?.message || "章节正文保存失败。";
     await supabase
       .from("chapter_versions")
       .delete()
       .eq("id", savedVersion.id)
       .eq("user_id", user.id);
-    await writeErrorLog(
-      error,
-      withQualityLogInput(logInput, qualityMode, qualityPipelineResult),
-      chapterRow.id,
-    );
-    return serverError(error);
+    const refundNote = await refundAndLogSaveFailure(saveError);
+    return serverError(`章节正文保存失败，${refundNote}`);
   }
 
-  const chapterLogInput = withQualityLogInput(logInput, qualityMode, qualityPipelineResult);
+  const loggableChapterContent = shouldDeferReadBilling
+    ? redactChapterBodies(finalChapterContent)
+    : finalChapterContent;
   const chapterLogOutput = {
-    chapter: chapterContent,
+    chapter: loggableChapterContent,
     ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
+    ...(summaryFallbackLog ? { summaryFallback: summaryFallbackLog } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),
   };
-  const { data: generationLog, error: chapterLogError } = await supabase
+  const { error: chapterLogUpdateError } = await supabase
     .from("generation_logs")
-    .insert({
-      project_id: visibleProject.id,
-      operation: "generate_chapter",
-      target_type: "chapter",
-      target_id: savedChapter.id,
-      model,
-      prompt_version: CHAPTER_PROMPT_VERSION,
-      input: chapterLogInput,
-      output: chapterLogOutput,
-    })
-    .select("id")
-    .single<GenerationLogIdRow>();
+    .update({ output: chapterLogOutput })
+    .eq("id", generationLog.id);
 
-  if (chapterLogError || !generationLog) {
+  if (chapterLogUpdateError) {
     return serverError(
-      `章节正文和摘要已保存，但生成日志写入失败：${chapterLogError?.message || "未知错误"}`,
+      `章节正文和摘要已保存，但生成日志更新失败：${chapterLogUpdateError.message}`,
     );
   }
 
@@ -1870,6 +2248,7 @@ export async function POST(request: Request) {
         summarySchemaFailures,
         summaryParseFailures,
         summaryRepairLog,
+        summaryFallbackLog,
       ),
     },
   });
@@ -1878,31 +2257,32 @@ export async function POST(request: Request) {
     return serverError(`章节正文和摘要已保存，但摘要日志写入失败：${summaryLogError.message}`);
   }
 
-  const creditSpend = await spendGenerationCredits({
-    supabase,
-    projectId: visibleProject.id,
-    generationLogId: generationLog.id,
-    operation: creditOperation,
-    reason:
-      qualityMode === "quality"
-        ? "精修生成章节正文和摘要"
-        : "生成章节正文和摘要",
-  });
+  if (shouldDeferReadBilling) {
+    // 后台缓存章节尚未付费解锁：响应中不返回正文，防止绕过 claim-read 计费。
+    const redactedChapter = redactChapterBodies(finalChapterContent);
 
-  if (!creditSpend.ok) {
-    return serverError(`章节正文和摘要已保存，但点数扣除失败：${creditSpend.error}`);
+    return NextResponse.json({
+      chapterId: savedChapter.id,
+      chapter: redactedChapter,
+      ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
+      credits: {
+        cost: 0,
+        deferredCost: GENERATION_CREDIT_COSTS.claim_read_chapter,
+        balance: null,
+      },
+    });
   }
 
   return NextResponse.json({
     chapterId: savedChapter.id,
-    chapter: chapterContent,
+    chapter: finalChapterContent,
     ...(autoDecisionSummary ? { autoDecision: autoDecisionSummary } : {}),
     ...(qualityMode === "quality" && qualityPipelineResult
       ? { quality: summarizeQualityPipelineResult(qualityPipelineResult) }
       : {}),
     credits: {
-      cost: GENERATION_CREDIT_COSTS[creditOperation],
-      balance: creditSpend.balanceAfter,
+      cost: GENERATION_CREDIT_COSTS[effectiveCreditOperation],
+      balance: creditBalanceAfter,
     },
   });
 }

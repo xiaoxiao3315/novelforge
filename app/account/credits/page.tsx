@@ -21,6 +21,10 @@ import { CREDIT_PACKAGES } from "@/lib/payments/packages";
 import type { CreditOrderStatus } from "@/lib/payments/types";
 import { createClient } from "@/lib/supabase/server";
 
+export const metadata = {
+  title: "星火补给",
+};
+
 type CreditTransactionRow = {
   id: string;
   operation: string;
@@ -49,6 +53,7 @@ const operationLabels: Record<GenerationCreditOperation, string> = {
   generate_outline: "生成章节大纲",
   generate_chapter: "生成章节正文",
   generate_chapter_quality: "精修生成章节正文",
+  claim_read_chapter: "阅读缓存章节",
   generate_chapter_summary: "章节摘要",
   set_official: "设为正式稿",
 };
@@ -96,12 +101,14 @@ export default async function CreditsPage() {
   const { data: transactions, error: transactionsError } = await supabase
     .from("credit_transactions")
     .select("id,operation,amount,balance_after,reason,status,created_at")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(30)
     .returns<CreditTransactionRow[]>();
   const { data: orders, error: ordersError } = await supabase
     .from("credit_orders")
     .select("id,order_no,package_name,credits_amount,status,credit_transaction_id,paid_at,cancelled_at,created_at")
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(10)
     .returns<CreditOrderRow[]>();

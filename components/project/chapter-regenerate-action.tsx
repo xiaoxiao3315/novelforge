@@ -53,29 +53,33 @@ export function ChapterRegenerateAction({
     setError("");
     setIsGenerating(true);
 
-    const response = await fetch("/api/generate/chapter", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        projectId,
-        chapterNumber,
-        qualityMode,
-      }),
-    });
-    const payload = (await response.json().catch(() => null)) as ChapterRegenerationResponse | null;
+    try {
+      const response = await fetch("/api/generate/chapter", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          chapterNumber,
+          qualityMode,
+        }),
+      });
+      const payload = (await response.json().catch(() => null)) as ChapterRegenerationResponse | null;
 
-    setIsGenerating(false);
+      if (!response.ok || !payload?.chapter) {
+        setError(formatUserFacingError(payload?.error, "本章重生失败，请稍后重试。"));
+        return;
+      }
 
-    if (!response.ok || !payload?.chapter) {
-      setError(formatUserFacingError(payload?.error, "本章重生失败，请稍后重试。"));
-      return;
+      const generatedChapterNumber = payload.chapter.chapterNumber ?? chapterNumber;
+      router.push(`/project/${projectId}?chapter=${generatedChapterNumber}#chapter-reader`);
+      router.refresh();
+    } catch {
+      setError("网络异常，本章重生请求未完成，请检查网络后重试。");
+    } finally {
+      setIsGenerating(false);
     }
-
-    const generatedChapterNumber = payload.chapter.chapterNumber ?? chapterNumber;
-    router.push(`/project/${projectId}?chapter=${generatedChapterNumber}#chapter-reader`);
-    router.refresh();
   }
 
   return (

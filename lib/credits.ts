@@ -13,6 +13,7 @@ export const GENERATION_CREDIT_COSTS = {
   generate_outline: 5,
   generate_chapter: 8,
   generate_chapter_quality: 20,
+  claim_read_chapter: 8,
   generate_chapter_summary: 0,
   set_official: 0,
 } as const;
@@ -111,6 +112,40 @@ export async function spendGenerationCredits({
   return {
     ok: true as const,
     amount,
+    balanceAfter: row.balance_after,
+    transactionId: row.transaction_id,
+  };
+}
+
+export async function refundGenerationCredits({
+  supabase,
+  generationLogId,
+  reason,
+  userId,
+}: {
+  supabase: SupabaseClient;
+  generationLogId: string;
+  reason?: string;
+  userId: string;
+}) {
+  const { data, error } = await supabase.rpc("refund_generation_credits", {
+    p_generation_log_id: generationLogId,
+    p_user_id: userId,
+    ...(reason ? { p_reason: reason } : {}),
+  });
+
+  if (error) {
+    return { ok: false as const, error: error.message };
+  }
+
+  const row = Array.isArray(data) ? (data[0] as SpendCreditsRow | undefined) : undefined;
+
+  if (!row) {
+    return { ok: false as const, error: "点数退还失败。" };
+  }
+
+  return {
+    ok: true as const,
     balanceAfter: row.balance_after,
     transactionId: row.transaction_id,
   };

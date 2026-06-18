@@ -466,6 +466,9 @@ export async function runChapterQualityPipeline(
     if (!rewrittenDraft) {
       result.steps.rewrite = "failed";
       result.errors.push({ step: "rewrite", message: "rewrite output is empty." });
+      // 精修失败时回退保留初稿：初稿与审稿已完成，不应让整条流水线作废。
+      result.finalText = draft;
+      result.status = "success";
       return result;
     }
 
@@ -477,6 +480,9 @@ export async function runChapterQualityPipeline(
   } catch (error) {
     result.steps.rewrite = "failed";
     result.errors.push({ step: "rewrite", message: getErrorMessage(error) });
+    // 精修失败时回退保留初稿：初稿与审稿已完成，不应让整条流水线作废。
+    result.finalText = draft;
+    result.status = "success";
     return result;
   }
 }

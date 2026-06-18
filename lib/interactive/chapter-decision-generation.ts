@@ -1,4 +1,5 @@
 import { generateDeepSeekJson } from "@/lib/ai/deepseek";
+import { parseJsonObject } from "@/lib/ai/json";
 import {
   buildChapterDecisionPrompt,
   CHAPTER_DECISION_PROMPT_VERSION,
@@ -53,16 +54,6 @@ function getErrorType(error: unknown) {
   }
 
   return "unknown_error";
-}
-
-function parseJsonObject(text: string) {
-  const trimmed = text
-    .trim()
-    .replace(/^```(?:json)?/i, "")
-    .replace(/```$/i, "")
-    .trim();
-
-  return JSON.parse(trimmed) as unknown;
 }
 
 export function summarizeChapterDecisionGenerationFailures(

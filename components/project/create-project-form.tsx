@@ -184,40 +184,44 @@ export function CreateProjectForm() {
     setError("");
     setIsSubmitting(true);
 
-    const response = await fetch("/api/projects", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        title: form.title,
-        description: form.description,
-        channel: form.channel,
-        marketGenre: form.marketGenre,
-        subGenre: form.subGenre,
-        tropes: form.tropes,
-        protagonistArchetype: form.protagonistArchetype,
-        cheatPower: form.cheatPower,
-        romanceLine: form.romanceLine,
-        tone: form.tone,
-        extraIdeas: form.extraIdeas,
-        mode: form.mode,
-      }),
-    });
+    try {
+      const response = await fetch("/api/projects", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: form.title,
+          description: form.description,
+          channel: form.channel,
+          marketGenre: form.marketGenre,
+          subGenre: form.subGenre,
+          tropes: form.tropes,
+          protagonistArchetype: form.protagonistArchetype,
+          cheatPower: form.cheatPower,
+          romanceLine: form.romanceLine,
+          tone: form.tone,
+          extraIdeas: form.extraIdeas,
+          mode: form.mode,
+        }),
+      });
 
-    const payload = (await response.json().catch(() => null)) as
-      | { projectId?: string; error?: string }
-      | null;
+      const payload = (await response.json().catch(() => null)) as
+        | { projectId?: string; error?: string }
+        | null;
 
-    setIsSubmitting(false);
+      if (!response.ok || !payload?.projectId) {
+        setError(formatUserFacingError(payload?.error, "作品创建失败，请稍后重试。"));
+        return;
+      }
 
-    if (!response.ok || !payload?.projectId) {
-      setError(formatUserFacingError(payload?.error, "作品创建失败，请稍后重试。"));
-      return;
+      router.replace(`/project/${payload.projectId}`);
+      router.refresh();
+    } catch {
+      setError("网络异常，作品创建请求未完成，请检查网络后重试。");
+    } finally {
+      setIsSubmitting(false);
     }
-
-    router.replace(`/project/${payload.projectId}`);
-    router.refresh();
   }
 
   return (

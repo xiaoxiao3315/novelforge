@@ -4,6 +4,10 @@ import { LoginForm } from "@/components/auth/login-form";
 import { BookBadge, PaperPanel, StatusBookmark } from "@/components/ui/book";
 import { createClient } from "@/lib/supabase/server";
 
+export const metadata = {
+  title: "登录",
+};
+
 function normalizeRedirectTo(value?: string) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) {
     return "/dashboard";

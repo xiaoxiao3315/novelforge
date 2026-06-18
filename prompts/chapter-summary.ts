@@ -396,12 +396,22 @@ export function buildChapterSummaryRetryPrompt(input: ChapterSummaryRetryPromptI
   ].join("\n");
 }
 
-function formatPreviousSummaries(previousSummaries: PreviousChapterSummaryContext[]) {
-  if (previousSummaries.length === 0) {
+const PREVIOUS_SUMMARY_CONTEXT_WINDOW = 6;
+
+function formatPreviousSummaries(allPreviousSummaries: PreviousChapterSummaryContext[]) {
+  if (allPreviousSummaries.length === 0) {
     return "无。当前章节前没有已保存章节摘要。";
   }
 
-  return previousSummaries
+  const omittedCount = Math.max(
+    0,
+    allPreviousSummaries.length - PREVIOUS_SUMMARY_CONTEXT_WINDOW,
+  );
+  const previousSummaries = allPreviousSummaries.slice(-PREVIOUS_SUMMARY_CONTEXT_WINDOW);
+  const prefix =
+    omittedCount > 0 ? `（更早 ${omittedCount} 章摘要已省略，只保留最近章节。）\n\n` : "";
+
+  return prefix + previousSummaries
     .map((chapter) => {
       if (!chapter.summary) {
         return [
