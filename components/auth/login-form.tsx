@@ -8,7 +8,12 @@ import { formatUserFacingError } from "@/lib/ui/errors";
 
 type Mode = "sign-in" | "sign-up";
 
-export function LoginForm({ redirectTo }: { redirectTo: string }) {
+type LoginFormProps = {
+  internalMode?: boolean;
+  redirectTo: string;
+};
+
+export function LoginForm({ internalMode = false, redirectTo }: LoginFormProps) {
   const [mode, setMode] = useState<Mode>("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -81,6 +86,40 @@ export function LoginForm({ redirectTo }: { redirectTo: string }) {
     } finally {
       setIsSubmitting(false);
     }
+  }
+
+  if (internalMode) {
+    return (
+      <section className="surface p-6">
+        <div className="mb-6">
+          <h2 className="font-serif text-2xl font-black text-[var(--ink)]">
+            进入内部故事工作台
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+            当前为内部单用户模式，不使用 Supabase Auth，数据保存在服务器的 INTERNAL_DATA_DIR。
+          </p>
+        </div>
+
+        {message ? (
+          <p className="mb-4 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
+            {message}
+          </p>
+        ) : null}
+
+        <button
+          className="button-primary w-full"
+          disabled={isSubmitting}
+          onClick={handleGuestSignIn}
+          type="button"
+        >
+          {isSubmitting ? "正在打开书房..." : "进入内部工作台"}
+        </button>
+
+        <p className="mt-3 text-xs leading-5 text-[var(--muted)]">
+          请在部署环境中设置 INTERNAL_AUTH_ENABLED=true，并把 INTERNAL_DATA_DIR 指向可持久化的服务器目录。
+        </p>
+      </section>
+    );
   }
 
   return (

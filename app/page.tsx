@@ -8,6 +8,7 @@ import {
   SectionTabs,
   StatusBookmark,
 } from "@/components/ui/book";
+import { hasInternalSession, isInternalAuthEnabled } from "@/lib/internal/auth";
 import { createClient } from "@/lib/supabase/server";
 
 const modes = [
@@ -43,12 +44,19 @@ const features = [
 ];
 
 export default async function HomePage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const internalMode = isInternalAuthEnabled();
+  const internalSession = await hasInternalSession();
+  let isAuthed = internalSession;
 
-  const isAuthed = Boolean(user);
+  if (!internalMode) {
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    isAuthed = Boolean(user);
+  }
+
   const primaryHref = isAuthed ? "/dashboard" : "/login?redirectTo=/dashboard";
   const primaryLabel = isAuthed ? "继续上次的命运" : "开始我的故事";
   const secondaryHref = isAuthed ? "/create" : "/login?redirectTo=/create";

@@ -1,88 +1,84 @@
 # NovelForge / 小说工坊
 
-NovelForge 是一个互动小说生成工作台。用户通过剧情筛选器创建作品，再使用 DeepSeek 逐步生成作品设定、故事圣经、章节大纲和单章正文；章节阶段支持导演指令干预，并保留章节版本与正式稿。
+NovelForge 是一个内部使用的互动小说生成工作台。当前交付版本默认使用内部单用户模式：登录只设置服务端内部会话 cookie，项目数据写入服务器本地 JSON 文件，AI 生成仍使用 DeepSeek。
 
-当前版本：`v0.1` 内测准备版。
+## 当前能力
 
-## 当前功能
+- 内部单用户登录，不依赖 Supabase Auth。
+- 服务器本地 JSON 持久化，默认文件为 `INTERNAL_DATA_DIR/novelforge-store.json`。
+- Dashboard 项目列表、创建项目、项目工作台。
+- DeepSeek 生成作品设定、故事圣经、角色卡、章节大纲、章节正文和章节分歧。
+- 经典小说模式与互动剧情模式。
+- 章节预加载、章节解锁阅读、章节版本、正式稿确认。
+- Supabase 数据库和计费 RPC 代码仍保留为兼容路径，但内部交付不要求启用 Supabase。
 
-- Supabase 邮箱密码登录和受保护页面。
-- Dashboard 作品列表和创建作品入口。
-- 剧情筛选器：题材、背景、世界、主角、冲突、基调、连载结构和补充想法。
-- DeepSeek 生成作品设定、故事圣经、角色卡、第一卷 20 章大纲、单章正文。
-- 单章导演指令：风格倾向、必须出现、必须避免、结尾要求。
-- 章节摘要、章节版本、正式稿确认。
-- 点数系统：先记日志、再扣点、后落库；扣点失败不保存内容，保存失败自动退点。
-- 互动剧情模式：命运分歧、读者预载（reader-preload-10）、按章解锁扣费（claim-read）。
-- 点数账户页：余额、成本表、交易流水、订单状态。
-- Mock 支付闭环：仅非生产环境测试用，不接真实支付。
+## 内部部署环境变量
 
-## 本地启动
+复制 `.env.example` 为部署环境文件，例如服务器上的 `.env.production.local`。
+
+内部模式最少需要：
+
+```bash
+INTERNAL_AUTH_ENABLED=true
+INTERNAL_DATA_DIR=/opt/novelforge/shared/internal-data
+
+DEEPSEEK_API_KEY=your-deepseek-api-key
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+
+ENABLE_MOCK_PAYMENTS=false
+ENABLE_AUTO_CHAPTER_DECISION=false
+```
+
+`INTERNAL_DATA_DIR` 必须指向可持久化目录。不要放在 `.next/`、临时目录或 Vercel/serverless 文件系统中。
+
+## 本地运行
 
 ```bash
 npm install
-npx supabase db push   # 应用 supabase/migrations 下全部迁移（含 wo017 退款与事务 RPC）
 npm run dev
 ```
 
-打开 `http://localhost:3000`。
+默认开发端口是 `3300`，打开：
 
-常用检查：
+```text
+http://127.0.0.1:3300
+```
+
+## 生产运行
+
+```bash
+npm ci
+npm run build
+npm run start
+```
+
+`npm run start` 会监听 `127.0.0.1:3300`，适合放在 PM2/Nginx 后面运行。
+
+## 验证命令
 
 ```bash
 npm run typecheck
 npm run lint
-git diff --check
+npm run build
+npm audit --audit-level=high
 ```
 
-## 必要环境变量
+## Supabase 兼容路径
 
-参考 `.env.example` 配置本地环境。至少需要：
+如果以后要恢复 Supabase Auth/数据库模式，需要额外配置：
 
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `DEEPSEEK_API_KEY`
-- `DEEPSEEK_BASE_URL`
-- `DEEPSEEK_MODEL`
-- `ENABLE_MOCK_PAYMENTS`：设为 `true` 才启用 Mock 支付；生产环境始终禁用
+```bash
+NEXT_PUBLIC_SUPABASE_URL=https://your-project-ref.supabase.co
+NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your-supabase-publishable-key
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
+```
 
-不要把 `.env.local` 或任何密钥提交到仓库。
+并执行 `supabase/migrations` 下的迁移。内部模式不需要这些变量。
 
-## 计费与事务
+## 安全说明
 
-成本定义在 `lib/credits.ts`（concept 1 / bible 3 / outline 5 / chapter 8 / quality chapter 20 / 预载章节阅读 8）。
-
-- 所有生成路由统一顺序：**写 generation_log → 原子扣点（`spend_generation_credits`，advisory lock 防双扣）→ 落库内容**。扣点失败返回 402/500 且不保存内容；落库失败调用 `refund_generation_credits` 自动退点（按 generation_log_id 幂等）。
-- 读者预载章节生成时不扣点，解锁阅读时经 `claim-read` 扣费；服务端对预载做幂等直返、正文脱敏和每分钟 6 次的频控。
-- `set_official_chapter_version` 与 `apply_chapter_decision` 两个 RPC 把多步写入收敛为单事务（行锁防并发覆盖）。
-
-## 支付状态
-
-当前不接真实支付，不接 Stripe、微信支付、支付宝，也没有真实 webhook。
-
-`/account/credits` 中的 Mock 支付只用于本地或测试环境验证订单状态、入账流水和幂等逻辑。生产环境下 mock-complete API 会拒绝执行。
-
-## 手动验收清单
-
-1. 注册或登录账号。
-2. 进入 Dashboard。
-3. 创建一个作品。
-4. 在项目页生成作品设定。
-5. 生成故事圣经和角色卡。
-6. 生成第一卷章节大纲。
-7. 在某一章填写导演指令。
-8. 生成该章正文。
-9. 重新生成同一章，确认版本数量增加。
-10. 将满意版本设为正式稿。
-11. 查看点数余额和扣点流水。
-12. 在点数页创建点数包 pending 订单。
-13. 使用 Mock 支付模拟成功，确认余额增加、订单 paid、流水为 `purchase_credits`。
-14. 使用 Mock 支付模拟失败或取消，确认余额不增加。
-
-## 已知限制
-
-- AI 输出仍可能需要人工校对和修改。
-- 长 JSON 输出已做重试和清洗，但模型异常时仍可能失败。
-- 当前只做单章正文生成，不做批量生成整本小说。
-- 当前没有 TipTap 编辑器、改写、续写、多分支树、社区、排行榜、AI 绘图或漫画分镜。
-- 当前没有真实充值、退款、发票、订阅或正式支付对账流程。
+- 不要提交 `.env.local`、`.env.production.local` 或任何真实密钥。
+- `ENABLE_MOCK_PAYMENTS` 生产环境保持 `false`。
+- 当前内部模式是单用户工作台，不适合作为多用户公网产品直接开放。
+- Vercel/serverless 不适合当前本地 JSON 持久化方案；如要部署官方网址，建议使用自建服务器持久磁盘，或改回数据库持久化。
