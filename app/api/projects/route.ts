@@ -8,7 +8,6 @@ import {
 import { hasInternalSession } from "@/lib/internal/auth";
 import { createInternalProject } from "@/lib/internal/store";
 import { isProjectMode, normalizeProjectMode } from "@/lib/projects/modes";
-import { createClient } from "@/lib/supabase/server";
 
 type ProjectRequestBody = {
   title?: unknown;
@@ -56,19 +55,7 @@ function validationError(message: string) {
 }
 
 export async function POST(request: Request) {
-  const internalSession = await hasInternalSession();
-  let supabase: Awaited<ReturnType<typeof createClient>> | null = null;
-  let user: { id: string } | null = null;
-
-  if (!internalSession) {
-    supabase = await createClient();
-    const {
-      data: { user: currentUser },
-    } = await supabase.auth.getUser();
-    user = currentUser;
-  }
-
-  if (!user && !internalSession) {
+  if (!(await hasInternalSession())) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
@@ -113,91 +100,35 @@ export async function POST(request: Request) {
     return validationError("热门元素最多选择 3 个，且选项必须合法。");
   }
 
-  if (internalSession) {
-    const project = await createInternalProject({
-      title,
-      description: description || null,
-      config: {
-        theme: typeof body.channel === "string" ? body.channel : null,
-        genre: typeof body.marketGenre === "string" ? body.marketGenre : null,
-        background: typeof body.subGenre === "string" ? body.subGenre : null,
-        world_setting: typeof body.cheatPower === "string" ? body.cheatPower : null,
-        protagonist:
-          typeof body.protagonistArchetype === "string" ? body.protagonistArchetype : null,
-        core_conflict: tropes.join(","),
-        tone: typeof body.tone === "string" ? body.tone : null,
-        serial_structure: typeof body.romanceLine === "string" ? body.romanceLine : null,
-        extra_ideas: extraIdeas || null,
-        config_json: {
-          filterVersion: MARKET_FILTER_VERSION,
-          channel: body.channel,
-          marketGenre: body.marketGenre,
-          subGenre: body.subGenre,
-          tropes,
-          protagonistArchetype: body.protagonistArchetype,
-          cheatPower: body.cheatPower,
-          romanceLine: body.romanceLine,
-          tone: body.tone,
-          extraIdeas,
-          mode,
-        },
+  const project = await createInternalProject({
+    title,
+    description: description || null,
+    config: {
+      theme: typeof body.channel === "string" ? body.channel : null,
+      genre: typeof body.marketGenre === "string" ? body.marketGenre : null,
+      background: typeof body.subGenre === "string" ? body.subGenre : null,
+      world_setting: typeof body.cheatPower === "string" ? body.cheatPower : null,
+      protagonist:
+        typeof body.protagonistArchetype === "string" ? body.protagonistArchetype : null,
+      core_conflict: tropes.join(","),
+      tone: typeof body.tone === "string" ? body.tone : null,
+      serial_structure: typeof body.romanceLine === "string" ? body.romanceLine : null,
+      extra_ideas: extraIdeas || null,
+      config_json: {
+        filterVersion: MARKET_FILTER_VERSION,
+        channel: body.channel,
+        marketGenre: body.marketGenre,
+        subGenre: body.subGenre,
+        tropes,
+        protagonistArchetype: body.protagonistArchetype,
+        cheatPower: body.cheatPower,
+        romanceLine: body.romanceLine,
+        tone: body.tone,
+        extraIdeas,
+        mode,
       },
-    });
-
-    return NextResponse.json({ projectId: project.id }, { status: 201 });
-  }
-
-  if (!supabase || !user) {
-    return NextResponse.json({ error: "请先登录。" }, { status: 401 });
-  }
-
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .insert({
-      title,
-      description: description || null,
-      status: "draft",
-    })
-    .select("id")
-    .single();
-
-  if (projectError || !project) {
-    return NextResponse.json(
-      { error: projectError?.message || "作品创建失败。" },
-      { status: 500 },
-    );
-  }
-
-  const { error: configError } = await supabase.from("story_configs").insert({
-    project_id: project.id,
-    theme: body.channel,
-    genre: body.marketGenre,
-    background: body.subGenre,
-    world_setting: body.cheatPower,
-    protagonist: body.protagonistArchetype,
-    core_conflict: tropes.join(","),
-    tone: body.tone,
-    serial_structure: body.romanceLine,
-    extra_ideas: extraIdeas || null,
-    config_json: {
-      filterVersion: MARKET_FILTER_VERSION,
-      channel: body.channel,
-      marketGenre: body.marketGenre,
-      subGenre: body.subGenre,
-      tropes,
-      protagonistArchetype: body.protagonistArchetype,
-      cheatPower: body.cheatPower,
-      romanceLine: body.romanceLine,
-      tone: body.tone,
-      extraIdeas,
-      mode,
     },
   });
-
-  if (configError) {
-    await supabase.from("projects").delete().eq("id", project.id);
-    return NextResponse.json({ error: configError.message }, { status: 500 });
-  }
 
   return NextResponse.json({ projectId: project.id }, { status: 201 });
 }

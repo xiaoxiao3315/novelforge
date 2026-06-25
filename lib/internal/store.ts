@@ -1,7 +1,7 @@
 import "server-only";
 
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { ProjectMode } from "@/lib/projects/modes";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
@@ -98,8 +98,34 @@ export async function readInternalStore() {
 }
 
 async function writeInternalStore(store: InternalStore) {
-  await mkdir(getDataDir(), { recursive: true });
-  await writeFile(getStorePath(), JSON.stringify(store, null, 2), "utf8");
+  const dir = getDataDir();
+  await mkdir(dir, { recursive: true });
+  // 原子写：先写临时文件再 rename，避免进程在写一半时崩溃留下截断的 JSON。
+  const target = getStorePath();
+  const tmp = path.join(dir, `novelforge-store.${randomUUID()}.tmp`);
+  await writeFile(tmp, JSON.stringify(store, null, 2), "utf8");
+  await rename(tmp, target);
+}
+
+// 本地 JSON store 是单文件「读全量→改→覆写」模型，没有数据库的行级并发控制。
+// 多个写请求并发时（章节预加载、批量生成会同时落库多章），后写的快照会覆盖
+// 先写的改动，导致数据静默丢失。这里用一个 module 级 Promise 链把所有
+// 读改写串行化：同一时刻只有一个 mutate 在跑，读到的永远是上一个写完后的最新状态。
+let storeWriteChain: Promise<unknown> = Promise.resolve();
+
+async function mutateStore<T>(mutator: (store: InternalStore) => Promise<T> | T): Promise<T> {
+  const run = storeWriteChain.then(async () => {
+    const store = await readInternalStore();
+    return mutator(store);
+  });
+
+  // 链上不传播错误，否则一次失败会卡死后续所有写操作。
+  storeWriteChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+
+  return run;
 }
 
 export async function listInternalProjects() {
@@ -165,34 +191,36 @@ export async function getInternalProjectModeMap(projectIds: string[]) {
 }
 
 export async function createInternalProject(input: CreateInternalProjectInput) {
-  const store = await readInternalStore();
-  const now = new Date().toISOString();
-  const project: InternalProject = {
-    id: randomUUID(),
-    title: input.title,
-    description: input.description,
-    status: "draft",
-    created_at: now,
-    updated_at: now,
-  };
+  return mutateStore(async (store) => {
+    const now = new Date().toISOString();
+    const project: InternalProject = {
+      id: randomUUID(),
+      title: input.title,
+      description: input.description,
+      status: "draft",
+      created_at: now,
+      updated_at: now,
+    };
 
-  store.projects.push(project);
-  store.storyConfigs.push({
-    project_id: project.id,
-    ...input.config,
+    store.projects.push(project);
+    store.storyConfigs.push({
+      project_id: project.id,
+      ...input.config,
+    });
+    await writeInternalStore(store);
+
+    return project;
   });
-  await writeInternalStore(store);
-
-  return project;
 }
 
 export async function saveInternalConcept(projectId: string, concept: StoryConcept) {
-  const store = await readInternalStore();
-  store.storyConcepts = store.storyConcepts.filter((item) => item.project_id !== projectId);
-  store.storyConcepts.push({ id: randomUUID(), project_id: projectId, content: concept });
-  await touchProject(store, projectId);
-  await writeInternalStore(store);
-  return store.storyConcepts.find((item) => item.project_id === projectId)!;
+  return mutateStore(async (store) => {
+    store.storyConcepts = store.storyConcepts.filter((item) => item.project_id !== projectId);
+    store.storyConcepts.push({ id: randomUUID(), project_id: projectId, content: concept });
+    touchProject(store, projectId);
+    await writeInternalStore(store);
+    return store.storyConcepts.find((item) => item.project_id === projectId)!;
+  });
 }
 
 export async function saveInternalBible(
@@ -200,22 +228,23 @@ export async function saveInternalBible(
   bible: StoryBible,
   characters: CharacterCard[],
 ) {
-  const store = await readInternalStore();
-  const bibleId = randomUUID();
-  store.storyBibles = store.storyBibles.filter((item) => item.project_id !== projectId);
-  store.storyBibles.push({ id: bibleId, project_id: projectId, content: bible });
-  store.characters = store.characters.filter((item) => item.project_id !== projectId);
-  store.characters.push(
-    ...characters.map((character, index) => ({
-      id: randomUUID(),
-      project_id: projectId,
-      sort_order: index,
-      content: character,
-    })),
-  );
-  await touchProject(store, projectId);
-  await writeInternalStore(store);
-  return bibleId;
+  return mutateStore(async (store) => {
+    const bibleId = randomUUID();
+    store.storyBibles = store.storyBibles.filter((item) => item.project_id !== projectId);
+    store.storyBibles.push({ id: bibleId, project_id: projectId, content: bible });
+    store.characters = store.characters.filter((item) => item.project_id !== projectId);
+    store.characters.push(
+      ...characters.map((character, index) => ({
+        id: randomUUID(),
+        project_id: projectId,
+        sort_order: index,
+        content: character,
+      })),
+    );
+    touchProject(store, projectId);
+    await writeInternalStore(store);
+    return bibleId;
+  });
 }
 
 export async function saveInternalOutline(
@@ -223,34 +252,35 @@ export async function saveInternalOutline(
   volume: VolumeOutline,
   chapters: ChapterOutline[],
 ) {
-  const store = await readInternalStore();
-  const volumeId = randomUUID();
-  store.volumes = store.volumes.filter(
-    (item) => item.project_id !== projectId || item.volume_number !== volume.volumeNumber,
-  );
-  store.volumes.push({
-    id: volumeId,
-    project_id: projectId,
-    volume_number: volume.volumeNumber,
-    content: volume,
-  });
-  store.chapters = store.chapters.filter(
-    (item) =>
-      item.project_id !== projectId ||
-      !chapters.some((chapter) => chapter.chapterNumber === item.chapter_number),
-  );
-  store.chapters.push(
-    ...chapters.map((chapter) => ({
-      id: randomUUID(),
+  return mutateStore(async (store) => {
+    const volumeId = randomUUID();
+    store.volumes = store.volumes.filter(
+      (item) => item.project_id !== projectId || item.volume_number !== volume.volumeNumber,
+    );
+    store.volumes.push({
+      id: volumeId,
       project_id: projectId,
-      volume_id: volumeId,
-      chapter_number: chapter.chapterNumber,
-      content: { ...chapter } as ChapterContent,
-    })),
-  );
-  await touchProject(store, projectId);
-  await writeInternalStore(store);
-  return volumeId;
+      volume_number: volume.volumeNumber,
+      content: volume,
+    });
+    store.chapters = store.chapters.filter(
+      (item) =>
+        item.project_id !== projectId ||
+        !chapters.some((chapter) => chapter.chapterNumber === item.chapter_number),
+    );
+    store.chapters.push(
+      ...chapters.map((chapter) => ({
+        id: randomUUID(),
+        project_id: projectId,
+        volume_id: volumeId,
+        chapter_number: chapter.chapterNumber,
+        content: { ...chapter } as ChapterContent,
+      })),
+    );
+    touchProject(store, projectId);
+    await writeInternalStore(store);
+    return volumeId;
+  });
 }
 
 export async function saveInternalChapter(
@@ -258,66 +288,69 @@ export async function saveInternalChapter(
   chapterId: string,
   content: ChapterContent,
 ) {
-  const store = await readInternalStore();
-  const chapter = store.chapters.find(
-    (item) => item.project_id === projectId && item.id === chapterId,
-  );
+  return mutateStore(async (store) => {
+    const chapter = store.chapters.find(
+      (item) => item.project_id === projectId && item.id === chapterId,
+    );
 
-  if (!chapter) {
-    return null;
-  }
+    if (!chapter) {
+      return null;
+    }
 
-  chapter.content = content;
-  await touchProject(store, projectId);
-  await writeInternalStore(store);
+    chapter.content = content;
+    touchProject(store, projectId);
+    await writeInternalStore(store);
 
-  return chapter;
+    return chapter;
+  });
 }
 
 export async function updateInternalProjectConfig(projectId: string, configJson: unknown) {
-  const store = await readInternalStore();
-  const config = store.storyConfigs.find((item) => item.project_id === projectId);
+  return mutateStore(async (store) => {
+    const config = store.storyConfigs.find((item) => item.project_id === projectId);
 
-  if (!config) {
-    return null;
-  }
+    if (!config) {
+      return null;
+    }
 
-  config.config_json = configJson;
-  await touchProject(store, projectId);
-  await writeInternalStore(store);
+    config.config_json = configJson;
+    touchProject(store, projectId);
+    await writeInternalStore(store);
 
-  return config;
+    return config;
+  });
 }
 
 export async function saveInternalChapterUpdates(
   projectId: string,
   updates: Array<{ chapterId: string; content: ChapterContent | Record<string, unknown> }>,
 ) {
-  const store = await readInternalStore();
-  let updatedCount = 0;
+  return mutateStore(async (store) => {
+    let updatedCount = 0;
 
-  for (const update of updates) {
-    const chapter = store.chapters.find(
-      (item) => item.project_id === projectId && item.id === update.chapterId,
-    );
+    for (const update of updates) {
+      const chapter = store.chapters.find(
+        (item) => item.project_id === projectId && item.id === update.chapterId,
+      );
 
-    if (!chapter) {
-      continue;
+      if (!chapter) {
+        continue;
+      }
+
+      chapter.content = update.content as ChapterContent;
+      updatedCount += 1;
     }
 
-    chapter.content = update.content as ChapterContent;
-    updatedCount += 1;
-  }
+    if (updatedCount > 0) {
+      touchProject(store, projectId);
+      await writeInternalStore(store);
+    }
 
-  if (updatedCount > 0) {
-    await touchProject(store, projectId);
-    await writeInternalStore(store);
-  }
-
-  return updatedCount;
+    return updatedCount;
+  });
 }
 
-async function touchProject(store: InternalStore, projectId: string) {
+function touchProject(store: InternalStore, projectId: string) {
   const project = store.projects.find((item) => item.id === projectId);
 
   if (project) {
