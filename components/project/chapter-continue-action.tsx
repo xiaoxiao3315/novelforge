@@ -11,6 +11,7 @@ import {
 } from "@/components/project/chapter-quality-mode-selector";
 import { formatUserFacingError } from "@/lib/ui/errors";
 import { GenerationError } from "@/components/project/generation-error";
+import { StreamingChapterReader } from "@/components/project/streaming-chapter-reader";
 
 type ChapterGenerationResponse = {
   chapter?: {
@@ -35,6 +36,7 @@ export function ChapterContinueAction({
   const [error, setError] = useState("");
   const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [qualityMode, setQualityMode] = useState<ChapterQualityMode>("normal");
   const router = useRouter();
   const chapterCost = getChapterQualityModeCost(qualityMode);
@@ -60,6 +62,14 @@ export function ChapterContinueAction({
 
     setError("");
     setErrorDetail("");
+
+    // 普通模式走流式：弹出阅读层逐字显示正文。
+    // 精修模式有 critique→rewrite 会推翻初稿，不适合流式，走非流式 + 进度。
+    if (qualityMode === "normal") {
+      setStreaming(true);
+      return;
+    }
+
     setIsGenerating(true);
 
     try {
@@ -92,6 +102,12 @@ export function ChapterContinueAction({
     }
   }
 
+  function handleStreamComplete(generatedChapterNumber: number) {
+    setStreaming(false);
+    router.push(`/project/${projectId}?chapter=${generatedChapterNumber}#chapter-reader`);
+    router.refresh();
+  }
+
   return (
     <div className="chapter-continue-panel">
       <div className="flex flex-wrap items-center justify-between gap-4">
@@ -108,21 +124,23 @@ export function ChapterContinueAction({
           <div className="grid gap-3">
             <ChapterQualityModeSelector
               creditUnit="额度"
-              disabled={isGenerating}
+              disabled={isGenerating || streaming}
               mode={qualityMode}
               onChange={setQualityMode}
             />
             <button
               className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isGenerating || !hasEnoughCredits}
+              disabled={isGenerating || streaming || !hasEnoughCredits}
               onClick={generateNextChapter}
               type="button"
             >
-              {isGenerating
-                ? qualityMode === "quality"
-                  ? "精修生成中..."
-                  : "下一章生成中..."
-                : `消耗 ${chapterCost} 额度进入下一章`}
+              {streaming
+                ? "正在生成下一章..."
+                : isGenerating
+                  ? qualityMode === "quality"
+                    ? "精修生成中..."
+                    : "下一章生成中..."
+                  : `消耗 ${chapterCost} 额度进入下一章`}
             </button>
           </div>
         ) : (
@@ -143,6 +161,15 @@ export function ChapterContinueAction({
           onRetry={generateNextChapter}
           retrying={isGenerating}
           retryLabel="重试生成"
+        />
+      ) : null}
+
+      {streaming && nextChapterNumber ? (
+        <StreamingChapterReader
+          projectId={projectId}
+          chapterNumber={nextChapterNumber}
+          onComplete={handleStreamComplete}
+          onClose={() => setStreaming(false)}
         />
       ) : null}
     </div>

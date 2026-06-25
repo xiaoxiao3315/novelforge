@@ -211,3 +211,49 @@ export async function generateDeepSeekText({
     finishReason: choice?.finish_reason ?? null,
   };
 }
+
+export type DeepSeekStreamEvent =
+  | { type: "delta"; text: string }
+  | { type: "done"; fullText: string; finishReason: string | null };
+
+/**
+ * 流式生成文本：边生成边 yield 增量片段，结束时 yield 完整文本。
+ * 用于章节正文逐字显示。流一旦开始无法重试，建连失败由上层处理。
+ */
+export async function* generateDeepSeekTextStream({
+  systemPrompt,
+  userPrompt,
+  maxTokens = 3000,
+  temperature,
+}: GenerateDeepSeekTextOptions): AsyncGenerator<DeepSeekStreamEvent> {
+  const model = getDeepSeekModel();
+  const stream = await createDeepSeekClient().chat.completions.create({
+    model,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+    max_tokens: maxTokens,
+    ...(temperature === undefined ? {} : { temperature }),
+    stream: true,
+  });
+
+  let fullText = "";
+  let finishReason: string | null = null;
+
+  for await (const chunk of stream) {
+    const choice = chunk.choices[0];
+    const delta = choice?.delta?.content ?? "";
+
+    if (delta) {
+      fullText += delta;
+      yield { type: "delta", text: delta };
+    }
+
+    if (choice?.finish_reason) {
+      finishReason = choice.finish_reason;
+    }
+  }
+
+  yield { type: "done", fullText: fullText.trim(), finishReason };
+}
