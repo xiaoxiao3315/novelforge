@@ -16,6 +16,9 @@ build/
 .env
 .env*.local
 
+# internal single-user mode local data store
+.internal-data/
+
 # logs
 npm-debug.log*
 yarn-debug.log*

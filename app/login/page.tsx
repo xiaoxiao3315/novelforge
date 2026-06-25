@@ -2,8 +2,7 @@ import { redirect } from "next/navigation";
 import { AppNav } from "@/components/app/app-nav";
 import { LoginForm } from "@/components/auth/login-form";
 import { BookBadge, PaperPanel, StatusBookmark } from "@/components/ui/book";
-import { hasInternalSession, isInternalAuthEnabled } from "@/lib/internal/auth";
-import { createClient } from "@/lib/supabase/server";
+import { hasInternalSession } from "@/lib/internal/auth";
 
 export const metadata = {
   title: "登录",
@@ -23,23 +22,11 @@ export default async function LoginPage({
   searchParams?: Promise<{ redirectTo?: string }>;
 }) {
   const internalSession = await hasInternalSession();
-  const internalMode = isInternalAuthEnabled();
   const params = await searchParams;
   const redirectTo = normalizeRedirectTo(params?.redirectTo);
 
   if (internalSession) {
     redirect(redirectTo);
-  }
-
-  if (!internalMode) {
-    const supabase = await createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
-      redirect(redirectTo);
-    }
   }
 
   return (
@@ -69,7 +56,7 @@ export default async function LoginPage({
             </p>
           </PaperPanel>
         </div>
-        <LoginForm internalMode={internalMode} redirectTo={redirectTo} />
+        <LoginForm redirectTo={redirectTo} />
       </section>
     </main>
   );

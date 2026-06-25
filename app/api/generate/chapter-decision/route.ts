@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
 import { buildStoryConfigPromptData } from "@/data/plot-filters";
-import { getDeepSeekModel } from "@/lib/ai/deepseek";
 import {
-  buildChapterDecisionGenerationLogError,
   buildChapterDecisionGenerationMetadata,
   generateChapterDecision,
 } from "@/lib/interactive/chapter-decision-generation";
-import { hasInternalSession } from "@/lib/internal/auth";
+import { requestHasInternalSession } from "@/lib/internal/auth";
 import { getInternalProjectBundle, saveInternalChapter } from "@/lib/internal/store";
 import { getProjectModeFromConfig } from "@/lib/projects/modes";
-import { createClient } from "@/lib/supabase/server";
 import {
   normalizeCharacterCards,
   normalizeStoryBible,
@@ -17,7 +14,6 @@ import {
   type StoryBible,
 } from "@/prompts/bible";
 import {
-  CHAPTER_DECISION_PROMPT_VERSION,
   type ChapterDecisionPreviousContext,
   type ChapterDecisionPromptInput,
 } from "@/prompts/chapter-decision";
@@ -29,6 +25,7 @@ import {
   type ChapterOutline,
   type VolumeOutline,
 } from "@/prompts/outline";
+import type { NextRequest } from "next/server";
 
 type GenerateDecisionBody = {
   projectId?: unknown;
@@ -56,61 +53,12 @@ type StoryConfigRow = {
   config_json: unknown;
 };
 
-type StoryConceptRow = {
-  content: StoryConcept | null;
-};
-
-type StoryBibleRow = {
-  content: StoryBible | null;
-};
-
-type CharacterRow = {
-  content: CharacterCard | null;
-};
-
-type VolumeRow = {
-  content: unknown;
-};
-
-type ChapterRow = {
-  id: string;
-  volume_id: string | null;
-  content: unknown;
-  chapter_number: number;
-  title: string;
-  event: string;
-  conflict: string;
-  character_change: string;
-  highlight: string;
-  foreshadowing: string;
-  ending_hook: string;
-  estimated_words: number;
-};
-
 function validationError(message: string) {
   return NextResponse.json({ error: message }, { status: 400 });
 }
 
 function serverError(message: string) {
   return NextResponse.json({ error: message }, { status: 500 });
-}
-
-function buildChapterOutline(row: ChapterRow): ChapterOutline | null {
-  return (
-    normalizeChapterOutlines([
-      {
-        chapterNumber: row.chapter_number,
-        title: row.title,
-        event: row.event,
-        conflict: row.conflict,
-        characterChange: row.character_change,
-        highlight: row.highlight,
-        foreshadowing: row.foreshadowing,
-        endingHook: row.ending_hook,
-        estimatedWords: row.estimated_words,
-      },
-    ])[0] ?? null
-  );
 }
 
 function buildPromptInput(
@@ -137,179 +85,19 @@ function buildPromptInput(
   };
 }
 
-export async function POST(request: Request) {
-  if (await hasInternalSession()) {
-    const body = (await request.json().catch(() => null)) as GenerateDecisionBody | null;
-
-    if (!body || typeof body !== "object") {
-      return validationError("Invalid request body.");
-    }
-
-    if ("user_id" in body) {
-      return validationError("chapter-decision does not accept user_id.");
-    }
-
-    const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
-    const chapterId = typeof body.chapterId === "string" ? body.chapterId.trim() : "";
-    const chapterNumber =
-      typeof body.chapterNumber === "number" && Number.isInteger(body.chapterNumber)
-        ? body.chapterNumber
-        : null;
-
-    if (!projectId) {
-      return validationError("Missing project.");
-    }
-
-    if (!chapterId && !chapterNumber) {
-      return validationError("Missing chapter outline.");
-    }
-
-    const bundle = await getInternalProjectBundle(projectId);
-    const config = bundle?.config ?? null;
-
-    if (!bundle || !config) {
-      return validationError("Missing project.");
-    }
-
-    if (getProjectModeFromConfig(config.config_json) !== "interactive") {
-      return validationError("Only interactive projects can generate chapter decisions.");
-    }
-
-    const visibleProject: ProjectRow = {
-      id: bundle.project.id,
-      title: bundle.project.title,
-      description: bundle.project.description,
-    };
-    const concept = normalizeStoryConcept(bundle.concept);
-
-    if (!concept) {
-      return validationError("Missing story_concept.");
-    }
-
-    const bible = normalizeStoryBible(bundle.bible);
-
-    if (!bible) {
-      return validationError("Missing story_bible.");
-    }
-
-    const characters = normalizeCharacterCards(bundle.characters);
-
-    if (characters.length === 0) {
-      return validationError("Missing characters.");
-    }
-
-    const chapterRow =
-      (chapterId ? bundle.chapters.find((chapter) => chapter.id === chapterId) : null) ??
-      (chapterNumber
-        ? bundle.chapters.find((chapter) => chapter.chapter_number === chapterNumber)
-        : null);
-    const chapter = chapterRow ? normalizeChapterOutlines([chapterRow.content])[0] ?? null : null;
-
-    if (!chapterRow || !chapter) {
-      return validationError("Missing chapter outline.");
-    }
-
-    if (!chapterRow.volume_id) {
-      return validationError("Missing chapter volume.");
-    }
-
-    const volumeRow = bundle.volumes.find((volume) => volume.id === chapterRow.volume_id);
-    const volume = normalizeVolumeOutline(volumeRow?.content);
-
-    if (!volume) {
-      return validationError("Missing volume.");
-    }
-
-    const previousChapters = bundle.chapters
-      .filter((row) => row.chapter_number < chapter.chapterNumber)
-      .sort((left, right) => left.chapter_number - right.chapter_number)
-      .map((row) => {
-        const outline = normalizeChapterOutlines([row.content])[0] ?? null;
-        const context = outline ? buildPreviousChapterContext(outline, row.content) : null;
-
-        if (!outline || !context) {
-          return null;
-        }
-
-        return {
-          ...outline,
-          summaryText: context.summary
-            ? [
-                ...context.summary.keyEvents,
-                ...context.summary.characterStateChanges,
-                ...context.summary.unresolvedQuestions,
-              ].join("；")
-            : context.draftExcerpt,
-        };
-      })
-      .filter((item): item is ChapterDecisionPreviousContext => Boolean(item));
-    const promptInput = buildPromptInput(
-      visibleProject,
-      config as StoryConfigRow,
-      concept,
-      bible,
-      characters,
-      volume,
-      chapter,
-      previousChapters,
-    );
-    const currentChapterContext = buildPreviousChapterContext(chapter, chapterRow.content);
-    const decisionResult = await generateChapterDecision({
-      ...promptInput,
-      currentChapterBody: currentChapterContext.draftExcerpt,
-    });
-
-    if (!decisionResult.ok) {
-      return serverError(decisionResult.error);
-    }
-
-    const decision = decisionResult.decision;
-    const existingContentRecord =
-      typeof chapterRow.content === "object" && chapterRow.content
-        ? (chapterRow.content as Record<string, unknown>)
-        : {};
-    const existingContent = { ...existingContentRecord };
-    delete existingContent.decision;
-    delete existingContent.decisionGeneration;
-    delete existingContent.stateChanges;
-    const chapterContent = {
-      ...existingContent,
-      ...chapter,
-      decision,
-      decisionGeneration: buildChapterDecisionGenerationMetadata({
-        source: "manual-regeneration",
-      }),
-    };
-    const savedChapter = await saveInternalChapter(projectId, chapterRow.id, chapterContent);
-
-    if (!savedChapter) {
-      return serverError("Chapter decision save failed.");
-    }
-
-    return NextResponse.json({
-      chapterId: savedChapter.id,
-      decision,
-      decisionGeneration: chapterContent.decisionGeneration,
-    });
-  }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
+export async function POST(request: NextRequest) {
+  if (!requestHasInternalSession(request)) {
     return NextResponse.json({ error: "请先登录。" }, { status: 401 });
   }
 
   const body = (await request.json().catch(() => null)) as GenerateDecisionBody | null;
 
   if (!body || typeof body !== "object") {
-    return validationError("请求格式不正确。");
+    return validationError("Invalid request body.");
   }
 
   if ("user_id" in body) {
-    return validationError("生成剧情选择时不能从前端传 user_id。");
+    return validationError("chapter-decision does not accept user_id.");
   }
 
   const projectId = typeof body.projectId === "string" ? body.projectId.trim() : "";
@@ -320,155 +108,77 @@ export async function POST(request: Request) {
       : null;
 
   if (!projectId) {
-    return validationError("缺少 project。");
+    return validationError("Missing project.");
   }
 
   if (!chapterId && !chapterNumber) {
-    return validationError("缺少 chapter outline。");
+    return validationError("Missing chapter outline.");
   }
 
-  const model = getDeepSeekModel();
+  const bundle = await getInternalProjectBundle(projectId);
+  const config = bundle?.config ?? null;
 
-  const { data: project, error: projectError } = await supabase
-    .from("projects")
-    .select("id,title,description")
-    .eq("id", projectId)
-    .eq("user_id", user.id)
-    .maybeSingle<ProjectRow>();
-
-  if (projectError) {
-    return serverError(projectError.message);
-  }
-
-  if (!project) {
-    return validationError("缺少 project。");
-  }
-
-  const visibleProject = project;
-
-  async function writeDecisionErrorLog(error: string, input: Record<string, unknown>, targetId?: string) {
-    await supabase.from("generation_logs").insert({
-      project_id: visibleProject.id,
-      operation: "generate_chapter_decision",
-      target_type: "chapter",
-      ...(targetId ? { target_id: targetId } : {}),
-      model,
-      prompt_version: CHAPTER_DECISION_PROMPT_VERSION,
-      input,
-      error,
-    });
-  }
-
-  const { data: config, error: configError } = await supabase
-    .from("story_configs")
-    .select(
-      "theme,genre,background,world_setting,protagonist,core_conflict,tone,serial_structure,extra_ideas,config_json",
-    )
-    .eq("project_id", projectId)
-    .maybeSingle<StoryConfigRow>();
-
-  if (configError) {
-    return serverError(configError.message);
-  }
-
-  if (!config) {
-    return validationError("缺少 story_config。");
+  if (!bundle || !config) {
+    return validationError("Missing project.");
   }
 
   if (getProjectModeFromConfig(config.config_json) !== "interactive") {
-    return validationError("只有互动剧情模式项目可以生成剧情选择。");
+    return validationError("Only interactive projects can generate chapter decisions.");
   }
 
-  const { data: storyConcept } = await supabase
-    .from("story_concepts")
-    .select("content")
-    .eq("project_id", projectId)
-    .maybeSingle<StoryConceptRow>();
-  const concept = normalizeStoryConcept(storyConcept?.content);
+  const visibleProject: ProjectRow = {
+    id: bundle.project.id,
+    title: bundle.project.title,
+    description: bundle.project.description,
+  };
+  const concept = normalizeStoryConcept(bundle.concept);
 
   if (!concept) {
-    return validationError("缺少 story_concept。");
+    return validationError("Missing story_concept.");
   }
 
-  const { data: storyBible } = await supabase
-    .from("story_bibles")
-    .select("content")
-    .eq("project_id", projectId)
-    .maybeSingle<StoryBibleRow>();
-  const bible = normalizeStoryBible(storyBible?.content);
+  const bible = normalizeStoryBible(bundle.bible);
 
   if (!bible) {
-    return validationError("缺少 story_bible。");
+    return validationError("Missing story_bible.");
   }
 
-  const { data: characterRows } = await supabase
-    .from("characters")
-    .select("content")
-    .eq("project_id", projectId)
-    .order("sort_order", { ascending: true })
-    .returns<CharacterRow[]>();
-  const characters = normalizeCharacterCards(characterRows?.map((row) => row.content) ?? []);
+  const characters = normalizeCharacterCards(bundle.characters);
 
   if (characters.length === 0) {
-    return validationError("缺少 characters。");
+    return validationError("Missing characters.");
   }
 
-  let chapterQuery = supabase
-    .from("chapters")
-    .select(
-      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
-    )
-    .eq("project_id", projectId);
-
-  if (chapterId) {
-    chapterQuery = chapterQuery.eq("id", chapterId);
-  } else if (chapterNumber) {
-    chapterQuery = chapterQuery.eq("chapter_number", chapterNumber);
-  }
-
-  const { data: chapterRow, error: chapterError } = await chapterQuery.maybeSingle<ChapterRow>();
-
-  if (chapterError) {
-    return serverError(chapterError.message);
-  }
-
-  const chapter = chapterRow ? buildChapterOutline(chapterRow) : null;
+  const chapterRow =
+    (chapterId ? bundle.chapters.find((chapter) => chapter.id === chapterId) : null) ??
+    (chapterNumber
+      ? bundle.chapters.find((chapter) => chapter.chapter_number === chapterNumber)
+      : null);
+  const chapter = chapterRow ? normalizeChapterOutlines([chapterRow.content])[0] ?? null : null;
 
   if (!chapterRow || !chapter) {
-    return validationError("缺少 chapter outline。");
+    return validationError("Missing chapter outline.");
   }
 
   if (!chapterRow.volume_id) {
-    return validationError("缺少 chapter volume。");
+    return validationError("Missing chapter volume.");
   }
 
-  const { data: volumeRow } = await supabase
-    .from("volumes")
-    .select("content")
-    .eq("project_id", projectId)
-    .eq("id", chapterRow.volume_id)
-    .maybeSingle<VolumeRow>();
+  const volumeRow = bundle.volumes.find((volume) => volume.id === chapterRow.volume_id);
   const volume = normalizeVolumeOutline(volumeRow?.content);
 
   if (!volume) {
-    return validationError("缺少 volume。");
+    return validationError("Missing volume.");
   }
 
-  const { data: previousRows } = await supabase
-    .from("chapters")
-    .select(
-      "id,volume_id,content,chapter_number,title,event,conflict,character_change,highlight,foreshadowing,ending_hook,estimated_words",
-    )
-    .eq("project_id", projectId)
-    .lt("chapter_number", chapter.chapterNumber)
-    .order("chapter_number", { ascending: true })
-    .returns<ChapterRow[]>();
-  const previousChapters = (previousRows ?? [])
+  const previousChapters = bundle.chapters
+    .filter((row) => row.chapter_number < chapter.chapterNumber)
+    .sort((left, right) => left.chapter_number - right.chapter_number)
     .map((row) => {
-      const outline = buildChapterOutline(row);
+      const outline = normalizeChapterOutlines([row.content])[0] ?? null;
       const context = outline ? buildPreviousChapterContext(outline, row.content) : null;
 
-      if (!context) {
+      if (!outline || !context) {
         return null;
       }
 
@@ -484,10 +194,9 @@ export async function POST(request: Request) {
       };
     })
     .filter((item): item is ChapterDecisionPreviousContext => Boolean(item));
-
   const promptInput = buildPromptInput(
     visibleProject,
-    config,
+    config as StoryConfigRow,
     concept,
     bible,
     characters,
@@ -496,27 +205,12 @@ export async function POST(request: Request) {
     previousChapters,
   );
   const currentChapterContext = buildPreviousChapterContext(chapter, chapterRow.content);
-  const promptInputWithBody = {
+  const decisionResult = await generateChapterDecision({
     ...promptInput,
     currentChapterBody: currentChapterContext.draftExcerpt,
-  };
-  const logInput = {
-    project: visibleProject,
-    storyConfig: promptInputWithBody.config,
-    storyConcept: concept,
-    storyBible: bible,
-    characters,
-    volume,
-    chapter,
-    previousChapters,
-    currentChapterBodyPreview: currentChapterContext.draftExcerpt,
-  };
-
-  const decisionResult = await generateChapterDecision(promptInputWithBody);
+  });
 
   if (!decisionResult.ok) {
-    const error = buildChapterDecisionGenerationLogError(decisionResult);
-    await writeDecisionErrorLog(error, logInput, chapterRow.id);
     return serverError(decisionResult.error);
   }
 
@@ -537,29 +231,11 @@ export async function POST(request: Request) {
       source: "manual-regeneration",
     }),
   };
-  const { data: savedChapter, error: updateError } = await supabase
-    .from("chapters")
-    .update({ content: chapterContent })
-    .eq("id", chapterRow.id)
-    .eq("project_id", visibleProject.id)
-    .eq("user_id", user.id)
-    .select("id")
-    .single<{ id: string }>();
+  const savedChapter = await saveInternalChapter(projectId, chapterRow.id, chapterContent);
 
-  if (updateError || !savedChapter) {
-    return serverError(updateError?.message || "剧情选择保存失败。");
+  if (!savedChapter) {
+    return serverError("Chapter decision save failed.");
   }
-
-  await supabase.from("generation_logs").insert({
-    project_id: visibleProject.id,
-    operation: "generate_chapter_decision",
-    target_type: "chapter",
-    target_id: savedChapter.id,
-    model,
-    prompt_version: CHAPTER_DECISION_PROMPT_VERSION,
-    input: logInput,
-    output: { decision, source: "manual-regeneration" },
-  });
 
   return NextResponse.json({
     chapterId: savedChapter.id,
