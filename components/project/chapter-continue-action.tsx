@@ -10,6 +10,7 @@ import {
   type ChapterQualityMode,
 } from "@/components/project/chapter-quality-mode-selector";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
 
 type ChapterGenerationResponse = {
   chapter?: {
@@ -32,6 +33,7 @@ export function ChapterContinueAction({
   projectId,
 }: ChapterContinueActionProps) {
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [qualityMode, setQualityMode] = useState<ChapterQualityMode>("normal");
   const router = useRouter();
@@ -57,6 +59,7 @@ export function ChapterContinueAction({
     }
 
     setError("");
+    setErrorDetail("");
     setIsGenerating(true);
 
     try {
@@ -75,6 +78,7 @@ export function ChapterContinueAction({
 
       if (!response.ok || !payload?.chapter) {
         setError(formatUserFacingError(payload?.error, "下一章生成失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -133,9 +137,13 @@ export function ChapterContinueAction({
         </p>
       ) : null}
       {error ? (
-        <p className="mt-3 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={generateNextChapter}
+          retrying={isGenerating}
+          retryLabel="重试生成"
+        />
       ) : null}
     </div>
   );

@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
+import { GenerationProgress } from "@/components/project/generation-progress";
 import type { StoryConcept } from "@/prompts/concept";
 
 type ConceptGeneratorProps = {
@@ -43,6 +45,7 @@ export function ConceptGenerator({
 }: ConceptGeneratorProps) {
   const [concept, setConcept] = useState(initialConcept);
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const router = useRouter();
   const generationCost = GENERATION_CREDIT_COSTS.generate_concept;
@@ -59,6 +62,7 @@ export function ConceptGenerator({
     }
 
     setError("");
+    setErrorDetail("");
     setIsGenerating(true);
 
     try {
@@ -74,6 +78,7 @@ export function ConceptGenerator({
 
       if (!response.ok || !payload?.concept) {
         setError(formatUserFacingError(payload?.error, "作品设定生成失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -110,10 +115,25 @@ export function ConceptGenerator({
       </div>
 
       {error ? (
-        <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={generateConcept}
+          retrying={isGenerating}
+          retryLabel="重新生成"
+        />
       ) : null}
+
+      <GenerationProgress
+        active={isGenerating}
+        estimatedSeconds={30}
+        stages={[
+          "正在分析题材与筛选器……",
+          "正在构思核心冲突与卖点……",
+          "正在搭建世界规则与主角……",
+          "正在收拢设定与追更钩子……",
+        ]}
+      />
 
       {creditShortfallMessage ? (
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
