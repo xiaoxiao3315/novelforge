@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS, formatCreditShortfall } from "@/lib/credits";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
+import { GenerationProgress } from "@/components/project/generation-progress";
 import type { CharacterCard, StoryBible } from "@/prompts/bible";
 
 type BibleGeneratorProps = {
@@ -60,6 +62,7 @@ export function BibleGenerator({
   const [bible, setBible] = useState(initialBible);
   const [characters, setCharacters] = useState(initialCharacters);
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const router = useRouter();
   const generationCost = GENERATION_CREDIT_COSTS.generate_bible;
@@ -81,6 +84,7 @@ export function BibleGenerator({
     }
 
     setError("");
+    setErrorDetail("");
     setIsGenerating(true);
 
     try {
@@ -96,6 +100,7 @@ export function BibleGenerator({
 
       if (!response.ok || !payload?.bible || !payload.characters) {
         setError(formatUserFacingError(payload?.error, "故事圣经生成失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -133,10 +138,25 @@ export function BibleGenerator({
       </div>
 
       {error ? (
-        <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={generateBible}
+          retrying={isGenerating}
+          retryLabel="重新生成"
+        />
       ) : null}
+
+      <GenerationProgress
+        active={isGenerating}
+        estimatedSeconds={50}
+        stages={[
+          "正在消化作品设定……",
+          "正在搭建世界观与力量体系……",
+          "正在编排主线与反派计划……",
+          "正在生成角色卡与伏笔……",
+        ]}
+      />
 
       {creditShortfallMessage ? (
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">

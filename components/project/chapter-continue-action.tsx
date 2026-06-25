@@ -10,6 +10,8 @@ import {
   type ChapterQualityMode,
 } from "@/components/project/chapter-quality-mode-selector";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
+import { StreamingChapterReader } from "@/components/project/streaming-chapter-reader";
 
 type ChapterGenerationResponse = {
   chapter?: {
@@ -32,7 +34,9 @@ export function ChapterContinueAction({
   projectId,
 }: ChapterContinueActionProps) {
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [streaming, setStreaming] = useState(false);
   const [qualityMode, setQualityMode] = useState<ChapterQualityMode>("normal");
   const router = useRouter();
   const chapterCost = getChapterQualityModeCost(qualityMode);
@@ -57,6 +61,15 @@ export function ChapterContinueAction({
     }
 
     setError("");
+    setErrorDetail("");
+
+    // 普通模式走流式：弹出阅读层逐字显示正文。
+    // 精修模式有 critique→rewrite 会推翻初稿，不适合流式，走非流式 + 进度。
+    if (qualityMode === "normal") {
+      setStreaming(true);
+      return;
+    }
+
     setIsGenerating(true);
 
     try {
@@ -75,6 +88,7 @@ export function ChapterContinueAction({
 
       if (!response.ok || !payload?.chapter) {
         setError(formatUserFacingError(payload?.error, "下一章生成失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -86,6 +100,12 @@ export function ChapterContinueAction({
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  function handleStreamComplete(generatedChapterNumber: number) {
+    setStreaming(false);
+    router.push(`/project/${projectId}?chapter=${generatedChapterNumber}#chapter-reader`);
+    router.refresh();
   }
 
   return (
@@ -104,21 +124,23 @@ export function ChapterContinueAction({
           <div className="grid gap-3">
             <ChapterQualityModeSelector
               creditUnit="额度"
-              disabled={isGenerating}
+              disabled={isGenerating || streaming}
               mode={qualityMode}
               onChange={setQualityMode}
             />
             <button
               className="button-primary min-h-10 px-4 text-sm disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isGenerating || !hasEnoughCredits}
+              disabled={isGenerating || streaming || !hasEnoughCredits}
               onClick={generateNextChapter}
               type="button"
             >
-              {isGenerating
-                ? qualityMode === "quality"
-                  ? "精修生成中..."
-                  : "下一章生成中..."
-                : `消耗 ${chapterCost} 额度进入下一章`}
+              {streaming
+                ? "正在生成下一章..."
+                : isGenerating
+                  ? qualityMode === "quality"
+                    ? "精修生成中..."
+                    : "下一章生成中..."
+                  : `消耗 ${chapterCost} 额度进入下一章`}
             </button>
           </div>
         ) : (
@@ -133,9 +155,22 @@ export function ChapterContinueAction({
         </p>
       ) : null}
       {error ? (
-        <p className="mt-3 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={generateNextChapter}
+          retrying={isGenerating}
+          retryLabel="重试生成"
+        />
+      ) : null}
+
+      {streaming && nextChapterNumber ? (
+        <StreamingChapterReader
+          projectId={projectId}
+          chapterNumber={nextChapterNumber}
+          onComplete={handleStreamComplete}
+          onClose={() => setStreaming(false)}
+        />
       ) : null}
     </div>
   );
