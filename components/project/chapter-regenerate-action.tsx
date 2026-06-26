@@ -9,6 +9,8 @@ import {
   type ChapterQualityMode,
 } from "@/components/project/chapter-quality-mode-selector";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
+import { GenerationProgress } from "@/components/project/generation-progress";
 
 type ChapterRegenerationResponse = {
   chapter?: {
@@ -31,6 +33,7 @@ export function ChapterRegenerateAction({
   projectId,
 }: ChapterRegenerateActionProps) {
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [qualityMode, setQualityMode] = useState<ChapterQualityMode>("normal");
   const router = useRouter();
@@ -51,6 +54,7 @@ export function ChapterRegenerateAction({
     }
 
     setError("");
+    setErrorDetail("");
     setIsGenerating(true);
 
     try {
@@ -69,6 +73,7 @@ export function ChapterRegenerateAction({
 
       if (!response.ok || !payload?.chapter) {
         setError(formatUserFacingError(payload?.error, "本章重生失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -98,15 +103,29 @@ export function ChapterRegenerateAction({
       >
         {isGenerating ? "正在按新命运重生..." : `消耗 ${chapterCost} ${creditUnit}重生本章`}
       </button>
+      <GenerationProgress
+        active={isGenerating}
+        estimatedSeconds={40}
+        stages={[
+          "正在重读本章前情与设定……",
+          "正在按新命运推演剧情……",
+          "正在重写本章正文……",
+          "正在润色与收束新结局……",
+        ]}
+      />
       {creditShortfallMessage ? (
         <p className="mt-3 text-sm font-bold leading-6 text-[#7f2f1d]">
           {creditShortfallMessage}
         </p>
       ) : null}
       {error ? (
-        <p className="mt-3 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={regenerateChapter}
+          retrying={isGenerating}
+          retryLabel="重新重生"
+        />
       ) : null}
     </div>
   );

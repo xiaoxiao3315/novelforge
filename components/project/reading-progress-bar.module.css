@@ -1,0 +1,115 @@
+/* 顶部阅读进度条：固定视口顶部的细轨 + scaleX 驱动的进度。
+   颜色全部引用 :root 的全局主题变量，三主题自动适配。 */
+.track {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  /* 底轨：极淡的笔线色，避免在浅色纸张上突兀。 */
+  background: color-mix(in srgb, var(--line) 45%, transparent);
+  /* 高于移动端阅读侧栏/导航(z-index:50)，但低于模态层。 */
+  z-index: 60;
+  pointer-events: none;
+}
+
+.bar {
+  height: 100%;
+  width: 100%;
+  /* 金色点缀，墨书美学的高光。 */
+  background: var(--gold-strong);
+  /* 用 transform 而非 width，走合成层、不触发回流。 */
+  transform: scaleX(0);
+  transform-origin: left center;
+  /* 轻微缓动让进度跟手又不抖。 */
+  transition: transform 90ms linear;
+  will-change: transform;
+}
+
+/* 回到顶部按钮：右下角圆形，纸书风。 */
+.backToTop {
+  position: fixed;
+  right: clamp(16px, 4vw, 32px);
+  bottom: clamp(20px, 5vh, 40px);
+  z-index: 55;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--brown);
+
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(45, 27, 18, 0.18);
+
+  /* 默认隐藏：不可见、不可点、不占焦点。 */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease,
+    visibility 200ms ease,
+    border-color 150ms ease,
+    color 150ms ease,
+    background 150ms ease;
+}
+
+.backToTopVisible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
+.backToTop:hover {
+  border-color: var(--gold-strong);
+  color: var(--gold-strong);
+  background: var(--paper-deep);
+}
+
+/* 可见的键盘焦点态。 */
+.backToTop:focus-visible {
+  outline: 2px solid var(--gold-strong);
+  outline-offset: 2px;
+  border-color: var(--gold-strong);
+  color: var(--gold-strong);
+}
+
+.backToTopGlyph {
+  font-size: 1.25rem;
+  line-height: 1;
+  font-weight: 600;
+  /* 字形微调：箭头视觉重心略偏下，上提一点更居中。 */
+  transform: translateY(-1px);
+}
+
+/* 移动端：保证 ≥44px 触达，并上移以避开底部固定导航(bottom:12px 起)。 */
+@media (max-width: 720px) {
+  .backToTop {
+    width: 48px;
+    height: 48px;
+    right: 16px;
+    /* 让出底部导航条空间，避免遮挡。 */
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px) + 64px);
+  }
+}
+
+/* 尊重减少动态偏好：关闭过渡动画，仅做即时显隐。 */
+@media (prefers-reduced-motion: reduce) {
+  .bar,
+  .backToTop {
+    transition: none;
+  }
+  .backToTop {
+    transform: none;
+  }
+  .backToTopVisible {
+    transform: none;
+  }
+}

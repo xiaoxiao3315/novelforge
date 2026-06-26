@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { GENERATION_CREDIT_COSTS } from "@/lib/credits";
 import type { ProjectMode } from "@/lib/projects/modes";
 import { formatUserFacingError } from "@/lib/ui/errors";
+import { GenerationError } from "@/components/project/generation-error";
+import { GenerationProgress } from "@/components/project/generation-progress";
 import {
   CHAPTER_INTERVENTION_LIMITS,
   EMPTY_CHAPTER_INTERVENTION,
@@ -518,6 +520,8 @@ export function OutlineGenerator({
     getInitialQualityModes(initialChapters),
   );
   const [error, setError] = useState("");
+  const [errorDetail, setErrorDetail] = useState("");
+  const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
   const [setupStep, setSetupStep] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingChapterNumber, setGeneratingChapterNumber] = useState<number | null>(null);
@@ -653,12 +657,14 @@ export function OutlineGenerator({
 
       if (!response.ok) {
         setError(formatUserFacingError(payload?.error, fallbackError));
+        setErrorDetail(payload?.error ?? "");
         return false;
       }
 
       return true;
     } catch {
       setError(`网络异常，${fallbackError}`);
+      setErrorDetail("");
       return false;
     }
   }
@@ -686,10 +692,12 @@ export function OutlineGenerator({
 
       if (!response.ok || !payload?.volume || !payload.chapters) {
         setError(formatUserFacingError(payload?.error, fallbackError));
+        setErrorDetail(payload?.error ?? "");
         return null;
       }
     } catch {
       setError(`网络异常，${fallbackError}`);
+      setErrorDetail("");
       return null;
     }
 
@@ -722,10 +730,14 @@ export function OutlineGenerator({
 
     if (!hasEnoughReaderSetupCredits) {
       setError(readerSetupCreditShortfallMessage);
+      setErrorDetail("");
+      setRetryAction(() => generateReaderSetup);
       return;
     }
 
     setError("");
+    setErrorDetail("");
+    setRetryAction(() => generateReaderSetup);
     setIsGenerating(true);
 
     if (needsConcept) {
@@ -768,6 +780,7 @@ export function OutlineGenerator({
       setIsGenerating(false);
       setSetupStep("");
       setError("请先完成作品设定、故事圣经和角色卡。");
+      setErrorDetail("");
       return;
     }
 
@@ -775,6 +788,8 @@ export function OutlineGenerator({
       setIsGenerating(false);
       setSetupStep("");
       setError(readerBootstrapCreditShortfallMessage);
+      setErrorDetail("");
+      setRetryAction(() => () => generateOutline());
       return;
     }
 
@@ -782,10 +797,14 @@ export function OutlineGenerator({
       setIsGenerating(false);
       setSetupStep("");
       setError(outlineCreditShortfallMessage);
+      setErrorDetail("");
+      setRetryAction(() => () => generateOutline());
       return;
     }
 
     setError("");
+    setErrorDetail("");
+    setRetryAction(() => () => generateOutline());
     setSetupStep(shouldBootstrapFirstChapter ? "正在铺开章节目录..." : "");
     setIsGenerating(true);
 
@@ -844,10 +863,14 @@ export function OutlineGenerator({
 
     if (!hasEnoughSelectedChapterCredits) {
       setError(selectedChapterCreditShortfallMessage);
+      setErrorDetail("");
+      setRetryAction(() => () => generateChapter(chapter, options));
       return null;
     }
 
     setError("");
+    setErrorDetail("");
+    setRetryAction(() => () => generateChapter(chapter, options));
     setGeneratingChapterNumber(chapter.chapterNumber);
     dispatchReaderPreloadPause(true, "manual-generation");
     const currentIntervention =
@@ -878,6 +901,7 @@ export function OutlineGenerator({
             isInteractive ? "进入本章失败，请稍后重试。" : "章节正文生成失败，请稍后重试。",
           ),
         );
+        setErrorDetail(payload?.error ?? "");
         return null;
       }
 
@@ -912,6 +936,7 @@ export function OutlineGenerator({
           isInteractive ? "进入本章失败，请稍后重试。" : "章节正文生成失败，请稍后重试。",
         ),
       );
+      setErrorDetail(error instanceof Error ? error.message : "");
       return null;
     } finally {
       setGeneratingChapterNumber(null);
@@ -931,10 +956,13 @@ export function OutlineGenerator({
 
     if (!chapter.id || !versionId) {
       setError("当前章节还没有可确认的正文版本。");
+      setErrorDetail("");
       return;
     }
 
     setError("");
+    setErrorDetail("");
+    setRetryAction(() => () => setOfficialChapter(chapter));
     setSettingOfficialChapterNumber(chapter.chapterNumber);
 
     try {
@@ -954,6 +982,7 @@ export function OutlineGenerator({
 
       if (!response.ok || !payload?.official) {
         setError(formatUserFacingError(payload?.error, "正式稿设置失败，请稍后重试。"));
+        setErrorDetail(payload?.error ?? "");
         return;
       }
 
@@ -970,6 +999,7 @@ export function OutlineGenerator({
       router.refresh();
     } catch {
       setError("网络异常，正式稿设置请求未完成，请检查网络后重试。");
+      setErrorDetail("");
     } finally {
       setSettingOfficialChapterNumber(null);
     }
@@ -1049,10 +1079,25 @@ export function OutlineGenerator({
         </div>
 
         {error ? (
-          <p className="mt-3 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-xs font-bold leading-5 text-[#7f2f1d]">
-            {error}
-          </p>
+          <GenerationError
+            message={error}
+            detail={errorDetail}
+            onRetry={retryAction ?? undefined}
+            retrying={isGenerating || generatingChapterNumber !== null}
+            retryLabel="重新生成"
+          />
         ) : null}
+
+        <GenerationProgress
+          active={isGenerating || generatingChapterNumber !== null}
+          estimatedSeconds={40}
+          stages={[
+            "正在准备设定与故事资料……",
+            "正在铺开章节目录……",
+            "正在生成第 1 章正文……",
+            "正在润色与收尾……",
+          ]}
+        />
 
         {primaryActionShortfallMessage ? (
           <p className="mt-3 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-xs font-bold leading-5 text-[#7f2f1d]">
@@ -1221,10 +1266,34 @@ export function OutlineGenerator({
       </div>
 
       {error ? (
-        <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">
-          {error}
-        </p>
+        <GenerationError
+          message={error}
+          detail={errorDetail}
+          onRetry={retryAction ?? undefined}
+          retrying={isGenerating || generatingChapterNumber !== null}
+          retryLabel="重新生成"
+        />
       ) : null}
+
+      <GenerationProgress
+        active={isGenerating || generatingChapterNumber !== null}
+        estimatedSeconds={40}
+        stages={
+          generatingChapterNumber !== null
+            ? [
+                "正在重读前情与设定……",
+                "正在推演本章情节……",
+                "正在落笔生成正文……",
+                "正在润色与收尾……",
+              ]
+            : [
+                "正在分析设定与故事资料……",
+                "正在规划卷主线与节奏……",
+                "正在铺开 20 章大纲……",
+                "正在收拢钩子与伏笔……",
+              ]
+        }
+      />
 
       {outlineCreditShortfallMessage || chapterCreditShortfallMessage ? (
         <p className="mt-5 rounded-md border border-[#e2b6a6] bg-[#fff4ef] px-3 py-2 text-sm text-[#7f2f1d]">

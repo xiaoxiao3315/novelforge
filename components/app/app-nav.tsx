@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { ReadingFocusToggle } from "@/components/project/reading-focus-toggle";
 import { CreditBadge } from "@/components/ui/book";
+import { ThemeController } from "@/components/ui/theme-controller";
 
 type AppNavProps = {
   isAuthed: boolean;
@@ -25,6 +27,8 @@ export function AppNav({
         </span>
       </Link>
       <div className="app-nav-links">
+        <ThemeController />
+        <ReadingFocusToggle />
         <Link className="app-nav-link" href="/">
           首页
         </Link>

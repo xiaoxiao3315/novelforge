@@ -21,6 +21,46 @@
   --success: #496a42;
   --shadow-paper: 0 18px 55px rgba(45, 27, 18, 0.12);
   --shadow-book: 0 18px 36px rgba(45, 27, 18, 0.18);
+  /* 阅读正文字号缩放（读者可调：小 0.9 / 中 1 / 大 1.15 / 特大 1.3）。 */
+  --reader-font-scale: 1;
+}
+
+/* 护眼（米黄）主题：更暖、对比更柔，适合长时间阅读。 */
+[data-theme="sepia"] {
+  --background: #ede0c8;
+  --foreground: #2a2118;
+  --muted: #6b5e4c;
+  --paper: #f8efd9;
+  --paper-deep: #efe2c8;
+  --panel: #f5ebd2;
+  --line: #d2bf9c;
+  --line-strong: #b3965f;
+  --ink: #2a2118;
+  --ink-soft: #433425;
+}
+
+/* 夜间（暗色）主题：深底浅字，护眼且省电。覆盖同名变量即可，组件无需改。 */
+[data-theme="dark"] {
+  --background: #15110c;
+  --foreground: #e6dcc8;
+  --muted: #9b8d77;
+  --paper: #1f1913;
+  --paper-deep: #1a140e;
+  --panel: #241d15;
+  --line: #3a2f22;
+  --line-strong: #564631;
+  --ink: #ece3d2;
+  --ink-soft: #c9bca4;
+  --brown: #d8b88f;
+  --brown-deep: #e6dcc8;
+  --gold: #d2a24f;
+  --gold-strong: #e0b768;
+  --accent: var(--gold);
+  --accent-strong: var(--gold-strong);
+  --warning: #e08a6a;
+  --success: #8fb37f;
+  --shadow-paper: 0 18px 55px rgba(0, 0, 0, 0.45);
+  --shadow-book: 0 18px 36px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -73,6 +113,48 @@ button:disabled {
   gap: 16px;
   border-bottom: 1px solid rgba(75, 46, 29, 0.18);
   padding: 18px 0;
+}
+
+/* 阅读主题 + 字号控制器（放在导航里，全站可见）。颜色全走主题变量，自动适配三套主题。 */
+.theme-controller {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.theme-controller-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+
+.theme-controller-button {
+  min-width: 34px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+
+.theme-controller-button:hover {
+  color: var(--ink);
+}
+
+.theme-controller-button[data-active="true"] {
+  background: var(--accent);
+  color: var(--paper);
 }
 
 .app-nav-brand {
@@ -346,7 +428,7 @@ button:disabled {
   min-width: 0;
   padding: 28px;
   font-family: Georgia, "Times New Roman", "Noto Serif CJK SC", "Songti SC", serif;
-  font-size: 1.06rem;
+  font-size: calc(1.06rem * var(--reader-font-scale));
   line-height: 2;
   overflow-wrap: anywhere;
 }
@@ -2378,5 +2460,240 @@ button:disabled {
 
   .director-console {
     width: 100%;
+  }
+}
+
+/* ===== 章节快速跳转 (TOC) — 阅读器导航内 (P1, 2026-06-25) ===== */
+.reader-chapter-jump {
+  position: relative;
+  min-width: 0;
+}
+
+.reader-chapter-jump > summary {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(75, 46, 29, 0.1);
+  border-radius: 6px;
+  background: rgba(255, 253, 248, 0.78);
+  color: var(--brown);
+  font-size: 0.92rem;
+  font-weight: 900;
+  text-decoration: none;
+  cursor: pointer;
+  list-style: none;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.reader-chapter-jump > summary::-webkit-details-marker {
+  display: none;
+}
+
+.reader-chapter-jump > summary::after {
+  content: "▾";
+  font-size: 0.72rem;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.reader-chapter-jump[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.reader-chapter-jump > summary:hover,
+.reader-chapter-jump > summary:focus-visible {
+  border-color: rgba(184, 138, 61, 0.56);
+  background: rgba(255, 244, 220, 0.78);
+  color: var(--ink);
+  outline: none;
+}
+
+.reader-chapter-jump-panel {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 30;
+  width: min(320px, 88vw);
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+  transform: translateX(-50%);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 253, 248, 0.98), rgba(255, 249, 234, 0.98));
+  box-shadow: 0 18px 40px -22px rgba(75, 46, 29, 0.55);
+  padding: 6px;
+}
+
+.reader-chapter-jump-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.reader-chapter-jump-link {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 40px;
+  align-content: center;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--brown);
+  text-decoration: none;
+  transition:
+    background 140ms ease,
+    color 140ms ease;
+}
+
+.reader-chapter-jump-link:hover,
+.reader-chapter-jump-link:focus-visible {
+  background: rgba(255, 244, 220, 0.9);
+  color: var(--ink);
+  outline: none;
+}
+
+.reader-chapter-jump-link.is-current {
+  background: rgba(184, 138, 61, 0.18);
+  color: var(--ink);
+}
+
+.reader-chapter-jump-number {
+  font-size: 0.78rem;
+  font-weight: 900;
+  color: var(--gold-strong);
+  white-space: nowrap;
+}
+
+.reader-chapter-jump-title {
+  min-width: 0;
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 430px) {
+  .reader-chapter-nav {
+    gap: 6px;
+    padding: 10px 10px 12px;
+  }
+
+  .reader-chapter-nav a,
+  .reader-chapter-nav span,
+  .reader-chapter-jump > summary {
+    min-height: 48px;
+    font-size: 0.88rem;
+  }
+
+  .reader-chapter-jump-panel {
+    width: min(320px, 92vw);
+  }
+
+  .reader-chapter-jump-link {
+    min-height: 44px;
+  }
+}
+
+/* === 排版精修 2026-06-25 === */
+
+/* 1) 中文正文段落节奏：正文是 whitespace-pre-wrap 纯文本（无 <p>，
+   不能用 first-line text-indent），改为优化行高 / 极轻字间距 / 避免孤行。
+   .reader-page-body 现有 line-height:2，这里微调到 1.95 让长文更紧凑而不挤；
+   颜色与字号保持现有约定，不覆盖 font-size / color。 */
+.interactive-reader-prose {
+  line-height: 1.95;
+  letter-spacing: 0.01em;
+  /* 中文长段优先优化换行、抑制孤行（支持的浏览器生效，不支持则忽略）。 */
+  text-wrap: pretty;
+  word-break: normal;
+  line-break: normal;
+}
+
+/* 2) 章节起始装饰：正文区顶部一条克制的居中金色短线，作为“章节开始”视觉信号。
+   仅在有正文时显示（空状态 .interactive-reader-empty 不加），颜色走主题变量，
+   三套主题（光/护眼/夜间）下均协调。pre-wrap 容器下用 display:block 脱离行内流。 */
+.interactive-reader-prose:not(.interactive-reader-empty)::before {
+  content: "";
+  display: block;
+  width: 64px;
+  height: 2px;
+  margin: 0 auto clamp(22px, 3vw, 34px);
+  border-radius: 1px;
+  background: var(--gold-strong);
+  opacity: 0.7;
+}
+
+/* 3) 沉浸阅读模式（契约：另一 agent 在 <html> 上设置 data-focus-mode="on"）。
+   非 focus 模式（无该属性）时下列规则全部不生效，现有布局不变。 */
+
+/* 过渡：站点导航与移动顶栏平滑淡出收起；正文列平滑收窄居中。 */
+.app-nav,
+.reader-mobile-topbar {
+  transition:
+    opacity 240ms ease,
+    max-height 240ms ease,
+    padding 240ms ease,
+    margin 240ms ease;
+}
+
+.interactive-reader-main .reader-page {
+  transition: max-width 240ms ease;
+}
+
+/* 隐藏顶部站点导航（根 class 已确认为 .app-nav）。用 max-height + opacity 平滑收起。 */
+html[data-focus-mode="on"] .app-nav {
+  overflow: hidden;
+  max-height: 0;
+  margin: 0;
+  padding-block: 0;
+  border-bottom-color: transparent;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 阅读侧栏隐藏：桌面端从栅格移除，配合下面单列布局让正文居中。 */
+html[data-focus-mode="on"] .interactive-reader-sidebar {
+  display: none;
+}
+
+/* 移动端顶栏淡出（其本身仅在窄屏 display:flex，这里只在 focus 模式下隐藏）。 */
+html[data-focus-mode="on"] .reader-mobile-topbar {
+  overflow: hidden;
+  max-height: 0;
+  margin: 0;
+  padding-block: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* 主阅读区占满，正文列收窄到舒适阅读宽度并居中。 */
+html[data-focus-mode="on"] .interactive-reader-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+html[data-focus-mode="on"] .interactive-reader-main .reader-page {
+  max-width: 46rem;
+  margin-inline: auto;
+}
+
+/* 尊重 prefers-reduced-motion：关闭上述过渡。 */
+@media (prefers-reduced-motion: reduce) {
+  .app-nav,
+  .reader-mobile-topbar,
+  .interactive-reader-main .reader-page {
+    transition: none;
   }
 }

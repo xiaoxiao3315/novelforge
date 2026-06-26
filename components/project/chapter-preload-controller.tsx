@@ -86,6 +86,53 @@ function dispatchReaderPreloadStatus(detail: ReaderPreloadStatusDetail) {
   );
 }
 
+function describePreloadStatus(detail: ReaderPreloadStatusDetail) {
+  switch (detail.status) {
+    case "running":
+      if (!detail.currentChapterNumber) {
+        return "正在生成后续章节";
+      }
+
+      return detail.attempt && detail.attempt > 1
+        ? `正在生成第 ${detail.currentChapterNumber} 章（第 ${detail.attempt} 次尝试）`
+        : `正在生成第 ${detail.currentChapterNumber} 章`;
+    case "retrying":
+      return detail.currentChapterNumber
+        ? `第 ${detail.currentChapterNumber} 章稍后重试`
+        : "稍后重试";
+    case "cooldown":
+      return "冷却中，准备生成下一章";
+    case "generated":
+      return detail.currentChapterNumber
+        ? `第 ${detail.currentChapterNumber} 章已缓存`
+        : "已缓存一章";
+    case "waiting":
+      if (detail.reason === "another-tab-running") {
+        return "其他页面正在缓存";
+      }
+
+      if (detail.reason === "page-hidden") {
+        return "页面隐藏，已暂停缓存";
+      }
+
+      if (detail.reason === "offline") {
+        return "网络离线，已暂停缓存";
+      }
+
+      return "等待空闲后开始缓存";
+    case "paused":
+      return "已暂停缓存";
+    case "failed":
+      return detail.failedChapterNumber
+        ? `第 ${detail.failedChapterNumber} 章缓存失败`
+        : "缓存失败";
+    case "complete":
+      return "后续章节已全部缓存";
+    default:
+      return "准备缓存后续章节";
+  }
+}
+
 function createControllerId() {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -250,6 +297,7 @@ export function ChapterPreloadController({
 }: ChapterPreloadControllerProps) {
   const [pauseReasons, setPauseReasons] = useState<string[]>([]);
   const [isWindowReady, setIsWindowReady] = useState(true);
+  const [statusDetail, setStatusDetail] = useState<ReaderPreloadStatusDetail | null>(null);
   const controllerIdRef = useRef(createControllerId());
   const isRunningRef = useRef(false);
   const router = useRouter();
@@ -281,7 +329,7 @@ export function ChapterPreloadController({
     status: ReaderPreloadStatus,
     overrides: Partial<ReaderPreloadStatusDetail> = {},
   ) => {
-    dispatchReaderPreloadStatus({
+    const detail: ReaderPreloadStatusDetail = {
       anchorChapterNumber,
       generatedChapterNumbers: [],
       generatedCount: 0,
@@ -290,7 +338,12 @@ export function ChapterPreloadController({
       targetChapterNumbers,
       totalTargetCount: targetChapterNumbers.length,
       ...overrides,
-    });
+    };
+
+    // setStatusDetail 通过 microtask 延迟，避免在 effect 同步路径里直接 setState
+    // 触发级联渲染（react-hooks/set-state-in-effect）。microtask 在绘制前结算，行为不变。
+    queueMicrotask(() => setStatusDetail(detail));
+    dispatchReaderPreloadStatus(detail);
   }, [anchorChapterNumber, projectId, targetChapterNumbers]);
 
   useEffect(() => {
@@ -519,5 +572,51 @@ export function ChapterPreloadController({
     targetKey,
   ]);
 
-  return null;
+  if (!statusDetail) {
+    return null;
+  }
+
+  const totalCount = statusDetail.totalTargetCount;
+
+  if (totalCount === 0) {
+    return null;
+  }
+
+  const isComplete = statusDetail.status === "complete";
+  const isFailed = statusDetail.status === "failed";
+  const completedCount = isComplete
+    ? totalCount
+    : Math.min(statusDetail.generatedCount, totalCount);
+  const progressPercent = Math.round((completedCount / totalCount) * 100);
+  const containerClassName = [
+    "reader-batch-progress",
+    isComplete ? "reader-batch-progress-success" : "",
+    isFailed ? "reader-batch-progress-failed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div className={containerClassName} role="status" aria-live="polite">
+      <div className="reader-batch-progress-head">
+        <span>后台缓存后续章节</span>
+        <span>
+          {completedCount}/{totalCount} 已完成
+        </span>
+      </div>
+      <div
+        className="reader-batch-progress-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={totalCount}
+        aria-valuenow={completedCount}
+      >
+        <span style={{ width: `${progressPercent}%` }} />
+      </div>
+      <p>
+        {describePreloadStatus(statusDetail)}
+        {isFailed && statusDetail.error ? `：${statusDetail.error}` : ""}
+      </p>
+    </div>
+  );
 }

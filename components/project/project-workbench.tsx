@@ -4,6 +4,8 @@ import { ChapterEndDecision } from "@/components/project/chapter-end-decision";
 import { ChapterPreloadController } from "@/components/project/chapter-preload-controller";
 import { ChapterReadClaimGate } from "@/components/project/chapter-read-claim-gate";
 import { ChapterRegenerateAction } from "@/components/project/chapter-regenerate-action";
+import { ReadingScrollMemory } from "@/components/project/reading-scroll-memory";
+import { ReadingProgressBar } from "@/components/project/reading-progress-bar";
 import {
   BookBadge,
   CreditBadge,
@@ -302,11 +304,66 @@ function ChapterQualityPanel({ chapter }: { chapter: WorkbenchChapter | null }) 
   );
 }
 
+function ChapterQuickJump({
+  chapters,
+  currentChapterNumber,
+  projectId,
+}: {
+  chapters: WorkbenchChapter[];
+  currentChapterNumber?: number | null;
+  projectId: string;
+}) {
+  if (chapters.length === 0) {
+    return null;
+  }
+
+  const orderedChapters = [...chapters].sort(
+    (a, b) => a.chapterNumber - b.chapterNumber,
+  );
+
+  return (
+    <details className="reader-chapter-jump">
+      <summary className="reader-chapter-nav-item reader-chapter-jump-summary">
+        目录
+      </summary>
+      <div className="reader-chapter-jump-panel" role="menu">
+        <ul className="reader-chapter-jump-list">
+          {orderedChapters.map((chapter) => {
+            const isCurrent = chapter.chapterNumber === currentChapterNumber;
+
+            return (
+              <li key={chapter.id}>
+                <Link
+                  aria-current={isCurrent ? "true" : undefined}
+                  className={[
+                    "reader-chapter-jump-link",
+                    isCurrent ? "is-current" : "",
+                  ].join(" ")}
+                  href={`/project/${projectId}?chapter=${chapter.chapterNumber}#chapter-reader`}
+                >
+                  <span className="reader-chapter-jump-number">
+                    第 {chapter.chapterNumber} 章
+                  </span>
+                  <span className="reader-chapter-jump-title">{chapter.title}</span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </details>
+  );
+}
+
 function ChapterReadingNav({
+  chapters,
+  currentChapterNumber,
   nextChapterNumber,
   previousChapterNumber,
   projectId,
 }: {
+  chapters: WorkbenchChapter[];
+  currentChapterNumber?: number | null;
   nextChapterNumber?: number | null;
   previousChapterNumber?: number | null;
   projectId: string;
@@ -325,9 +382,11 @@ function ChapterReadingNav({
           上一章
         </span>
       )}
-      <a className="reader-chapter-nav-item" href="#chapter-directory">
-        目录
-      </a>
+      <ChapterQuickJump
+        chapters={chapters}
+        currentChapterNumber={currentChapterNumber}
+        projectId={projectId}
+      />
       {nextChapterNumber ? (
         <Link
           className="reader-chapter-nav-item"
@@ -346,6 +405,7 @@ function ChapterReadingNav({
 
 function ChapterReaderPreview({
   chapter,
+  chapters,
   currentChapterClaimGate,
   interactiveState,
   projectId,
@@ -359,6 +419,7 @@ function ChapterReaderPreview({
   volume,
 }: {
   chapter: WorkbenchChapter | null;
+  chapters: WorkbenchChapter[];
   currentChapterClaimGate?: {
     chapterId: string;
     chapterNumber: number;
@@ -393,6 +454,12 @@ function ChapterReaderPreview({
 
   return (
     <div className="grid gap-5" id="chapter-reader">
+      {chapter && hasReadableBody && !isClaimingCurrentChapter ? (
+        <ReadingScrollMemory
+          chapterNumber={chapter.chapterNumber}
+          projectId={projectId}
+        />
+      ) : null}
       <ReaderPage
         className="interactive-reader-page max-w-none"
         footer={
@@ -471,6 +538,8 @@ function ChapterReaderPreview({
         ) : null}
         {chapter && hasReadableBody && !isClaimingCurrentChapter ? (
           <ChapterReadingNav
+            chapters={chapters}
+            currentChapterNumber={chapter.chapterNumber}
             nextChapterNumber={hasNextChapter ? nextChapterNumber : null}
             previousChapterNumber={previousChapterNumber}
             projectId={projectId}
@@ -584,6 +653,7 @@ function ProjectReaderShellLayout({
 
   return (
     <section className="interactive-reader-shell">
+      <ReadingProgressBar />
       {shouldPreload ? (
         <ChapterPreloadController
           anchorChapterNumber={currentChapter.chapterNumber}
@@ -645,6 +715,7 @@ function ProjectReaderShellLayout({
       <main className="interactive-reader-main">
         <ChapterReaderPreview
           chapter={currentChapter}
+          chapters={chapters}
           creditBalance={creditBalance}
           currentChapterClaimGate={currentChapterClaimGate}
           hasNextChapter={Boolean(nextChapter)}
